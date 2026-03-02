@@ -1,0 +1,21 @@
+{
+  "name": "@opencode-cui/pc-agent",
+  "version": "1.0.0",
+  "description": "PCAgent plugin — bridges local OpenCode with the remote AI-Gateway via WebSocket",
+  "main": "PcAgentPlugin.ts",
+  "types": "PcAgentPlugin.ts",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.2",
+    "ws": "^8"
+  },
+  "devDependencies": {
+    "@types/ws": "^8",
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}

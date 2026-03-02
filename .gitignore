@@ -1,0 +1,25 @@
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Build
+target/
+build/
+dist/
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code / OMC internal state
+.claude/
+.omc/
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log

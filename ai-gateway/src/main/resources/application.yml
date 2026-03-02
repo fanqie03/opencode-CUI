@@ -1,0 +1,61 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: ai-gateway
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/ai_gateway?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8mb4
+    username: root
+    password: ${DB_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+
+# Gateway custom configuration
+gateway:
+  # Skill Server WebSocket endpoint
+  skill-server:
+    ws-url: ${SKILL_SERVER_WS_URL:ws://localhost:8082/ws/internal/gateway}
+    internal-token: ${SKILL_SERVER_INTERNAL_TOKEN:changeme}
+    reconnect-initial-delay-ms: 1000
+    reconnect-max-delay-ms: 30000
+
+  # Agent heartbeat timeout
+  agent:
+    heartbeat-timeout-seconds: 90
+    heartbeat-check-interval-seconds: 30
+
+  # AK/SK auth
+  auth:
+    timestamp-tolerance-seconds: 300
+    nonce-ttl-seconds: 300
+
+logging:
+  level:
+    com.yourapp.gateway: DEBUG
+    org.springframework.web.socket: INFO

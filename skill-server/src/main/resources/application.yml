@@ -1,0 +1,63 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: skill-server
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/skill_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8mb4
+    username: root
+    password: ${MYSQL_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      connection-timeout: 10000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 5000ms
+      lettuce:
+        pool:
+          min-idle: 2
+          max-idle: 8
+          max-active: 16
+
+# WebSocket configuration
+skill:
+  websocket:
+    # Allowed origins for Skill miniapp WebSocket connections
+    allowed-origins: "*"
+  gateway:
+    # Internal token for AI-Gateway <-> Skill Server authentication
+    internal-token: ${GATEWAY_INTERNAL_TOKEN:default-internal-token}
+  im:
+    # IM platform API base URL for sending messages
+    api-url: ${IM_API_URL:http://localhost:8080/api/im}
+  session:
+    # Idle timeout in minutes before a session is marked IDLE
+    idle-timeout-minutes: 30
+    # Cleanup interval in minutes for scheduled IDLE session cleanup
+    cleanup-interval-minutes: 10
+
+logging:
+  level:
+    com.yourapp.skill: DEBUG
+    org.springframework.web.socket: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
