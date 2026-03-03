@@ -19,6 +19,10 @@ import lombok.Builder;
  * Internal (Gateway <-> Skill Server):
  *   tool_event, tool_done, tool_error, agent_online, agent_offline,
  *   session_created, invoke
+ *
+ * Protocol Evolution:
+ *   - Legacy format: flat fields (type, sessionId, event, etc.)
+ *   - Envelope format: envelope + type + payload (unified protocol)
  */
 @Data
 @NoArgsConstructor
@@ -26,6 +30,9 @@ import lombok.Builder;
 @Builder
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class GatewayMessage {
+
+    /** Unified protocol envelope (optional, for envelope-aware clients) */
+    private MessageEnvelope.EnvelopeMetadata envelope;
 
     /** Message type discriminator */
     private String type;
@@ -50,6 +57,9 @@ public class GatewayMessage {
 
     /** Token usage information */
     private JsonNode usage;
+
+    /** Sequence number for message ordering (multi-instance coordination) */
+    private Long sequenceNumber;
 
     // --- Register message fields ---
     private String deviceName;
@@ -159,6 +169,7 @@ public class GatewayMessage {
      */
     public GatewayMessage withAgentId(String agentId) {
         GatewayMessage copy = GatewayMessage.builder()
+                .envelope(this.envelope)
                 .type(this.type)
                 .agentId(agentId)
                 .sessionId(this.sessionId)
@@ -167,6 +178,7 @@ public class GatewayMessage {
                 .event(this.event)
                 .error(this.error)
                 .usage(this.usage)
+                .sequenceNumber(this.sequenceNumber)
                 .deviceName(this.deviceName)
                 .os(this.os)
                 .toolType(this.toolType)
@@ -174,5 +186,56 @@ public class GatewayMessage {
                 .toolSessionId(this.toolSessionId)
                 .build();
         return copy;
+    }
+
+    /**
+     * Attach sequence number to an existing message (for multi-instance coordination).
+     * Returns a new instance with sequenceNumber set.
+     */
+    public GatewayMessage withSequenceNumber(Long sequenceNumber) {
+        GatewayMessage copy = GatewayMessage.builder()
+                .envelope(this.envelope)
+                .type(this.type)
+                .agentId(this.agentId)
+                .sessionId(this.sessionId)
+                .action(this.action)
+                .payload(this.payload)
+                .event(this.event)
+                .error(this.error)
+                .usage(this.usage)
+                .sequenceNumber(sequenceNumber)
+                .deviceName(this.deviceName)
+                .os(this.os)
+                .toolType(this.toolType)
+                .toolVersion(this.toolVersion)
+                .toolSessionId(this.toolSessionId)
+                .build();
+        return copy;
+    }
+
+    /**
+     * Check if this message has a valid envelope.
+     */
+    public boolean hasEnvelope() {
+        return envelope != null && envelope.getVersion() != null;
+    }
+
+    /**
+     * Get envelope or return a default with minimal metadata.
+     */
+    public MessageEnvelope.EnvelopeMetadata getEnvelopeOrDefault() {
+        if (hasEnvelope()) {
+            return envelope;
+        }
+        return MessageEnvelope.EnvelopeMetadata.builder()
+                .version("0.0.0")
+                .messageId("unknown")
+                .timestamp("")
+                .source("UNKNOWN")
+                .agentId(agentId != null ? agentId : "unknown")
+                .sessionId(sessionId)
+                .sequenceNumber(sequenceNumber != null ? sequenceNumber : 0L)
+                .sequenceScope("agent")
+                .build();
     }
 }

@@ -171,9 +171,8 @@ public class SkillServerWSClient implements EventRelayService.SkillServerRelayTa
                         log.warn("Invoke message from Skill Server without agentId");
                         return;
                     }
-                    Long agentId = Long.parseLong(agentIdStr);
-                    eventRelayService.relayToAgent(agentId, message);
-                    log.debug("Routed invoke to agent: agentId={}, action={}", agentId, message.getAction());
+                    eventRelayService.relayToAgent(agentIdStr, message);
+                    log.debug("Routed invoke to agent: agentId={}, action={}", agentIdStr, message.getAction());
                 }
                 default -> log.warn("Unknown message type from Skill Server: type={}", type);
             }

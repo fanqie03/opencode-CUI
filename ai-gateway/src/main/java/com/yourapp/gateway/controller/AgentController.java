@@ -63,7 +63,7 @@ public class AgentController {
 
         Map<String, Object> status = new HashMap<>();
         status.put("agent", agent);
-        status.put("wsSessionActive", eventRelayService.hasAgentSession(id));
+        status.put("wsSessionActive", eventRelayService.hasAgentSession(String.valueOf(id)));
         status.put("activeSessionCount", eventRelayService.getActiveSessionCount());
 
         return ResponseEntity.ok(status);
@@ -93,7 +93,7 @@ public class AgentController {
             return ResponseEntity.badRequest().body(error);
         }
 
-        if (!eventRelayService.hasAgentSession(id)) {
+        if (!eventRelayService.hasAgentSession(String.valueOf(id))) {
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
             error.put("error", "No active WebSocket session for agent");
@@ -102,7 +102,7 @@ public class AgentController {
         }
 
         // Forward the invoke message to the PCAgent
-        eventRelayService.relayToAgent(id, message);
+        eventRelayService.relayToAgent(String.valueOf(id), message);
 
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);

@@ -7,6 +7,8 @@
 
 import type { GatewayConnection } from './GatewayConnection';
 import type { OpenCodeBridge, EventSubscription, OpenCodeEvent } from './OpenCodeBridge';
+import { ProtocolAdapter } from './ProtocolAdapter';
+import { hasEnvelope, type MessageEnvelope } from './types/MessageEnvelope';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,7 +50,7 @@ export type RelayErrorHandler = (context: string, err: unknown) => void;
  *
  * @example
  * ```ts
- * const relay = new EventRelay(gateway, opencode);
+ * const relay = new EventRelay(gateway, opencode, agentId);
  * await relay.startUpstream();
  * relay.startDownstream();
  * // ... later
@@ -68,17 +70,39 @@ export class EventRelay {
   /** Optional error handler. Defaults to console.error. */
   private onError: RelayErrorHandler;
 
+  /** Protocol adapter for envelope wrapping/unwrapping. */
+  private protocolAdapter: ProtocolAdapter | null = null;
+
+  /** Whether to use envelope protocol (enabled after agentId is set). */
+  private useEnvelope = false;
+
   /**
    * @param gateway   The AI-Gateway WebSocket connection.
    * @param opencode  The OpenCode SDK bridge.
+   * @param agentId   Optional agent ID for envelope protocol (can be set later).
    * @param onError   Optional error callback (defaults to `console.error`).
    */
   constructor(
     private readonly gateway: GatewayConnection,
     private readonly opencode: OpenCodeBridge,
+    agentId?: string,
     onError?: RelayErrorHandler,
   ) {
     this.onError = onError ?? ((ctx, err) => console.error(`[EventRelay] ${ctx}:`, err));
+    if (agentId) {
+      this.setAgentId(agentId);
+    }
+  }
+
+  /**
+   * Set the agent ID and enable envelope protocol.
+   * Should be called after successful registration with the gateway.
+   *
+   * @param agentId  The agent connection ID assigned by the gateway
+   */
+  setAgentId(agentId: string): void {
+    this.protocolAdapter = new ProtocolAdapter('OPENCODE', agentId);
+    this.useEnvelope = true;
   }
 
   // -----------------------------------------------------------------------
@@ -113,11 +137,14 @@ export class EventRelay {
       for await (const event of subscription.stream) {
         const sessionId = event.properties?.sessionId ?? (event as Record<string, unknown>).sessionId as string | undefined;
 
-        const message: UpstreamToolEvent = {
-          type: 'tool_event',
-          sessionId,
-          event,
-        };
+        // Wrap in envelope if protocol adapter is available
+        const message = this.useEnvelope && this.protocolAdapter
+          ? this.protocolAdapter.wrapToolEvent(event, sessionId)
+          : {
+              type: 'tool_event',
+              sessionId,
+              event,
+            };
 
         try {
           this.gateway.send(message);
@@ -157,7 +184,20 @@ export class EventRelay {
   private async handleDownstreamMessage(raw: unknown): Promise<void> {
     if (!raw || typeof raw !== 'object') return;
 
-    const msg = raw as Record<string, unknown>;
+    // Unwrap envelope if present (backward compatibility)
+    let msg: Record<string, unknown>;
+    if (hasEnvelope(raw)) {
+      const envelope = raw as MessageEnvelope;
+      msg = {
+        type: envelope.type,
+        ...(typeof envelope.payload === 'object' && envelope.payload !== null
+          ? (envelope.payload as Record<string, unknown>)
+          : { payload: envelope.payload }),
+      };
+    } else {
+      msg = raw as Record<string, unknown>;
+    }
+
     const type = msg.type as string | undefined;
 
     if (type === 'invoke') {
@@ -196,11 +236,21 @@ export class EventRelay {
           const session = await this.opencode.createSession(
             payload as Record<string, unknown> | undefined,
           );
-          this.gateway.send({
+          const sessionData = {
             type: 'session_created',
             toolSessionId: (session as Record<string, unknown>)?.id ?? (session as Record<string, unknown>)?.sessionId,
             session,
-          });
+          };
+
+          // Wrap in envelope if protocol adapter is available
+          const message = this.useEnvelope && this.protocolAdapter
+            ? this.protocolAdapter.wrapSessionCreated(
+                sessionData.toolSessionId as string,
+                sessionData.session,
+              )
+            : sessionData;
+
+          this.gateway.send(message);
         } catch (err) {
           this.onError('invoke.create_session', err);
           this.trySendError(msg.sessionId, err);
@@ -240,11 +290,16 @@ export class EventRelay {
    */
   private trySendError(sessionId: string | undefined, err: unknown): void {
     try {
-      this.gateway.send({
-        type: 'tool_error',
-        sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      const message = this.useEnvelope && this.protocolAdapter
+        ? this.protocolAdapter.wrapToolError(errorMsg, sessionId)
+        : {
+            type: 'tool_error',
+            sessionId,
+            error: errorMsg,
+          };
+
+      this.gateway.send(message);
     } catch {
       // If the gateway is disconnected we cannot report the error upstream.
     }

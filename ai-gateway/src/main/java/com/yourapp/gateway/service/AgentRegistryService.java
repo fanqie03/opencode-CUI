@@ -54,7 +54,7 @@ public class AgentRegistryService {
             repository.updateStatus(existing.getId(), AgentStatus.OFFLINE);
 
             // Close the old WebSocket session and notify Skill Server
-            eventRelayService.removeAgentSession(existing.getId());
+            eventRelayService.removeAgentSession(String.valueOf(existing.getId()));
         }
 
         // Create new connection record
@@ -123,7 +123,7 @@ public class AgentRegistryService {
             for (AgentConnection agent : staleAgents) {
                 repository.updateStatus(agent.getId(), AgentStatus.OFFLINE);
                 // Remove WebSocket session and notify Skill Server
-                eventRelayService.removeAgentSession(agent.getId());
+                eventRelayService.removeAgentSession(String.valueOf(agent.getId()));
                 log.info("Stale agent marked offline: agentId={}, lastSeen={}",
                         agent.getId(), agent.getLastSeenAt());
             }

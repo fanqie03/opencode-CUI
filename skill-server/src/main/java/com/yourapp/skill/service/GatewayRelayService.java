@@ -16,6 +16,11 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Manages communication with AI-Gateway via WebSocket.
  * Routes invoke commands to gateway. Receives tool events and dispatches to SkillStreamHandler.
+ *
+ * Uses Redis pub/sub for multi-instance coordination:
+ * - Subscribes to session:{sessionId} channels on WebSocket connect
+ * - Publishes to agent:{agentId} channels for routing across instances
+ * - Validates sequence numbers on incoming messages
  */
 @Slf4j
 @Service
@@ -25,25 +30,31 @@ public class GatewayRelayService {
     private final SkillStreamHandler skillStreamHandler;
     private final SkillMessageService messageService;
     private final SkillSessionService sessionService;
+    private final RedisMessageBroker redisMessageBroker;
+    private final SequenceTracker sequenceTracker;
 
     /**
-     * Active gateway WebSocket sessions keyed by session ID.
-     * In a multi-instance setup this would be coordinated via Redis.
+     * Active gateway WebSocket sessions keyed by session ID (local connections only).
      */
     private final ConcurrentHashMap<String, WebSocketSession> gatewaySessions = new ConcurrentHashMap<>();
 
     public GatewayRelayService(ObjectMapper objectMapper,
                                SkillStreamHandler skillStreamHandler,
                                SkillMessageService messageService,
-                               SkillSessionService sessionService) {
+                               SkillSessionService sessionService,
+                               RedisMessageBroker redisMessageBroker,
+                               SequenceTracker sequenceTracker) {
         this.objectMapper = objectMapper;
         this.skillStreamHandler = skillStreamHandler;
         this.messageService = messageService;
         this.sessionService = sessionService;
+        this.redisMessageBroker = redisMessageBroker;
+        this.sequenceTracker = sequenceTracker;
     }
 
     /**
      * Register a gateway WebSocket session.
+     * Note: This is for the internal gateway connection, not per-session subscriptions.
      */
     public void registerGatewaySession(String sessionKey, WebSocketSession session) {
         gatewaySessions.put(sessionKey, session);
@@ -59,7 +70,61 @@ public class GatewayRelayService {
     }
 
     /**
+     * Subscribe to Redis channel for a specific session.
+     * Called when a skill session is created.
+     */
+    public void subscribeToSession(String sessionId) {
+        redisMessageBroker.subscribeToSession(sessionId, message -> {
+            handleRedisMessage(sessionId, message);
+        });
+        log.info("Subscribed to session channel: {}", sessionId);
+    }
+
+    /**
+     * Unsubscribe from Redis channel for a specific session.
+     * Called when a skill session is closed.
+     */
+    public void unsubscribeFromSession(String sessionId) {
+        redisMessageBroker.unsubscribeFromSession(sessionId);
+        sequenceTracker.resetSession(sessionId);
+        log.info("Unsubscribed from session channel: {}", sessionId);
+    }
+
+    /**
+     * Handle a message received from Redis pub/sub.
+     * Validates sequence numbers and routes to appropriate handler.
+     */
+    private void handleRedisMessage(String sessionId, String rawMessage) {
+        try {
+            JsonNode node = objectMapper.readTree(rawMessage);
+
+            // Validate sequence number
+            Long sequenceNumber = node.has("sequenceNumber") ? node.get("sequenceNumber").asLong() : null;
+            String action = sequenceTracker.validateSequence(sessionId, sequenceNumber);
+
+            switch (action) {
+                case "reconnect":
+                    log.error("Triggering reconnect for session {} due to large sequence gap", sessionId);
+                    // TODO: Implement reconnect logic
+                    break;
+                case "request_recovery":
+                    log.warn("Requesting recovery for session {} due to medium sequence gap", sessionId);
+                    // TODO: Implement recovery request logic
+                    break;
+                case "continue":
+                default:
+                    // Process message normally
+                    handleGatewayMessage(rawMessage);
+                    break;
+            }
+        } catch (JsonProcessingException e) {
+            log.error("Failed to parse Redis message for session {}: {}", sessionId, rawMessage, e);
+        }
+    }
+
+    /**
      * Send an invoke command to AI-Gateway for routing to a PCAgent.
+     * Publishes to Redis channel - any gateway instance with this agent connected will receive it.
      *
      * @param agentId   the target agent ID
      * @param sessionId the skill session ID
@@ -91,24 +156,10 @@ public class GatewayRelayService {
             return;
         }
 
-        // Send to all connected gateway sessions (typically one)
-        boolean sent = false;
-        for (WebSocketSession gwSession : gatewaySessions.values()) {
-            if (gwSession.isOpen()) {
-                try {
-                    gwSession.sendMessage(new TextMessage(messageText));
-                    sent = true;
-                    log.debug("Invoke sent to gateway: agentId={}, action={}, sessionId={}",
-                            agentId, action, sessionId);
-                } catch (IOException e) {
-                    log.error("Failed to send invoke to gateway session: {}", gwSession.getId(), e);
-                }
-            }
-        }
-
-        if (!sent) {
-            log.warn("No active gateway session available to send invoke: agentId={}, action={}", agentId, action);
-        }
+        // Publish to Redis channel instead of direct WebSocket send
+        redisMessageBroker.publishToAgent(agentId, messageText);
+        log.debug("Published invoke to agent channel: agentId={}, action={}, sessionId={}",
+                agentId, action, sessionId);
     }
 
     /**
@@ -127,6 +178,30 @@ public class GatewayRelayService {
         String type = node.path("type").asText("");
         String sessionId = node.path("sessionId").asText(null);
         String agentId = node.path("agentId").asText(null);
+
+        // Extract envelope metadata if present
+        JsonNode envelopeNode = node.path("envelope");
+        if (!envelopeNode.isMissingNode()) {
+            Long sequenceNumber = envelopeNode.path("sequenceNumber").asLong(0L);
+            String messageId = envelopeNode.path("messageId").asText(null);
+            String source = envelopeNode.path("source").asText("UNKNOWN");
+            String envelopeSessionId = envelopeNode.path("sessionId").asText(null);
+
+            log.debug("Received enveloped message: type={}, sessionId={}, messageId={}, seq={}, source={}",
+                    type, sessionId, messageId, sequenceNumber, source);
+
+            // Pass sequence number to SequenceTracker for gap detection
+            String effectiveSessionId = envelopeSessionId != null ? envelopeSessionId : sessionId;
+            if (effectiveSessionId != null && sequenceNumber > 0) {
+                String action = sequenceTracker.validateSequence(effectiveSessionId, sequenceNumber);
+                if ("reconnect".equals(action)) {
+                    log.error("Large sequence gap detected for session {}, seq={}", effectiveSessionId, sequenceNumber);
+                    // Continue processing but log the gap
+                } else if ("request_recovery".equals(action)) {
+                    log.warn("Medium sequence gap detected for session {}, seq={}", effectiveSessionId, sequenceNumber);
+                }
+            }
+        }
 
         switch (type) {
             case "tool_event" -> handleToolEvent(sessionId, node);

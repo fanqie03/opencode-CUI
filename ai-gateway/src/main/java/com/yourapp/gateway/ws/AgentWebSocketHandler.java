@@ -45,7 +45,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
     private final ObjectMapper objectMapper;
 
     /** sessionId -> agentId mapping for cleanup on disconnect */
-    private final Map<String, Long> sessionAgentMap = new ConcurrentHashMap<>();
+    private final Map<String, String> sessionAgentMap = new ConcurrentHashMap<>();
 
     public AgentWebSocketHandler(AkSkAuthService akSkAuthService,
                                  AgentRegistryService agentRegistryService,
@@ -134,19 +134,19 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        Long agentId = sessionAgentMap.remove(session.getId());
+        String agentId = sessionAgentMap.remove(session.getId());
         if (agentId != null) {
             log.info("PCAgent disconnected: agentId={}, sessionId={}, status={}",
                     agentId, session.getId(), status);
 
             // Mark agent offline in database
-            agentRegistryService.markOffline(agentId);
+            agentRegistryService.markOffline(Long.parseLong(agentId));
 
             // Remove from relay service
             eventRelayService.removeAgentSession(agentId);
 
             // Notify Skill Server that agent went offline
-            GatewayMessage offlineMsg = GatewayMessage.agentOffline(String.valueOf(agentId));
+            GatewayMessage offlineMsg = GatewayMessage.agentOffline(agentId);
             eventRelayService.relayToSkillServer(agentId, offlineMsg);
         } else {
             log.info("PCAgent WebSocket closed (not registered): sessionId={}, status={}",
@@ -156,7 +156,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
-        Long agentId = sessionAgentMap.get(session.getId());
+        String agentId = sessionAgentMap.get(session.getId());
         log.error("WebSocket transport error: agentId={}, sessionId={}, error={}",
                 agentId, session.getId(), exception.getMessage());
     }
@@ -175,34 +175,35 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
                 userId, akId, deviceName, os, toolType, toolVersion);
 
         Long agentId = agent.getId();
+        String agentIdStr = String.valueOf(agentId);
 
         // Store agentId in session attributes and mapping
         session.getAttributes().put(ATTR_AGENT_ID, agentId);
-        sessionAgentMap.put(session.getId(), agentId);
+        sessionAgentMap.put(session.getId(), agentIdStr);
 
         // Register WebSocket session in relay service
-        eventRelayService.registerAgentSession(agentId, session);
+        eventRelayService.registerAgentSession(agentIdStr, session);
 
         // Notify Skill Server that agent is online
         GatewayMessage onlineMsg = GatewayMessage.agentOnline(
-                String.valueOf(agentId), toolType, toolVersion);
-        eventRelayService.relayToSkillServer(agentId, onlineMsg);
+                agentIdStr, toolType, toolVersion);
+        eventRelayService.relayToSkillServer(agentIdStr, onlineMsg);
 
         log.info("Agent registered via WebSocket: agentId={}, device={}, os={}, tool={}/{}",
                 agentId, deviceName, os, toolType, toolVersion);
     }
 
     private void handleHeartbeat(WebSocketSession session) {
-        Long agentId = sessionAgentMap.get(session.getId());
+        String agentId = sessionAgentMap.get(session.getId());
         if (agentId != null) {
-            agentRegistryService.heartbeat(agentId);
+            agentRegistryService.heartbeat(Long.parseLong(agentId));
         } else {
             log.warn("Heartbeat from unregistered session: sessionId={}", session.getId());
         }
     }
 
     private void handleRelayToSkillServer(WebSocketSession session, GatewayMessage message) {
-        Long agentId = sessionAgentMap.get(session.getId());
+        String agentId = sessionAgentMap.get(session.getId());
         if (agentId == null) {
             log.warn("Relay attempt from unregistered session: sessionId={}, type={}",
                     session.getId(), message.getType());
