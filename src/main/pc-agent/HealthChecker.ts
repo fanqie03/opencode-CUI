@@ -1,14 +1,14 @@
 /**
  * HealthChecker — Periodic OpenCode reachability monitor.
  *
- * Polls the local OpenCode server at a configurable interval via
- * `OpenCodeBridge.healthCheck()`.  When the status transitions between
- * online and offline, a corresponding `agent_online` or `agent_offline`
- * message is sent to the AI-Gateway so downstream consumers are notified.
+ * After Plugin refactor (Phase 1):
+ * - Uses OpencodeClient (from ctx.client) instead of OpenCodeBridge
+ * - Health checks via the SDK client's app.health() endpoint
+ * - Reports agent_online/agent_offline status changes to AI-Gateway
  */
 
 import type { GatewayConnection } from './GatewayConnection';
-import type { OpenCodeBridge } from './OpenCodeBridge';
+import type { OpencodeClient } from '@opencode-ai/sdk';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,7 +27,7 @@ export type HealthStatus = 'online' | 'offline';
  *
  * @example
  * ```ts
- * const checker = new HealthChecker(opencode, gateway);
+ * const checker = new HealthChecker(ctx.client, gateway);
  * checker.start(30_000); // check every 30 seconds
  * // ... later
  * checker.stop();
@@ -41,13 +41,13 @@ export class HealthChecker {
   private previousStatus: HealthStatus | null = null;
 
   /**
-   * @param opencode  The OpenCode SDK bridge used for health checks.
-   * @param gateway   The AI-Gateway connection used to report status changes.
+   * @param client   The OpencodeClient from plugin context (ctx.client).
+   * @param gateway  The AI-Gateway connection used to report status changes.
    */
   constructor(
-    private readonly opencode: OpenCodeBridge,
+    private readonly client: OpencodeClient,
     private readonly gateway: GatewayConnection,
-  ) {}
+  ) { }
 
   // -----------------------------------------------------------------------
   // Public API
@@ -92,8 +92,8 @@ export class HealthChecker {
    */
   async check(): Promise<HealthStatus> {
     try {
-      const ok = await this.opencode.healthCheck();
-      return ok ? 'online' : 'offline';
+      await (this.client as any).app.health();
+      return 'online';
     } catch {
       return 'offline';
     }

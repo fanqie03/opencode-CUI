@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'crypto';
 import type { MessageEnvelope, EnvelopeMetadata, MessageSource } from './types/MessageEnvelope';
-import type { OpenCodeEvent } from './OpenCodeBridge';
+import type { OpenCodeEvent } from './types/PluginTypes';
 
 /**
  * Protocol version for the unified message envelope.
@@ -35,7 +35,7 @@ export class ProtocolAdapter {
   constructor(
     private readonly source: MessageSource,
     private readonly agentId: string,
-  ) {}
+  ) { }
 
   // -----------------------------------------------------------------------
   // Outgoing: OpenCode Event -> MessageEnvelope

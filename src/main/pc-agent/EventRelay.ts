@@ -1,25 +1,23 @@
 /**
  * EventRelay — Bidirectional event relay between OpenCode and AI-Gateway.
  *
- * Upstream:  OpenCode event stream  -->  AI-Gateway  (tool_event messages)
- * Downstream:  AI-Gateway commands  -->  OpenCode SDK calls  (chat, create_session, etc.)
+ * After Plugin refactor (Phase 1):
+ * - Upstream: events are pushed by the Plugin event hook via `relayUpstream()`
+ *   (no longer self-subscribes to SSE stream)
+ * - Downstream: AI-Gateway commands → OpenCode SDK calls via `OpencodeClient`
+ *   (no longer depends on `OpenCodeBridge`)
  */
 
 import type { GatewayConnection } from './GatewayConnection';
-import type { OpenCodeBridge, EventSubscription, OpenCodeEvent } from './OpenCodeBridge';
+import type { OpencodeClient } from '@opencode-ai/sdk';
+import type { OpenCodeEvent } from './types/PluginTypes';
 import { ProtocolAdapter } from './ProtocolAdapter';
+import { mapPermissionResponse } from './PermissionMapper';
 import { hasEnvelope, type MessageEnvelope } from './types/MessageEnvelope';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/** Shape of an upstream message sent to the gateway. */
-interface UpstreamToolEvent {
-  type: 'tool_event';
-  sessionId: string | undefined;
-  event: OpenCodeEvent;
-}
 
 /** Shape of a downstream invoke message received from the gateway. */
 interface InvokeMessage {
@@ -48,19 +46,20 @@ export type RelayErrorHandler = (context: string, err: unknown) => void;
  * Relays events bidirectionally between the local OpenCode instance
  * and the remote AI-Gateway.
  *
+ * After Plugin refactor:
+ * - Upstream events are pushed via `relayUpstream()` (called by plugin event hook)
+ * - Downstream commands use `OpencodeClient` (ctx.client) for SDK operations
+ *
  * @example
  * ```ts
- * const relay = new EventRelay(gateway, opencode, agentId);
- * await relay.startUpstream();
+ * const relay = new EventRelay(gateway, ctx.client);
  * relay.startDownstream();
- * // ... later
- * relay.stop();
+ *
+ * // In plugin event hook:
+ * relay.relayUpstream(event);
  * ```
  */
 export class EventRelay {
-  /** Active upstream event subscription (null when not running). */
-  private upstreamSubscription: EventSubscription | null = null;
-
   /** Whether the downstream listener has been attached. */
   private downstreamActive = false;
 
@@ -78,20 +77,15 @@ export class EventRelay {
 
   /**
    * @param gateway   The AI-Gateway WebSocket connection.
-   * @param opencode  The OpenCode SDK bridge.
-   * @param agentId   Optional agent ID for envelope protocol (can be set later).
+   * @param client    The OpencodeClient from plugin context (ctx.client).
    * @param onError   Optional error callback (defaults to `console.error`).
    */
   constructor(
     private readonly gateway: GatewayConnection,
-    private readonly opencode: OpenCodeBridge,
-    agentId?: string,
+    private readonly client: OpencodeClient,
     onError?: RelayErrorHandler,
   ) {
     this.onError = onError ?? ((ctx, err) => console.error(`[EventRelay] ${ctx}:`, err));
-    if (agentId) {
-      this.setAgentId(agentId);
-    }
   }
 
   /**
@@ -106,54 +100,35 @@ export class EventRelay {
   }
 
   // -----------------------------------------------------------------------
-  // Upstream: OpenCode --> Gateway
+  // Upstream: OpenCode --> Gateway (pushed by Plugin event hook)
   // -----------------------------------------------------------------------
 
   /**
-   * Subscribe to the OpenCode event stream and forward every event
-   * to the AI-Gateway as a `tool_event` message.
+   * Relay a single OpenCode event upstream to the AI-Gateway.
    *
-   * This method runs an async loop that only resolves when
-   * {@link stop} is called or the event stream ends.
+   * This is called by the Plugin event hook — the EventRelay no longer
+   * self-subscribes to SSE streams.
+   *
+   * @param event  The OpenCode event to relay
    */
-  async startUpstream(): Promise<void> {
-    if (this.upstreamSubscription) return;
+  relayUpstream(event: OpenCodeEvent): void {
+    const sessionId =
+      (event.properties?.sessionId as string | undefined) ??
+      (event as Record<string, unknown>).sessionId as string | undefined;
 
-    const subscription = await this.opencode.subscribeEvents();
-    this.upstreamSubscription = subscription;
+    // Wrap in envelope if protocol adapter is available
+    const message = this.useEnvelope && this.protocolAdapter
+      ? this.protocolAdapter.wrapToolEvent(event, sessionId)
+      : {
+        type: 'tool_event',
+        sessionId,
+        event,
+      };
 
-    // Run the relay loop without blocking the caller by using a detached
-    // promise.  Errors are reported via the error handler.
-    this.runUpstreamLoop(subscription).catch((err) => {
-      this.onError('upstream loop', err);
-    });
-  }
-
-  /**
-   * Internal upstream relay loop.
-   */
-  private async runUpstreamLoop(subscription: EventSubscription): Promise<void> {
     try {
-      for await (const event of subscription.stream) {
-        const sessionId = event.properties?.sessionId ?? (event as Record<string, unknown>).sessionId as string | undefined;
-
-        // Wrap in envelope if protocol adapter is available
-        const message = this.useEnvelope && this.protocolAdapter
-          ? this.protocolAdapter.wrapToolEvent(event, sessionId)
-          : {
-              type: 'tool_event',
-              sessionId,
-              event,
-            };
-
-        try {
-          this.gateway.send(message);
-        } catch (err) {
-          this.onError('upstream send', err);
-        }
-      }
+      this.gateway.send(message);
     } catch (err) {
-      this.onError('upstream iteration', err);
+      this.onError('upstream send', err);
     }
   }
 
@@ -223,7 +198,10 @@ export class EventRelay {
           return;
         }
         try {
-          await this.opencode.chat(toolSessionId, text);
+          await (this.client as any).session.prompt({
+            path: { id: toolSessionId },
+            body: { text },
+          });
         } catch (err) {
           this.onError('invoke.chat', err);
           this.trySendError(msg.sessionId, err);
@@ -233,21 +211,21 @@ export class EventRelay {
 
       case 'create_session': {
         try {
-          const session = await this.opencode.createSession(
-            payload as Record<string, unknown> | undefined,
-          );
+          const session = await (this.client as any).session.create({
+            body: payload,
+          });
           const sessionData = {
             type: 'session_created',
-            toolSessionId: (session as Record<string, unknown>)?.id ?? (session as Record<string, unknown>)?.sessionId,
+            toolSessionId: session?.id ?? session?.sessionId,
             session,
           };
 
           // Wrap in envelope if protocol adapter is available
           const message = this.useEnvelope && this.protocolAdapter
             ? this.protocolAdapter.wrapSessionCreated(
-                sessionData.toolSessionId as string,
-                sessionData.session,
-              )
+              sessionData.toolSessionId as string,
+              sessionData.session,
+            )
             : sessionData;
 
           this.gateway.send(message);
@@ -259,9 +237,45 @@ export class EventRelay {
       }
 
       case 'close_session': {
-        // Close session is a best-effort operation.  OpenCode SDK does not
-        // expose a dedicated close — we simply acknowledge.
-        // Future: if the SDK adds session.close(), call it here.
+        const toolSessionId = payload.toolSessionId as string | undefined;
+        if (!toolSessionId) {
+          this.onError('invoke.close_session', new Error('Missing toolSessionId in payload'));
+          return;
+        }
+        try {
+          await (this.client as any).session.abort({
+            path: { id: toolSessionId },
+          });
+        } catch (err) {
+          this.onError('invoke.close_session', err);
+          this.trySendError(msg.sessionId, err);
+        }
+        break;
+      }
+
+      case 'permission_reply': {
+        const toolSessionId = payload.toolSessionId as string | undefined;
+        const permissionId = payload.permissionId as string | undefined;
+        const response = payload.response as string | undefined;
+
+        if (!toolSessionId || !permissionId || !response) {
+          this.onError(
+            'invoke.permission_reply',
+            new Error('Missing toolSessionId, permissionId, or response in payload'),
+          );
+          return;
+        }
+
+        try {
+          const sdkResponse = mapPermissionResponse(response);
+          await (this.client as any).postSessionIdPermissionsPermissionId({
+            body: { response: sdkResponse },
+            path: { id: toolSessionId, permissionID: permissionId },
+          });
+        } catch (err) {
+          this.onError('invoke.permission_reply', err);
+          this.trySendError(msg.sessionId, err);
+        }
         break;
       }
 
@@ -275,7 +289,15 @@ export class EventRelay {
    */
   private async handleStatusQuery(): Promise<void> {
     try {
-      const online = await this.opencode.healthCheck();
+      // Use SDK to check if OpenCode is reachable
+      let online = false;
+      try {
+        await (this.client as any).app.health();
+        online = true;
+      } catch {
+        online = false;
+      }
+
       this.gateway.send({
         type: 'status_response',
         opencodeOnline: online,
@@ -294,10 +316,10 @@ export class EventRelay {
       const message = this.useEnvelope && this.protocolAdapter
         ? this.protocolAdapter.wrapToolError(errorMsg, sessionId)
         : {
-            type: 'tool_error',
-            sessionId,
-            error: errorMsg,
-          };
+          type: 'tool_error',
+          sessionId,
+          error: errorMsg,
+        };
 
       this.gateway.send(message);
     } catch {
@@ -310,16 +332,10 @@ export class EventRelay {
   // -----------------------------------------------------------------------
 
   /**
-   * Stop both upstream and downstream relay loops.
+   * Stop the downstream relay listener.
+   * (Upstream is now push-based and doesn't need explicit stopping.)
    */
   stop(): void {
-    // Stop upstream.
-    if (this.upstreamSubscription) {
-      this.upstreamSubscription.stop();
-      this.upstreamSubscription = null;
-    }
-
-    // Stop downstream.
     this.downstreamActive = false;
     this.downstreamHandler = null;
   }
