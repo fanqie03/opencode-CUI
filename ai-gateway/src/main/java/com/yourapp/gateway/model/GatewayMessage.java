@@ -1,5 +1,6 @@
 package com.yourapp.gateway.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Data;
@@ -11,18 +12,18 @@ import lombok.Builder;
  * Gateway WebSocket message protocol.
  *
  * Upstream (PCAgent -> Gateway):
- *   register, heartbeat, tool_event, tool_done, tool_error, session_created
+ * register, heartbeat, tool_event, tool_done, tool_error, session_created
  *
  * Downstream (Gateway -> PCAgent):
- *   invoke, status_query
+ * invoke, status_query
  *
  * Internal (Gateway <-> Skill Server):
- *   tool_event, tool_done, tool_error, agent_online, agent_offline,
- *   session_created, invoke
+ * tool_event, tool_done, tool_error, agent_online, agent_offline,
+ * session_created, invoke
  *
  * Protocol Evolution:
- *   - Legacy format: flat fields (type, sessionId, event, etc.)
- *   - Envelope format: envelope + type + payload (unified protocol)
+ * - Legacy format: flat fields (type, sessionId, event, etc.)
+ * - Envelope format: envelope + type + payload (unified protocol)
  */
 @Data
 @NoArgsConstructor
@@ -74,7 +75,7 @@ public class GatewayMessage {
 
     /** PCAgent -> Gateway: register device */
     public static GatewayMessage register(String deviceName, String os,
-                                          String toolType, String toolVersion) {
+            String toolType, String toolVersion) {
         return GatewayMessage.builder()
                 .type("register")
                 .deviceName(deviceName)
@@ -146,7 +147,7 @@ public class GatewayMessage {
 
     /** Skill Server -> Gateway -> PCAgent: invoke an action */
     public static GatewayMessage invoke(String agentId, String sessionId,
-                                        String action, JsonNode payload) {
+            String action, JsonNode payload) {
         return GatewayMessage.builder()
                 .type("invoke")
                 .agentId(agentId)
@@ -189,7 +190,8 @@ public class GatewayMessage {
     }
 
     /**
-     * Attach sequence number to an existing message (for multi-instance coordination).
+     * Attach sequence number to an existing message (for multi-instance
+     * coordination).
      * Returns a new instance with sequenceNumber set.
      */
     public GatewayMessage withSequenceNumber(Long sequenceNumber) {
@@ -216,6 +218,7 @@ public class GatewayMessage {
     /**
      * Check if this message has a valid envelope.
      */
+    @JsonIgnore
     public boolean hasEnvelope() {
         return envelope != null && envelope.getVersion() != null;
     }
@@ -223,6 +226,7 @@ public class GatewayMessage {
     /**
      * Get envelope or return a default with minimal metadata.
      */
+    @JsonIgnore
     public MessageEnvelope.EnvelopeMetadata getEnvelopeOrDefault() {
         if (hasEnvelope()) {
             return envelope;
