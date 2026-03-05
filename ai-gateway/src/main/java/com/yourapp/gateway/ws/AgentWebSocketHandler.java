@@ -24,11 +24,14 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * WebSocket handler for PCAgent connections.
  *
- * Handshake: extracts ak/ts/nonce/sign from query params, validates via AkSkAuthService.
+ * Handshake: extracts ak/ts/nonce/sign from query params, validates via
+ * AkSkAuthService.
  * After connection:
- *   - register: registers agent in AgentRegistryService, notifies Skill Server agent_online
- *   - heartbeat: updates last_seen_at
- *   - tool_event / tool_done / tool_error / session_created: relayed to Skill Server
+ * - register: registers agent in AgentRegistryService, notifies Skill Server
+ * agent_online
+ * - heartbeat: updates last_seen_at
+ * - tool_event / tool_done / tool_error / session_created: relayed to Skill
+ * Server
  * On close: marks agent offline, notifies Skill Server agent_offline
  */
 @Slf4j
@@ -48,9 +51,9 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
     private final Map<String, String> sessionAgentMap = new ConcurrentHashMap<>();
 
     public AgentWebSocketHandler(AkSkAuthService akSkAuthService,
-                                 AgentRegistryService agentRegistryService,
-                                 EventRelayService eventRelayService,
-                                 ObjectMapper objectMapper) {
+            AgentRegistryService agentRegistryService,
+            EventRelayService eventRelayService,
+            ObjectMapper objectMapper) {
         this.akSkAuthService = akSkAuthService;
         this.agentRegistryService = agentRegistryService;
         this.eventRelayService = eventRelayService;
@@ -61,7 +64,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
 
     @Override
     public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response,
-                                   WebSocketHandler wsHandler, Map<String, Object> attributes) {
+            WebSocketHandler wsHandler, Map<String, Object> attributes) {
         if (request instanceof ServletServerHttpRequest servletRequest) {
             String ak = servletRequest.getServletRequest().getParameter("ak");
             String ts = servletRequest.getServletRequest().getParameter("ts");
@@ -87,7 +90,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
 
     @Override
     public void afterHandshake(ServerHttpRequest request, ServerHttpResponse response,
-                               WebSocketHandler wsHandler, Exception exception) {
+            WebSocketHandler wsHandler, Exception exception) {
         // No-op
     }
 
@@ -125,8 +128,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         switch (type) {
             case "register" -> handleRegister(session, message, userId, akId);
             case "heartbeat" -> handleHeartbeat(session);
-            case "tool_event", "tool_done", "tool_error", "session_created" ->
-                    handleRelayToSkillServer(session, message);
+            case "tool_event", "tool_done", "tool_error", "session_created", "status_response" ->
+                handleRelayToSkillServer(session, message);
             default -> log.warn("Unknown message type from PCAgent: type={}, sessionId={}",
                     type, session.getId());
         }
@@ -164,13 +167,14 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
     // ==================== Message Handlers ====================
 
     private void handleRegister(WebSocketSession session, GatewayMessage message,
-                                Long userId, String akId) {
+            Long userId, String akId) {
         String deviceName = message.getDeviceName();
         String os = message.getOs();
         String toolType = message.getToolType() != null ? message.getToolType() : "OPENCODE";
         String toolVersion = message.getToolVersion();
 
-        // Register in database (this also kicks old connections with same AK + toolType)
+        // Register in database (this also kicks old connections with same AK +
+        // toolType)
         AgentConnection agent = agentRegistryService.register(
                 userId, akId, deviceName, os, toolType, toolVersion);
 

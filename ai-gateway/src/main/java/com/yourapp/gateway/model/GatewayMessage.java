@@ -71,6 +71,13 @@ public class GatewayMessage {
     // --- Session created field ---
     private String toolSessionId;
 
+    // --- Session created: full session details (transparent relay to Skill Server)
+    // ---
+    private JsonNode session;
+
+    // --- Status response fields ---
+    private Boolean opencodeOnline;
+
     // ========== Static factory methods ==========
 
     /** PCAgent -> Gateway: register device */
