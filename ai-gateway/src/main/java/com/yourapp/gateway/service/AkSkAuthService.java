@@ -1,5 +1,7 @@
 package com.yourapp.gateway.service;
 
+import com.yourapp.gateway.model.AkSkCredential;
+import com.yourapp.gateway.repository.AkSkCredentialRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -29,6 +31,7 @@ public class AkSkAuthService {
     private static final String NONCE_KEY_PREFIX = "gw:auth:nonce:";
 
     private final StringRedisTemplate redisTemplate;
+    private final AkSkCredentialRepository credentialRepository;
 
     @Value("${gateway.auth.timestamp-tolerance-seconds:300}")
     private long timestampToleranceSeconds;
@@ -36,8 +39,10 @@ public class AkSkAuthService {
     @Value("${gateway.auth.nonce-ttl-seconds:300}")
     private long nonceTtlSeconds;
 
-    public AkSkAuthService(StringRedisTemplate redisTemplate) {
+    public AkSkAuthService(StringRedisTemplate redisTemplate,
+            AkSkCredentialRepository credentialRepository) {
         this.redisTemplate = redisTemplate;
+        this.credentialRepository = credentialRepository;
     }
 
     /**
@@ -147,24 +152,20 @@ public class AkSkAuthService {
     }
 
     /**
-     * Look up AK/SK record. In production, this queries a database table or
-     * calls the chat platform's open API to resolve AK -> (SK, userId).
-     *
-     * TODO: Replace with actual persistence-backed lookup.
+     * Look up AK/SK record from database (REQ-26).
+     * Queries the ak_sk_credential table for active credentials.
      */
     private AkSkRecord lookupByAk(String ak) {
-        // Placeholder: in production, query from database
-        // Example: SELECT sk, user_id FROM ak_sk_credential WHERE ak = ?
-        //
-        // For development/testing, accept a well-known test AK:
-        if ("test-ak-001".equals(ak)) {
-            return new AkSkRecord("test-sk-secret-001", 1L);
+        AkSkCredential credential = credentialRepository.findActiveByAk(ak);
+        if (credential == null) {
+            return null;
         }
-        return null;
+        return new AkSkRecord(credential.getSk(), credential.getUserId());
     }
 
     /**
      * Internal record holding AK lookup result.
      */
-    private record AkSkRecord(String sk, Long userId) {}
+    private record AkSkRecord(String sk, Long userId) {
+    }
 }
