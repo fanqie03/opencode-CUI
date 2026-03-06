@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.opencode.cui.skill.repository.SkillMessagePartRepository">
+
+    <resultMap id="SkillMessagePartResultMap" type="com.opencode.cui.skill.model.SkillMessagePart">
+        <id     property="id"           column="id"/>
+        <result property="messageId"    column="message_id"/>
+        <result property="sessionId"    column="session_id"/>
+        <result property="partId"       column="part_id"/>
+        <result property="seq"          column="seq"/>
+        <result property="partType"     column="part_type"/>
+        <result property="content"      column="content"/>
+        <result property="toolName"     column="tool_name"/>
+        <result property="toolCallId"   column="tool_call_id"/>
+        <result property="toolStatus"   column="tool_status"/>
+        <result property="toolInput"    column="tool_input"/>
+        <result property="toolOutput"   column="tool_output"/>
+        <result property="toolError"    column="tool_error"/>
+        <result property="toolTitle"    column="tool_title"/>
+        <result property="fileName"     column="file_name"/>
+        <result property="fileUrl"      column="file_url"/>
+        <result property="fileMime"     column="file_mime"/>
+        <result property="tokensIn"     column="tokens_in"/>
+        <result property="tokensOut"    column="tokens_out"/>
+        <result property="cost"         column="cost"/>
+        <result property="finishReason" column="finish_reason"/>
+        <result property="createdAt"    column="created_at"/>
+        <result property="updatedAt"    column="updated_at"/>
+    </resultMap>
+
+    <sql id="allColumns">
+        id, message_id, session_id, part_id, seq, part_type,
+        content, tool_name, tool_call_id, tool_status, tool_input, tool_output, tool_error, tool_title,
+        file_name, file_url, file_mime,
+        tokens_in, tokens_out, cost, finish_reason,
+        created_at, updated_at
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO skill_message_part
+            (message_id, session_id, part_id, seq, part_type,
+             content, tool_name, tool_call_id, tool_status, tool_input, tool_output, tool_error, tool_title,
+             file_name, file_url, file_mime,
+             tokens_in, tokens_out, cost, finish_reason,
+             created_at, updated_at)
+        VALUES
+            (#{messageId}, #{sessionId}, #{partId}, #{seq}, #{partType},
+             #{content}, #{toolName}, #{toolCallId}, #{toolStatus}, #{toolInput}, #{toolOutput}, #{toolError}, #{toolTitle},
+             #{fileName}, #{fileUrl}, #{fileMime},
+             #{tokensIn}, #{tokensOut}, #{cost}, #{finishReason},
+             NOW(), NOW())
+    </insert>
+
+    <!-- Upsert: insert or update by (session_id, part_id) unique key -->
+    <insert id="upsert">
+        INSERT INTO skill_message_part
+            (message_id, session_id, part_id, seq, part_type,
+             content, tool_name, tool_call_id, tool_status, tool_input, tool_output, tool_error, tool_title,
+             file_name, file_url, file_mime,
+             tokens_in, tokens_out, cost, finish_reason,
+             created_at, updated_at)
+        VALUES
+            (#{messageId}, #{sessionId}, #{partId}, #{seq}, #{partType},
+             #{content}, #{toolName}, #{toolCallId}, #{toolStatus}, #{toolInput}, #{toolOutput}, #{toolError}, #{toolTitle},
+             #{fileName}, #{fileUrl}, #{fileMime},
+             #{tokensIn}, #{tokensOut}, #{cost}, #{finishReason},
+             NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            content     = COALESCE(VALUES(content), content),
+            tool_status = COALESCE(VALUES(tool_status), tool_status),
+            tool_output = COALESCE(VALUES(tool_output), tool_output),
+            tool_error  = COALESCE(VALUES(tool_error), tool_error),
+            tool_title  = COALESCE(VALUES(tool_title), tool_title),
+            tokens_in   = COALESCE(VALUES(tokens_in), tokens_in),
+            tokens_out  = COALESCE(VALUES(tokens_out), tokens_out),
+            cost        = COALESCE(VALUES(cost), cost),
+            finish_reason = COALESCE(VALUES(finish_reason), finish_reason),
+            updated_at  = NOW()
+    </insert>
+
+    <select id="findByPartId" resultMap="SkillMessagePartResultMap">
+        SELECT <include refid="allColumns"/>
+        FROM skill_message_part
+        WHERE session_id = #{sessionId} AND part_id = #{partId}
+    </select>
+
+    <select id="findByMessageId" resultMap="SkillMessagePartResultMap">
+        SELECT <include refid="allColumns"/>
+        FROM skill_message_part
+        WHERE message_id = #{messageId}
+        ORDER BY seq ASC
+    </select>
+
+    <select id="findMaxSeqByMessageId" resultType="int">
+        SELECT COALESCE(MAX(seq), 0) FROM skill_message_part WHERE message_id = #{messageId}
+    </select>
+
+    <delete id="deleteByMessageId">
+        DELETE FROM skill_message_part WHERE message_id = #{messageId}
+    </delete>
+
+</mapper>

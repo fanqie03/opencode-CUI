@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.ws.GatewayWSHandler;
 import com.opencode.cui.skill.ws.SkillStreamHandler;
 import jakarta.annotation.PostConstruct;
@@ -39,6 +40,9 @@ public class GatewayRelayService {
     private final RedisMessageBroker redisMessageBroker;
     private final SequenceTracker sequenceTracker;
     private final GatewayWSHandler gatewayWSHandler;
+    private final OpenCodeEventTranslator translator;
+    private final MessagePersistenceService persistenceService;
+    private final StreamBufferService bufferService;
 
     public GatewayRelayService(ObjectMapper objectMapper,
             SkillStreamHandler skillStreamHandler,
@@ -46,7 +50,10 @@ public class GatewayRelayService {
             SkillSessionService sessionService,
             RedisMessageBroker redisMessageBroker,
             SequenceTracker sequenceTracker,
-            GatewayWSHandler gatewayWSHandler) {
+            GatewayWSHandler gatewayWSHandler,
+            OpenCodeEventTranslator translator,
+            MessagePersistenceService persistenceService,
+            StreamBufferService bufferService) {
         this.objectMapper = objectMapper;
         this.skillStreamHandler = skillStreamHandler;
         this.messageService = messageService;
@@ -54,6 +61,9 @@ public class GatewayRelayService {
         this.redisMessageBroker = redisMessageBroker;
         this.sequenceTracker = sequenceTracker;
         this.gatewayWSHandler = gatewayWSHandler;
+        this.translator = translator;
+        this.persistenceService = persistenceService;
+        this.bufferService = bufferService;
     }
 
     // ==================== Initialization ====================
@@ -107,10 +117,17 @@ public class GatewayRelayService {
     private void handleSessionBroadcast(String sessionId, String rawMessage) {
         try {
             JsonNode node = objectMapper.readTree(rawMessage);
+
+            // New format: { sessionId, message: { type, partId, content, ... } }
+            if (node.has("message")) {
+                StreamMessage msg = objectMapper.treeToValue(node.get("message"), StreamMessage.class);
+                skillStreamHandler.pushStreamMessage(sessionId, msg);
+                return;
+            }
+
+            // Legacy format: { type, sessionId, content }
             String type = node.path("type").asText("delta");
             String content = node.has("content") ? node.get("content").toString() : null;
-
-            // Push to local Client subscribers
             skillStreamHandler.pushToSession(sessionId, type, content);
         } catch (JsonProcessingException e) {
             log.error("Failed to parse session broadcast for session {}: {}", sessionId, e.getMessage());
@@ -265,19 +282,30 @@ public class GatewayRelayService {
 
         log.debug("handleToolEvent: sessionId={}, broadcasting to subscribers", sessionId);
 
-        // Extract raw event and persist as assistant message
+        // Extract the OpenCode event
         JsonNode event = node.get("event");
-        String rawEvent = event != null ? event.toString() : node.toString();
 
-        try {
-            messageService.saveAssistantMessage(Long.valueOf(sessionId), rawEvent, null);
-        } catch (Exception e) {
-            log.error("Failed to persist tool_event for session {}: {}", sessionId, e.getMessage());
+        // Translate OpenCode event to semantic StreamMessage
+        StreamMessage msg = translator.translate(event);
+        if (msg == null) {
+            log.debug("Event ignored by translator for session {}", sessionId);
+            return;
         }
 
-        // v1: Publish to Skill Redis for multi-instance broadcast (replaces direct
-        // pushToSession)
-        broadcastToSession(sessionId, "delta", rawEvent);
+        // Broadcast to all subscribers via Skill Redis
+        broadcastStreamMessage(sessionId, msg);
+
+        // Accumulate to Redis buffer (for resume)
+        bufferService.accumulate(sessionId, msg);
+
+        // Persist final states
+        try {
+            persistenceService.persistIfFinal(Long.parseLong(sessionId), msg);
+        } catch (NumberFormatException e) {
+            log.warn("Cannot persist: sessionId is not a valid Long: {}", sessionId);
+        } catch (Exception e) {
+            log.error("Failed to persist StreamMessage for session {}: {}", sessionId, e.getMessage(), e);
+        }
     }
 
     private void handleToolDone(String sessionId, JsonNode node) {
@@ -286,13 +314,25 @@ public class GatewayRelayService {
             return;
         }
 
-        JsonNode usage = node.get("usage");
-        String usageMeta = usage != null ? usage.toString() : null;
+        StreamMessage msg = StreamMessage.builder()
+                .type(StreamMessage.Types.SESSION_STATUS)
+                .sessionStatus("idle")
+                .build();
+        broadcastStreamMessage(sessionId, msg);
 
-        // v1: Broadcast via Skill Redis
-        broadcastToSession(sessionId, "done", usageMeta);
+        // Accumulate to Redis buffer (clears session on idle)
+        bufferService.accumulate(sessionId, msg);
 
-        log.info("Tool done for session {}: usage={}", sessionId, usageMeta);
+        // Persist session idle status
+        try {
+            persistenceService.persistIfFinal(Long.parseLong(sessionId), msg);
+        } catch (NumberFormatException e) {
+            log.warn("Cannot persist tool_done: sessionId is not a valid Long: {}", sessionId);
+        } catch (Exception e) {
+            log.error("Failed to persist tool_done for session {}: {}", sessionId, e.getMessage(), e);
+        }
+
+        log.info("Tool done for session {}", sessionId);
     }
 
     private void handleToolError(String sessionId, JsonNode node) {
@@ -304,8 +344,11 @@ public class GatewayRelayService {
             } catch (Exception e) {
                 log.error("Failed to persist tool_error for session {}: {}", sessionId, e.getMessage());
             }
-            // v1: Broadcast via Skill Redis
-            broadcastToSession(sessionId, "error", error);
+            StreamMessage msg = StreamMessage.builder()
+                    .type(StreamMessage.Types.ERROR)
+                    .error(error)
+                    .build();
+            broadcastStreamMessage(sessionId, msg);
         }
 
         log.error("Tool error for session {}: {}", sessionId, error);
@@ -316,11 +359,13 @@ public class GatewayRelayService {
         String toolVersion = node.path("toolVersion").asText("UNKNOWN");
         log.info("Agent online: agentId={}, toolType={}, toolVersion={}", agentId, toolType, toolVersion);
 
-        // Notify all subscribers of sessions associated with this agent
         if (agentId != null) {
             try {
+                StreamMessage msg = StreamMessage.builder()
+                        .type(StreamMessage.Types.AGENT_ONLINE)
+                        .build();
                 sessionService.findByAgentId(Long.valueOf(agentId)).forEach(
-                        session -> broadcastToSession(session.getId().toString(), "agent_online", null));
+                        session -> broadcastStreamMessage(session.getId().toString(), msg));
             } catch (NumberFormatException e) {
                 log.warn("Invalid agentId for online event: {}", agentId);
             }
@@ -330,11 +375,13 @@ public class GatewayRelayService {
     private void handleAgentOffline(String agentId) {
         log.warn("Agent offline: agentId={}", agentId);
 
-        // Notify all subscribers of sessions associated with this agent
         if (agentId != null) {
             try {
+                StreamMessage msg = StreamMessage.builder()
+                        .type(StreamMessage.Types.AGENT_OFFLINE)
+                        .build();
                 sessionService.findByAgentId(Long.valueOf(agentId)).forEach(
-                        session -> broadcastToSession(session.getId().toString(), "agent_offline", null));
+                        session -> broadcastStreamMessage(session.getId().toString(), msg));
             } catch (NumberFormatException e) {
                 log.warn("Invalid agentId for offline event: {}", agentId);
             }
@@ -369,42 +416,40 @@ public class GatewayRelayService {
             return;
         }
 
-        String permissionId = node.path("permissionId").asText(null);
-        String command = node.path("command").asText(null);
-        String workingDirectory = node.path("workingDirectory").asText(null);
+        StreamMessage msg = translator.translatePermissionFromGateway(node);
+        broadcastStreamMessage(sessionId, msg);
 
-        // Build permission request content for the client
-        ObjectNode content = objectMapper.createObjectNode();
-        if (permissionId != null)
-            content.put("permissionId", permissionId);
-        if (command != null)
-            content.put("command", command);
-        if (workingDirectory != null)
-            content.put("workingDirectory", workingDirectory);
-
-        // Copy any additional fields from the original message
-        JsonNode event = node.get("event");
-        if (event != null) {
-            content.set("event", event);
-        }
-
-        String contentStr = content.toString();
-
-        // v1: Broadcast via Skill Redis
-        broadcastToSession(sessionId, "permission_request", contentStr);
-
-        log.info("Permission request broadcast to session {}: permId={}, command={}",
-                sessionId, permissionId, command);
+        log.info("Permission request broadcast to session {}: permId={}",
+                sessionId, msg.getPermissionId());
     }
 
     // ==================== Internal Helpers ====================
 
     /**
-     * Broadcast a message to all Skill instances via Skill Redis session:{id}
-     * channel.
+     * Broadcast a StreamMessage to all Skill instances via Skill Redis
+     * session:{id} channel.
      * Each instance's handleSessionBroadcast() will push to local Client
      * subscribers.
      */
+    private void broadcastStreamMessage(String sessionId, StreamMessage msg) {
+        try {
+            ObjectNode envelope = objectMapper.createObjectNode();
+            envelope.put("sessionId", sessionId);
+            envelope.set("message", objectMapper.valueToTree(msg));
+
+            String messageText = objectMapper.writeValueAsString(envelope);
+            redisMessageBroker.publishToSession(sessionId, messageText);
+        } catch (Exception e) {
+            log.error("Failed to broadcast StreamMessage to session {}: type={}, error={}",
+                    sessionId, msg.getType(), e.getMessage());
+        }
+    }
+
+    /**
+     * @deprecated Use broadcastStreamMessage instead. Kept for backward
+     *             compatibility during migration.
+     */
+    @Deprecated
     private void broadcastToSession(String sessionId, String type, String content) {
         ObjectNode message = objectMapper.createObjectNode();
         message.put("type", type);

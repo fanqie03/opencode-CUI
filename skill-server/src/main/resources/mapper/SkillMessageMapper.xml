@@ -51,4 +51,18 @@
             (#{sessionId}, #{seq}, #{role}, #{content}, #{contentType}, NOW(), #{meta})
     </insert>
 
+    <update id="updateStats">
+        UPDATE skill_message
+        SET tokens_in  = COALESCE(#{tokensIn}, tokens_in),
+            tokens_out = COALESCE(#{tokensOut}, tokens_out),
+            cost       = COALESCE(#{cost}, cost)
+        WHERE id = #{id}
+    </update>
+
+    <update id="markFinished">
+        UPDATE skill_message
+        SET finished = 1
+        WHERE id = #{id}
+    </update>
+
 </mapper>

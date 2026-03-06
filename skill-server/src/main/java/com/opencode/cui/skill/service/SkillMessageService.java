@@ -15,7 +15,7 @@ public class SkillMessageService {
     private final SkillSessionService sessionService;
 
     public SkillMessageService(SkillMessageRepository messageRepository,
-                               SkillSessionService sessionService) {
+            SkillSessionService sessionService) {
         this.messageRepository = messageRepository;
         this.sessionService = sessionService;
     }
@@ -26,7 +26,7 @@ public class SkillMessageService {
      */
     @Transactional
     public SkillMessage saveMessage(Long sessionId, SkillMessage.Role role, String content,
-                                    SkillMessage.ContentType contentType, String meta) {
+            SkillMessage.ContentType contentType, String meta) {
         // Auto-increment seq within the session
         int nextSeq = messageRepository.findMaxSeqBySessionId(sessionId) + 1;
 
@@ -101,5 +101,24 @@ public class SkillMessageService {
     @Transactional(readOnly = true)
     public long getMessageCount(Long sessionId) {
         return messageRepository.countBySessionId(sessionId);
+    }
+
+    /**
+     * Update token/cost stats for a message (called on step.done).
+     */
+    @Transactional
+    public void updateMessageStats(Long messageId, Integer tokensIn, Integer tokensOut, Double cost) {
+        messageRepository.updateStats(messageId, tokensIn, tokensOut, cost);
+        log.debug("Updated message stats: messageId={}, tokensIn={}, tokensOut={}, cost={}",
+                messageId, tokensIn, tokensOut, cost);
+    }
+
+    /**
+     * Mark a message as finished (called when session goes idle).
+     */
+    @Transactional
+    public void markMessageFinished(Long messageId) {
+        messageRepository.markFinished(messageId);
+        log.debug("Marked message as finished: messageId={}", messageId);
     }
 }

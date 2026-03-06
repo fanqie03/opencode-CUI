@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Message, StreamMessage, ToolUseInfo } from '../protocol/types';
-import { parse } from '../protocol/OpenCodeEventParser';
+import type { Message, StreamMessage } from '../protocol/types';
 import { StreamAssembler } from '../protocol/StreamAssembler';
-import * as ToolUseRenderer from '../protocol/ToolUseRenderer';
 import * as api from '../utils/api';
 
 type AgentStatus = 'online' | 'offline' | 'unknown';
@@ -15,8 +13,7 @@ export interface UseSkillStreamReturn {
   error: string | null;
 }
 
-// In dev, Vite proxy handles /ws/* -> ws://localhost:8082
-// Use the current page origin with ws:// protocol
+// WebSocket base URL: use env var, or derive from page origin
 const WS_BASE_URL =
   typeof import.meta !== 'undefined' && (import.meta as unknown as Record<string, Record<string, string>>).env?.VITE_SKILL_SERVER_WS
     ? (import.meta as unknown as Record<string, Record<string, string>>).env.VITE_SKILL_SERVER_WS
@@ -44,7 +41,6 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
   const assemblerRef = useRef(new StreamAssembler());
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activeToolsRef = useRef<Map<string, ToolUseInfo>>(new Map());
   const streamingMsgIdRef = useRef<string | null>(null);
 
   // ------------------------------------------------------------------
@@ -118,43 +114,34 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
   }, [connect]);
 
   // ------------------------------------------------------------------
-  // Handle incoming stream messages
+  // Handle incoming stream messages (v2 protocol)
   // ------------------------------------------------------------------
   const handleStreamMessage = useCallback((msg: StreamMessage) => {
     switch (msg.type) {
-      case 'delta': {
-        const assembler = assemblerRef.current;
-        const deltaText = msg.content ?? '';
-        assembler.push(deltaText);
+      // ---- Text streaming ----
+      case 'text.delta':
+      case 'text.done':
+      case 'thinking.delta':
+      case 'thinking.done':
+      case 'tool.update':
+      case 'question':
+      case 'permission.ask':
+      case 'file': {
         setIsStreaming(true);
 
-        // If we also get a raw event, parse it for richer info
-        if (msg.event) {
-          const parsed = parse(msg.event);
-          if (parsed.eventType === 'tool.start' && parsed.toolName) {
-            const toolInfo = ToolUseRenderer.startTool(parsed);
-            activeToolsRef.current.set(parsed.toolName, toolInfo);
-          }
-          if (
-            (parsed.eventType === 'tool.result' ||
-              parsed.eventType === 'tool.error') &&
-            parsed.toolName
-          ) {
-            const existing = activeToolsRef.current.get(parsed.toolName);
-            if (existing) {
-              const updated = ToolUseRenderer.completeTool(parsed, existing);
-              activeToolsRef.current.set(parsed.toolName, updated);
-            }
-          }
-        }
+        // Feed the message to the assembler
+        const assembler = assemblerRef.current;
+        assembler.handleMessage(msg);
 
-        // Upsert the streaming assistant message
+        // Upsert the streaming assistant message with parts
         const currentText = assembler.getText();
+        const currentParts = assembler.getParts();
+
         setMessages((prev) => {
           if (streamingMsgIdRef.current) {
             return prev.map((m) =>
               m.id === streamingMsgIdRef.current
-                ? { ...m, content: currentText }
+                ? { ...m, content: currentText, parts: [...currentParts], isStreaming: true }
                 : m,
             );
           }
@@ -169,70 +156,91 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
               contentType: 'markdown',
               timestamp: Date.now(),
               isStreaming: true,
+              parts: [...currentParts],
             },
           ];
         });
         break;
       }
 
-      case 'done': {
-        assemblerRef.current.complete();
-        setIsStreaming(false);
+      // ---- Step events (metadata only, no UI part) ----
+      case 'step.start':
+        setIsStreaming(true);
+        break;
 
-        // Finalize the streaming message
-        if (streamingMsgIdRef.current) {
+      case 'step.done':
+        // Update message meta with token info
+        if (streamingMsgIdRef.current && msg.tokens) {
           const finalId = streamingMsgIdRef.current;
           setMessages((prev) =>
             prev.map((m) =>
               m.id === finalId
-                ? {
-                  ...m,
-                  isStreaming: false,
-                  meta: msg.usage ? { usage: msg.usage } : m.meta,
-                }
+                ? { ...m, meta: { ...m.meta, tokens: msg.tokens, cost: msg.cost } }
                 : m,
             ),
           );
         }
+        break;
 
-        // Append completed tool messages
-        activeToolsRef.current.forEach((info) => {
-          if (info.status !== 'running') {
-            const rendered = ToolUseRenderer.renderToolUse(info);
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: genId(),
-                role: 'tool',
-                content: `**${rendered.title}**\n\n${rendered.language ? '```' + rendered.language + '\n' + rendered.content + '\n```' : rendered.content}`,
-                contentType: 'markdown',
-                timestamp: Date.now(),
-              },
-            ]);
+      // ---- Session status ----
+      case 'session.status': {
+        if (msg.sessionStatus === 'idle' || msg.sessionStatus === 'completed') {
+          // Finalize the current streaming message
+          assemblerRef.current.complete();
+          setIsStreaming(false);
+
+          if (streamingMsgIdRef.current) {
+            const finalId = streamingMsgIdRef.current;
+            const finalParts = assemblerRef.current.getParts();
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === finalId
+                  ? { ...m, isStreaming: false, parts: [...finalParts] }
+                  : m,
+              ),
+            );
           }
-        });
-        activeToolsRef.current.clear();
 
-        // Reset assembler for the next message
-        assemblerRef.current.reset();
-        streamingMsgIdRef.current = null;
+          // Reset for next message
+          assemblerRef.current.reset();
+          streamingMsgIdRef.current = null;
+        }
         break;
       }
 
-      case 'error': {
-        setIsStreaming(false);
-        setError(msg.message ?? 'Unknown stream error');
-        assemblerRef.current.reset();
-        streamingMsgIdRef.current = null;
+      // ---- Agent status ----
+      case 'agent.online':
+        setAgentStatus('online');
         break;
-      }
 
-      case 'agent_offline':
+      case 'agent.offline':
         setAgentStatus('offline');
         break;
 
-      case 'agent_online':
-        setAgentStatus('online');
+      // ---- Error ----
+      case 'error':
+        setIsStreaming(false);
+        setError(msg.error ?? 'Unknown stream error');
+        assemblerRef.current.reset();
+        streamingMsgIdRef.current = null;
+        break;
+
+      // ---- Snapshot (reconnect recovery) ----
+      case 'snapshot': {
+        // snapshot contains full message history, replace current
+        // This will be implemented when Phase 3 (Redis buffer) is done
+        break;
+      }
+
+      // ---- Streaming parts (reconnect recovery) ----
+      case 'streaming': {
+        // Contains in-progress parts to resume display
+        // This will be implemented when Phase 3 (Redis buffer) is done
+        break;
+      }
+
+      default:
+        // Unknown type - silently ignore
         break;
     }
   }, []);

@@ -12,12 +12,19 @@ public interface SkillMessageRepository {
     SkillMessage findById(@Param("id") Long id);
 
     List<SkillMessage> findBySessionId(@Param("sessionId") Long sessionId,
-                                       @Param("offset") int offset,
-                                       @Param("limit") int limit);
+            @Param("offset") int offset,
+            @Param("limit") int limit);
 
     long countBySessionId(@Param("sessionId") Long sessionId);
 
     int findMaxSeqBySessionId(@Param("sessionId") Long sessionId);
 
     int insert(SkillMessage message);
+
+    int updateStats(@Param("id") Long id,
+            @Param("tokensIn") Integer tokensIn,
+            @Param("tokensOut") Integer tokensOut,
+            @Param("cost") Double cost);
+
+    int markFinished(@Param("id") Long id);
 }

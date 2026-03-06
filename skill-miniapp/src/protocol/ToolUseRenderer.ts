@@ -1,82 +1,54 @@
-import type { ParsedEvent, ToolUseInfo } from './types';
+import type { MessagePart } from './types';
 
 /**
- * Create a new ToolUseInfo from a `tool.start` event.
- */
-export function startTool(event: ParsedEvent): ToolUseInfo {
-  return {
-    toolName: event.toolName ?? 'unknown',
-    args: event.toolArgs,
-    status: 'running',
-  };
-}
-
-/**
- * Update an existing ToolUseInfo with the outcome of a
- * `tool.result` or `tool.error` event.
- */
-export function completeTool(
-  event: ParsedEvent,
-  existing: ToolUseInfo,
-): ToolUseInfo {
-  if (event.eventType === 'tool.error') {
-    return {
-      ...existing,
-      error: event.error,
-      status: 'error',
-    };
-  }
-
-  return {
-    ...existing,
-    result: event.toolResult,
-    status: 'completed',
-  };
-}
-
-/**
- * Produce a renderable representation of a ToolUseInfo.
+ * ToolUseRenderer (v2 — adapted for MessagePart)
  *
- * The returned object contains a human-readable `title`, the primary
- * `content` to display, and an optional `language` hint for syntax
- * highlighting.
+ * Renders tool use information from a MessagePart into a
+ * displayable format. This is kept for compatibility but the
+ * primary rendering is now done by the ToolCard component.
  */
-export function renderToolUse(info: ToolUseInfo): {
+
+export interface RenderedToolUse {
   title: string;
   content: string;
   language?: string;
-} {
-  const statusLabel =
-    info.status === 'running'
-      ? '运行中...'
-      : info.status === 'error'
-        ? '错误'
-        : '完成';
+}
 
-  const title = `Tool: ${info.toolName} [${statusLabel}]`;
+const statusLabels: Record<string, string> = {
+  pending: '等待中',
+  running: '运行中...',
+  completed: '完成',
+  error: '错误',
+};
 
-  if (info.status === 'error' && info.error) {
-    return { title, content: info.error };
+/**
+ * Render a tool MessagePart into a displayable format.
+ */
+export function renderToolPart(part: MessagePart): RenderedToolUse {
+  const statusLabel = statusLabels[part.toolStatus ?? 'pending'] ?? part.toolStatus ?? '';
+  const title = `Tool: ${part.toolName ?? 'unknown'} [${statusLabel}]`;
+
+  if (part.toolStatus === 'error' && part.content) {
+    return { title, content: part.content };
   }
 
-  if (info.result) {
-    // Attempt to pretty-print JSON results; fall back to raw string.
+  if (part.toolOutput) {
     try {
-      const parsed = JSON.parse(info.result);
+      const parsed = JSON.parse(part.toolOutput);
       return {
         title,
         content: JSON.stringify(parsed, null, 2),
         language: 'json',
       };
     } catch {
-      return { title, content: info.result };
+      return { title, content: part.toolOutput };
     }
   }
 
-  if (info.args) {
+  if (part.toolInput) {
     return {
       title,
-      content: JSON.stringify(info.args, null, 2),
+      content: JSON.stringify(part.toolInput, null, 2),
       language: 'json',
     };
   }

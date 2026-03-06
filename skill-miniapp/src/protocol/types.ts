@@ -1,62 +1,108 @@
 // ============================================================
-// OpenCode Event Type Definitions
-// Protocol adaptation types for the Skill Miniapp client
+// StreamMessage Protocol Type Definitions (v2)
+// Adapted from backend StreamMessage.java — 17 message types
 // ============================================================
 
-/** Event types from the OpenCode SSE stream */
-export type OpenCodeEventType =
-  | 'message.updated'
-  | 'session.completed'
-  | 'session.created'
-  | 'tool.start'
-  | 'tool.result'
-  | 'tool.error'
-  | 'unknown';
-
-/** Raw event object received from the OpenCode SSE stream (via transparent relay) */
-export interface OpenCodeEvent {
-  type: string;
-  sessionId?: string;
-  content?: { delta?: string; text?: string };
-  usage?: { input_tokens: number; output_tokens: number };
-  tool?: string;
-  args?: Record<string, unknown>;
-  result?: string;
-  error?: string;
-  [key: string]: unknown;
-}
-
-/** Parsed and normalized event ready for UI consumption */
-export interface ParsedEvent {
-  eventType: OpenCodeEventType;
-  sessionId?: string;
-  delta?: string;
-  text?: string;
-  usage?: { input_tokens: number; output_tokens: number };
-  toolName?: string;
-  toolArgs?: Record<string, unknown>;
-  toolResult?: string;
-  error?: string;
-  raw: OpenCodeEvent;
-}
+/** All supported StreamMessage type strings */
+export type StreamMessageType =
+  | 'text.delta'
+  | 'text.done'
+  | 'thinking.delta'
+  | 'thinking.done'
+  | 'tool.update'
+  | 'question'
+  | 'file'
+  | 'step.start'
+  | 'step.done'
+  | 'session.status'
+  | 'permission.ask'
+  | 'permission.result'
+  | 'agent.online'
+  | 'agent.offline'
+  | 'error'
+  | 'snapshot'
+  | 'streaming';
 
 /**
- * Stream message delivered from Skill Server WebSocket.
- * The Skill Server transparently relays OpenCode events;
- * the `event` field carries the raw OpenCode event JSON.
+ * StreamMessage delivered from Skill Server WebSocket.
+ * The backend translates OpenCode events into this semantic format.
  */
 export interface StreamMessage {
-  type: 'delta' | 'done' | 'error' | 'agent_offline' | 'agent_online';
+  type: StreamMessageType;
   seq?: number;
+  partId?: string;
+
+  // Text content (text.delta / text.done / thinking.delta / thinking.done)
   content?: string;
-  usage?: { input_tokens: number; output_tokens: number };
-  message?: string;
-  event?: OpenCodeEvent;
+
+  // Tool fields (tool.update)
+  toolName?: string;
+  toolCallId?: string;
+  status?: 'pending' | 'running' | 'completed' | 'error';
+  input?: Record<string, unknown>;
+  output?: string;
+  title?: string;
+
+  // Question fields
+  header?: string;
+  question?: string;
+  options?: string[];
+
+  // Permission fields
+  permissionId?: string;
+  permType?: string;
+
+  // Step fields
+  tokens?: { input?: number; output?: number };
+  cost?: number;
+  reason?: string;
+
+  // Session status
+  sessionStatus?: string;
+
+  // Error
+  error?: string;
+
+  // Metadata
+  metadata?: Record<string, unknown>;
+  raw?: unknown;
 }
 
 // ============================================================
 // UI State Types
 // ============================================================
+
+/** A structured part within an assistant message */
+export interface MessagePart {
+  partId: string;
+  type: 'text' | 'thinking' | 'tool' | 'question' | 'permission' | 'file';
+  content: string;
+  isStreaming: boolean;
+
+  // Tool-specific
+  toolName?: string;
+  toolCallId?: string;
+  toolStatus?: 'pending' | 'running' | 'completed' | 'error';
+  toolInput?: Record<string, unknown>;
+  toolOutput?: string;
+  toolTitle?: string;
+
+  // Question-specific
+  header?: string;
+  question?: string;
+  options?: string[];
+  answered?: boolean;
+
+  // Permission-specific
+  permissionId?: string;
+  permType?: string;
+  permResolved?: boolean;
+
+  // File-specific
+  fileName?: string;
+  fileUrl?: string;
+  fileMime?: string;
+}
 
 /** A single message in the conversation */
 export interface Message {
@@ -67,6 +113,7 @@ export interface Message {
   timestamp: number;
   meta?: Record<string, unknown>;
   isStreaming?: boolean;
+  parts?: MessagePart[];
 }
 
 /** A Skill session */
@@ -81,7 +128,7 @@ export interface Session {
 /** Mini Bar status indicator */
 export type MiniBarStatus = 'processing' | 'completed' | 'error' | 'offline';
 
-/** Tool use information for rendering */
+/** Tool use information for rendering (legacy, kept for compat) */
 export interface ToolUseInfo {
   toolName: string;
   args?: Record<string, unknown>;
@@ -89,3 +136,8 @@ export interface ToolUseInfo {
   error?: string;
   status: 'running' | 'completed' | 'error';
 }
+
+// Legacy type re-exports for backward compatibility
+export type OpenCodeEventType = string;
+export type OpenCodeEvent = Record<string, unknown>;
+export type ParsedEvent = Record<string, unknown>;

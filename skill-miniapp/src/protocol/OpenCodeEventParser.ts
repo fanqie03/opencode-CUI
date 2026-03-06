@@ -1,77 +1,48 @@
-import type { OpenCodeEvent, OpenCodeEventType, ParsedEvent } from './types';
-
 /**
- * Known event type strings emitted by the OpenCode SSE stream.
- * Any event whose `type` does not match is classified as 'unknown'.
- */
-const KNOWN_TYPES: Record<string, OpenCodeEventType> = {
-  'message.updated': 'message.updated',
-  'session.completed': 'session.completed',
-  'session.created': 'session.created',
-  'tool.start': 'tool.start',
-  'tool.result': 'tool.result',
-  'tool.error': 'tool.error',
-};
-
-/**
- * Parse a raw OpenCode event into a typed `ParsedEvent` structure.
+ * OpenCodeEventParser (v2 — simplified)
  *
- * This function never throws. Unrecognised event types are returned
- * with `eventType: 'unknown'` so that callers can decide whether to
- * ignore or log them.
+ * With the backend now translating OpenCode events into semantic
+ * StreamMessage format, this parser is largely vestigial. It provides
+ * a thin compatibility layer for any code that still references it.
+ *
+ * The primary message handling is done in useSkillStream via
+ * StreamMessage types directly.
  */
-export function parse(event: OpenCodeEvent): ParsedEvent {
-  const eventType: OpenCodeEventType = KNOWN_TYPES[event.type] ?? 'unknown';
 
-  const base: ParsedEvent = {
-    eventType,
-    sessionId: event.sessionId,
-    raw: event,
-  };
+import type { StreamMessage } from './types';
 
-  switch (eventType) {
-    case 'message.updated':
-      return {
-        ...base,
-        delta: event.content?.delta,
-        text: event.content?.text,
-      };
+/**
+ * Classify a StreamMessage type into a broad category.
+ * Useful for logging and debugging.
+ */
+export function classifyType(type: string): 'content' | 'tool' | 'session' | 'error' | 'unknown' {
+  if (type.startsWith('text.') || type.startsWith('thinking.')) return 'content';
+  if (type.startsWith('tool.') || type === 'question' || type === 'file') return 'tool';
+  if (type.startsWith('session.') || type.startsWith('agent.') || type.startsWith('permission.') || type.startsWith('step.')) return 'session';
+  if (type === 'error') return 'error';
+  return 'unknown';
+}
 
-    case 'session.completed':
-      return {
-        ...base,
-        usage: event.usage,
-      };
+/**
+ * Check if a StreamMessage represents a final/completed state.
+ */
+export function isFinalState(msg: StreamMessage): boolean {
+  return (
+    msg.type === 'text.done' ||
+    msg.type === 'thinking.done' ||
+    msg.type === 'session.status' ||
+    msg.type === 'step.done' ||
+    (msg.type === 'tool.update' && (msg.status === 'completed' || msg.status === 'error'))
+  );
+}
 
-    case 'session.created':
-      return {
-        ...base,
-        sessionId: event.sessionId,
-      };
-
-    case 'tool.start':
-      return {
-        ...base,
-        toolName: event.tool,
-        toolArgs: event.args,
-      };
-
-    case 'tool.result':
-      return {
-        ...base,
-        toolName: event.tool,
-        toolResult: event.result,
-      };
-
-    case 'tool.error':
-      return {
-        ...base,
-        toolName: event.tool,
-        error: event.error,
-      };
-
-    case 'unknown':
-    default:
-      return base;
-  }
+/**
+ * Check if a StreamMessage represents streaming/in-progress state.
+ */
+export function isStreamingState(msg: StreamMessage): boolean {
+  return (
+    msg.type === 'text.delta' ||
+    msg.type === 'thinking.delta' ||
+    (msg.type === 'tool.update' && (msg.status === 'pending' || msg.status === 'running'))
+  );
 }
