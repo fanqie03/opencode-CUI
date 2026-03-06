@@ -39,7 +39,7 @@ mybatis:
 skill:
   websocket:
     # Allowed origins for Skill miniapp WebSocket connections
-    allowed-origins: ${CORS_ORIGINS:http://localhost:5173}
+    allowed-origins: ${CORS_ORIGINS:*}
   gateway:
     # Internal token for AI-Gateway <-> Skill Server authentication
     internal-token: ${SKILL_SERVER_INTERNAL_TOKEN:sk-intl-9f2a7d3e4b1c}
