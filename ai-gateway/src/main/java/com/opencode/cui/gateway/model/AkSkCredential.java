@@ -8,7 +8,7 @@ import lombok.Builder;
 import java.time.LocalDateTime;
 
 /**
- * AK/SK credential entity â€?maps to the ak_sk_credential table.
+ * AK/SK credential entity ï¿½?maps to the ak_sk_credential table.
  *
  * Used by AkSkAuthService for database-backed AK/SK lookup (REQ-26).
  */
@@ -20,10 +20,10 @@ public class AkSkCredential {
 
     private Long id;
 
-    /** Access Key â€?unique identifier for the credential */
+    /** Access Key ï¿½?unique identifier for the credential */
     private String ak;
 
-    /** Secret Key â€?used for HMAC-SHA256 signature verification */
+    /** Secret Key ï¿½?used for HMAC-SHA256 signature verification */
     private String sk;
 
     /** Associated user ID */

@@ -126,7 +126,7 @@ class AkSkAuthServiceTest {
 
     @Test
     void testVerifyWithExpiredTimestamp() {
-        // No mocks needed â€?timestamp check fails before nonce/AK check
+        // No mocks needed ï¿½?timestamp check fails before nonce/AK check
         // Timestamp 10 minutes ago (beyond 5-minute window)
         String ts = String.valueOf(Instant.now().getEpochSecond() - 600);
         assertNull(authService.verify(TEST_AK, ts, "abc", "sign"));
@@ -134,7 +134,7 @@ class AkSkAuthServiceTest {
 
     @Test
     void testVerifyWithFutureTimestamp() {
-        // No mocks needed â€?timestamp check fails before nonce/AK check
+        // No mocks needed ï¿½?timestamp check fails before nonce/AK check
         // Timestamp 10 minutes in the future
         String ts = String.valueOf(Instant.now().getEpochSecond() + 600);
         assertNull(authService.verify(TEST_AK, ts, "abc", "sign"));

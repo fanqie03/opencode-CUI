@@ -36,7 +36,7 @@ class SequenceTrackerTest {
     @DisplayName("Small gap (1-3) returns continue")
     void smallGapReturnsContinue() {
         tracker.validateSequence("s1", 1L);
-        // gap = 4 - 2 = 2 â†?<=3 â†?continue
+        // gap = 4 - 2 = 2 ï¿½?<=3 ï¿½?continue
         String action = tracker.validateSequence("s1", 4L);
         assertEquals("continue", action);
     }
@@ -45,7 +45,7 @@ class SequenceTrackerTest {
     @DisplayName("Medium gap (4-10) returns request_recovery")
     void mediumGapReturnsRequestRecovery() {
         tracker.validateSequence("s1", 1L);
-        // gap = 9 - 2 = 7 â†?<=10 â†?request_recovery
+        // gap = 9 - 2 = 7 ï¿½?<=10 ï¿½?request_recovery
         String action = tracker.validateSequence("s1", 9L);
         assertEquals("request_recovery", action);
     }
@@ -54,7 +54,7 @@ class SequenceTrackerTest {
     @DisplayName("Large gap (>10) returns reconnect")
     void largeGapReturnsReconnect() {
         tracker.validateSequence("s1", 1L);
-        // gap = 22 - 2 = 20 â†?>10 â†?reconnect
+        // gap = 22 - 2 = 20 ï¿½?>10 ï¿½?reconnect
         String action = tracker.validateSequence("s1", 22L);
         assertEquals("reconnect", action);
     }
@@ -99,7 +99,7 @@ class SequenceTrackerTest {
     @DisplayName("Exact boundary: gap of 3 is small")
     void gapOf3IsSmall() {
         tracker.validateSequence("s1", 1L);
-        // gap = 5 - 2 = 3 â†?<=3 â†?continue
+        // gap = 5 - 2 = 3 ï¿½?<=3 ï¿½?continue
         assertEquals("continue", tracker.validateSequence("s1", 5L));
     }
 
@@ -107,7 +107,7 @@ class SequenceTrackerTest {
     @DisplayName("Exact boundary: gap of 4 is medium")
     void gapOf4IsMedium() {
         tracker.validateSequence("s1", 1L);
-        // gap = 6 - 2 = 4 â†?<=10 â†?request_recovery
+        // gap = 6 - 2 = 4 ï¿½?<=10 ï¿½?request_recovery
         assertEquals("request_recovery", tracker.validateSequence("s1", 6L));
     }
 
@@ -115,7 +115,7 @@ class SequenceTrackerTest {
     @DisplayName("Exact boundary: gap of 10 is medium")
     void gapOf10IsMedium() {
         tracker.validateSequence("s1", 1L);
-        // gap = 12 - 2 = 10 â†?<=10 â†?request_recovery
+        // gap = 12 - 2 = 10 ï¿½?<=10 ï¿½?request_recovery
         assertEquals("request_recovery", tracker.validateSequence("s1", 12L));
     }
 
@@ -123,7 +123,7 @@ class SequenceTrackerTest {
     @DisplayName("Exact boundary: gap of 11 is large")
     void gapOf11IsLarge() {
         tracker.validateSequence("s1", 1L);
-        // gap = 13 - 2 = 11 â†?>10 â†?reconnect
+        // gap = 13 - 2 = 11 ï¿½?>10 ï¿½?reconnect
         assertEquals("reconnect", tracker.validateSequence("s1", 13L));
     }
 }

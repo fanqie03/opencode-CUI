@@ -60,7 +60,7 @@ class SkillStreamHandlerTest {
     void pushToNoSubscribers() {
         // No sessions registered for this sessionId
         handler.pushToSession("999", "delta", "content");
-        // Should not throw â€?just log
+        // Should not throw ï¿½?just log
     }
 
     @Test

@@ -45,7 +45,7 @@ class GatewayRelayServiceTest {
                 gatewayWSHandler);
     }
 
-    // ==================== Upstream: Gateway â†?Skill ====================
+    // ==================== Upstream: Gateway ï¿½?Skill ====================
 
     @Test
     @DisplayName("tool_event persists and broadcasts to Skill Redis")
@@ -152,7 +152,7 @@ class GatewayRelayServiceTest {
         verifyNoInteractions(redisMessageBroker);
     }
 
-    // ==================== Downstream: Skill â†?Gateway ====================
+    // ==================== Downstream: Skill ï¿½?Gateway ====================
 
     @Test
     @DisplayName("sendInvokeToGateway uses WS direct path when available")

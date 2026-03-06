@@ -16,16 +16,16 @@ import java.util.List;
 /**
  * Manages communication with AI-Gateway (v1 protocol - æ–¹æ¡ˆ5).
  *
- * Upstream (Gateway â†?Skill via WS):
+ * Upstream (Gateway ï¿½?Skill via WS):
  * - Receives tool_event/done/error/session_created/agent_online/offline from
  * GatewayWSHandler
  * - Persists to DB, then publishes to Skill Redis session:{id} for
  * multi-instance broadcast
  * - Each Skill instance subscribes to session:{id} and pushes to local Clients
  *
- * Downstream (Skill â†?Gateway):
- * - If this instance has Gateway WS â†?sendToGateway() directly [fast path]
- * - If no Gateway WS â†?publishInvokeRelay() â†?another instance relays [relay
+ * Downstream (Skill ï¿½?Gateway):
+ * - If this instance has Gateway WS ï¿½?sendToGateway() directly [fast path]
+ * - If no Gateway WS ï¿½?publishInvokeRelay() ï¿½?another instance relays [relay
  * path]
  */
 @Slf4j
@@ -117,7 +117,7 @@ public class GatewayRelayService {
         }
     }
 
-    // ==================== Downstream: Skill â†?Gateway ====================
+    // ==================== Downstream: Skill ï¿½?Gateway ====================
 
     /**
      * Send an invoke command to AI-Gateway.
@@ -197,7 +197,7 @@ public class GatewayRelayService {
         }
     }
 
-    // ==================== Upstream: Gateway â†?Skill (via WS) ====================
+    // ==================== Upstream: Gateway ï¿½?Skill (via WS) ====================
 
     /**
      * Handle an incoming message from AI-Gateway (received by GatewayWSHandler).

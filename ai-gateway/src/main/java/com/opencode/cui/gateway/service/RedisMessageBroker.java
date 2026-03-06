@@ -20,7 +20,7 @@ import java.util.function.Consumer;
  * protocol).
  *
  * Channel patterns:
- * - agent:{agentId} �?route invoke commands to the Gateway instance holding the
+ * - agent:{agentId} �?route invoke commands to the Gateway instance holding the
  * Agent WS
  *
  * In v1 (方案5), session:{sessionId} channels are handled by Skill Server's own

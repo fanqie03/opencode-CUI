@@ -15,10 +15,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * Bidirectional event relay between PCAgent and Skill Server (v1 protocol -
  * æ–¹æ¡ˆ5).
  *
- * Upstream (PCAgent â†?Skill): Events from PCAgent go through WS to Skill Server
+ * Upstream (PCAgent ï¿½?Skill): Events from PCAgent go through WS to Skill Server
  * via SkillServerWSClient (SkillServerRelayTarget interface).
  *
- * Downstream (Skill â†?PCAgent): Invoke commands arrive from Skill via WS,
+ * Downstream (Skill ï¿½?PCAgent): Invoke commands arrive from Skill via WS,
  * are published to Gateway Redis agent:{agentId}, and routed to the Gateway
  * instance holding the Agent's WS connection.
  *

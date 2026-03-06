@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * to Skill Server via WS, replacing the old shared Redis approach.
  *
  * Downstream: Receives invoke commands from Skill Server via WS and routes them
- * to the correct PCAgent via EventRelayService â†?Gateway Redis agent:{agentId}.
+ * to the correct PCAgent via EventRelayService ï¿½?Gateway Redis agent:{agentId}.
  */
 @Slf4j
 @Component

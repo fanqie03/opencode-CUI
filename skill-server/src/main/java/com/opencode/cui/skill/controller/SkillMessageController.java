@@ -158,7 +158,7 @@ public class SkillMessageController {
     /**
      * POST /api/skill/sessions/{sessionId}/permissions/{permId}
      * Reply to a permission request (approve or reject).
-     * Routes the reply to AI-Gateway â†?PCAgent â†?OpenCode for execution.
+     * Routes the reply to AI-Gateway ï¿½?PCAgent ï¿½?OpenCode for execution.
      */
     @PostMapping("/permissions/{permId}")
     public ResponseEntity<Map<String, Object>> replyPermission(

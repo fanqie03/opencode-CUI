@@ -85,7 +85,7 @@ class EventRelayServiceTest {
         assertFalse(service.hasAgentSession("unknown-agent"));
     }
 
-    // ==================== Upstream: PCAgent â†?Skill Server ====================
+    // ==================== Upstream: PCAgent ï¿½?Skill Server ====================
 
     @Test
     @DisplayName("relayToSkillServer attaches agentId and forwards via WS")
@@ -110,7 +110,7 @@ class EventRelayServiceTest {
         verifyNoInteractions(redisMessageBroker);
     }
 
-    // ==================== Downstream: Skill â†?PCAgent ====================
+    // ==================== Downstream: Skill ï¿½?PCAgent ====================
 
     @Test
     @DisplayName("relayToAgent publishes invoke to Gateway Redis agent:{id}")
