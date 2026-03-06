@@ -48,16 +48,12 @@ import * as os from 'node:os';
  * ```
  */
 export const PlatformAgent: Plugin = async (ctx) => {
-    // ----- Read configuration from environment -----
-    const ak = process.env.AGENT_AK;
-    const sk = process.env.AGENT_SK;
-    const gatewayUrl = process.env.AGENT_GATEWAY_URL;
+    // ----- Read configuration (env vars with dev defaults) -----
+    const ak = process.env.AGENT_AK ?? 'test-ak-001';
+    const sk = process.env.AGENT_SK ?? 'test-sk-secret-001';
+    const gatewayUrl = process.env.AGENT_GATEWAY_URL ?? 'ws://localhost:8081/ws/agent';
 
-    if (!ak || !sk || !gatewayUrl) {
-        throw new Error(
-            '[PlatformAgent] Missing required environment variables: AGENT_AK, AGENT_SK, AGENT_GATEWAY_URL',
-        );
-    }
+    console.log(`[PlatformAgent] Using ak=${ak}, gatewayUrl=${gatewayUrl}`);
 
     const config = resolveConfig({ ak, sk, gatewayUrl });
 
