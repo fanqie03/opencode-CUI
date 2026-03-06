@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { MessageEnvelope, StreamMessage } from '../types';
+import type { GatewayMessage, StreamMessage } from '../types';
 import { GatewayWebSocketClient } from '../services/WebSocketClient';
 import { config } from '../config';
 
@@ -10,12 +10,16 @@ interface UseAgentWebSocketProps {
 
 interface UseAgentWebSocketReturn {
   isConnected: boolean;
-  sendMessage: (envelope: MessageEnvelope) => void;
+  sendMessage: (msg: GatewayMessage) => void;
   messages: StreamMessage[];
   error: string | null;
   reconnectCount: number;
 }
 
+/**
+ * React hook for managing a Gateway WebSocket connection (v1 protocol).
+ * Converts incoming GatewayMessage (flat) to StreamMessage for UI rendering.
+ */
 export function useAgentWebSocket({
   agentId,
   gatewayUrl = config.gatewayUrl,
@@ -43,28 +47,35 @@ export function useAgentWebSocket({
       },
       onMessage: (event) => {
         try {
-          const envelope: MessageEnvelope = JSON.parse(event.data);
+          // v1: flat GatewayMessage format
+          const msg: GatewayMessage = JSON.parse(event.data);
 
-          // Convert MessageEnvelope to StreamMessage for compatibility
-          if (envelope.payload.type === 'stream_delta') {
+          if (msg.type === 'tool_event') {
+            // tool_event contains event.delta for streaming content
+            const delta = (msg.event as Record<string, unknown>)?.delta;
             const streamMsg: StreamMessage = {
               type: 'delta',
-              seq: envelope.metadata?.sequenceNumber,
-              content: (envelope.payload.data as { content?: string })?.content,
+              seq: msg.sequenceNumber,
+              content: typeof delta === 'string' ? delta : undefined,
             };
             setMessages((prev) => [...prev, streamMsg]);
-          } else if (envelope.payload.type === 'stream_done') {
+          } else if (msg.type === 'tool_done') {
             const streamMsg: StreamMessage = {
               type: 'done',
-              usage: (envelope.payload.data as { usage?: { input_tokens: number; output_tokens: number } })?.usage,
+              seq: msg.sequenceNumber,
+              usage: msg.usage,
             };
             setMessages((prev) => [...prev, streamMsg]);
-          } else if (envelope.payload.type === 'error') {
+          } else if (msg.type === 'tool_error') {
             const streamMsg: StreamMessage = {
               type: 'error',
-              message: (envelope.payload.data as { message?: string })?.message,
+              message: msg.error,
             };
             setMessages((prev) => [...prev, streamMsg]);
+          } else if (msg.type === 'agent_offline') {
+            setMessages((prev) => [...prev, { type: 'agent_offline' }]);
+          } else if (msg.type === 'agent_online') {
+            setMessages((prev) => [...prev, { type: 'agent_online' }]);
           }
         } catch (err) {
           setError(`Failed to parse message: ${err}`);
@@ -87,10 +98,10 @@ export function useAgentWebSocket({
     });
   }, [agentId, gatewayUrl]);
 
-  const sendMessage = useCallback((envelope: MessageEnvelope) => {
+  const sendMessage = useCallback((msg: GatewayMessage) => {
     if (clientRef.current?.isConnected()) {
       try {
-        clientRef.current.sendMessage(envelope);
+        clientRef.current.sendMessage(msg);
       } catch (err) {
         setError(`Failed to send message: ${err}`);
       }

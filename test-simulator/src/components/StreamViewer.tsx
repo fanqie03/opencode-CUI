@@ -1,15 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { StreamAssembler } from '../protocol/StreamAssembler';
-import type { StreamMessage } from '../types';
+import type { StreamMessage, PermissionRequest } from '../types';
 
 interface StreamViewerProps {
   sessionId: string | null;
   skillServerUrl?: string;
+  onPermissionRequest?: (request: PermissionRequest) => void;
 }
 
 const DEFAULT_SKILL_SERVER_URL = 'ws://localhost:8080';
 
-export function StreamViewer({ sessionId, skillServerUrl = DEFAULT_SKILL_SERVER_URL }: StreamViewerProps) {
+export function StreamViewer({
+  sessionId,
+  skillServerUrl = DEFAULT_SKILL_SERVER_URL,
+  onPermissionRequest,
+}: StreamViewerProps) {
   const [streamText, setStreamText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [sequenceGaps, setSequenceGaps] = useState<number[]>([]);
@@ -17,6 +25,14 @@ export function StreamViewer({ sessionId, skillServerUrl = DEFAULT_SKILL_SERVER_
 
   const wsRef = useRef<WebSocket | null>(null);
   const assemblerRef = useRef(new StreamAssembler());
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    if (contentRef.current) {
+      contentRef.current.scrollTop = contentRef.current.scrollHeight;
+    }
+  }, [streamText]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -84,17 +100,30 @@ export function StreamViewer({ sessionId, skillServerUrl = DEFAULT_SKILL_SERVER_
       }
 
       case 'error': {
-        setStreamText((prev) => prev + `\n\n[ERROR: ${msg.message}]`);
+        setStreamText((prev) => prev + `\n\n> ❌ **ERROR:** ${msg.message}`);
         setIsStreaming(false);
         break;
       }
 
       case 'agent_offline':
-        setStreamText((prev) => prev + '\n\n[Agent went offline]');
+        setStreamText((prev) => prev + '\n\n> ⚠️ Agent went offline');
         break;
 
       case 'agent_online':
-        setStreamText((prev) => prev + '\n\n[Agent came online]');
+        setStreamText((prev) => prev + '\n\n> ✅ Agent came online');
+        break;
+
+      case 'permission_updated':
+        if (onPermissionRequest && msg.permissionId) {
+          onPermissionRequest({
+            permissionId: msg.permissionId,
+            sessionId: sessionId || '',
+            type: msg.permissionType || 'unknown',
+            description: msg.description || 'Permission requested',
+            timestamp: Date.now(),
+          });
+        }
+        setStreamText((prev) => prev + `\n\n> 🔐 **Permission requested:** ${msg.description || msg.permissionId}`);
         break;
     }
   };
@@ -107,59 +136,61 @@ export function StreamViewer({ sessionId, skillServerUrl = DEFAULT_SKILL_SERVER_
   };
 
   return (
-    <div style={{ border: '1px solid #ccc', padding: '16px', borderRadius: '8px' }}>
-      <h2>Stream Viewer</h2>
+    <div className="panel">
+      <h2>📡 Stream Viewer</h2>
 
-      <div style={{ marginBottom: '12px' }}>
-        <strong>Session ID:</strong> {sessionId || 'None'}
+      <div className="field-row">
+        <strong>Session:</strong> <code>{sessionId || 'None'}</code>
       </div>
 
-      <div style={{ marginBottom: '12px' }}>
+      <div className="field-row">
         <strong>Status:</strong>{' '}
-        <span style={{ color: isStreaming ? 'blue' : 'gray' }}>
+        <span className={isStreaming ? 'status-streaming' : 'status-idle'}>
           {isStreaming ? '▶ Streaming' : '■ Idle'}
+        </span>
+        <span style={{ marginLeft: '12px' }}>
+          <strong>Seq:</strong> {lastSeq ?? 'N/A'}
         </span>
       </div>
 
-      <div style={{ marginBottom: '12px' }}>
-        <strong>Last Sequence:</strong> {lastSeq ?? 'N/A'}
-      </div>
-
       {sequenceGaps.length > 0 && (
-        <div style={{ marginBottom: '12px', color: 'orange', padding: '8px', background: '#fff3cd' }}>
-          <strong>⚠ Sequence Gaps Detected:</strong> {sequenceGaps.join(', ')}
+        <div className="warning-banner">
+          ⚠ Sequence Gaps: {sequenceGaps.join(', ')}
         </div>
       )}
 
-      <button
-        onClick={handleClear}
-        style={{
-          marginBottom: '12px',
-          padding: '6px 12px',
-          background: '#6c757d',
-          color: 'white',
-          border: 'none',
-          borderRadius: '4px',
-          cursor: 'pointer',
-        }}
-      >
+      <button onClick={handleClear} className="btn btn-secondary" style={{ marginBottom: '8px' }}>
         Clear
       </button>
 
-      <div
-        style={{
-          minHeight: '400px',
-          maxHeight: '600px',
-          overflow: 'auto',
-          border: '1px solid #ddd',
-          padding: '12px',
-          background: '#f9f9f9',
-          fontFamily: 'monospace',
-          fontSize: '14px',
-          whiteSpace: 'pre-wrap',
-        }}
-      >
-        {streamText || 'Waiting for stream data...'}
+      <div className="stream-content" ref={contentRef}>
+        {streamText ? (
+          <ReactMarkdown
+            components={{
+              code({ className, children, ...props }) {
+                const match = /language-(\w+)/.exec(className || '');
+                const codeString = String(children).replace(/\n$/, '');
+                return match ? (
+                  <SyntaxHighlighter
+                    style={oneDark}
+                    language={match[1]}
+                    PreTag="div"
+                  >
+                    {codeString}
+                  </SyntaxHighlighter>
+                ) : (
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                );
+              },
+            }}
+          >
+            {streamText}
+          </ReactMarkdown>
+        ) : (
+          <span className="placeholder-text">Waiting for stream data...</span>
+        )}
       </div>
     </div>
   );

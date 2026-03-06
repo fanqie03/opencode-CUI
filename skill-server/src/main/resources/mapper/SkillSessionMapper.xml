@@ -2,9 +2,9 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
-<mapper namespace="com.yourapp.skill.repository.SkillSessionRepository">
+<mapper namespace="com.opencode.cui.skill.repository.SkillSessionRepository">
 
-    <resultMap id="SkillSessionResultMap" type="com.yourapp.skill.model.SkillSession">
+    <resultMap id="SkillSessionResultMap" type="com.opencode.cui.skill.model.SkillSession">
         <id     property="id"                column="id"/>
         <result property="userId"            column="user_id"/>
         <result property="skillDefinitionId" column="skill_definition_id"/>
@@ -13,7 +13,7 @@
         <result property="title"             column="title"/>
         <result property="status"            column="status"
                 typeHandler="org.apache.ibatis.type.EnumTypeHandler"
-                javaType="com.yourapp.skill.model.SkillSession$Status"/>
+                javaType="com.opencode.cui.skill.model.SkillSession$Status"/>
         <result property="imChatId"          column="im_chat_id"/>
         <result property="createdAt"         column="created_at"/>
         <result property="lastActiveAt"      column="last_active_at"/>
@@ -64,6 +64,11 @@
     <select id="findByAgentId" resultMap="SkillSessionResultMap">
         <include refid="selectAllColumns"/>
         WHERE agent_id = #{agentId}
+    </select>
+
+    <select id="findByStatus" resultMap="SkillSessionResultMap">
+        <include refid="selectAllColumns"/>
+        WHERE status = #{status}
     </select>
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">

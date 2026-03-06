@@ -1,5 +1,5 @@
-// WebSocket clients for gateway and skill-server connections
-import type { MessageEnvelope, StreamMessage } from '../types';
+// WebSocket clients for gateway and skill-server connections (v1 protocol)
+import type { GatewayMessage, StreamMessage } from '../types';
 
 export type WebSocketEventHandler = (event: MessageEvent) => void;
 export type WebSocketErrorHandler = (error: Event) => void;
@@ -128,11 +128,12 @@ export class BaseWebSocketClient {
 }
 
 /**
- * Gateway WebSocket client for agent connections
+ * Gateway WebSocket client for agent connections (v1 protocol).
+ * Handles flat GatewayMessage format instead of nested MessageEnvelope.
  */
 export class GatewayWebSocketClient extends BaseWebSocketClient {
   private agentId: string;
-  private messageHandlers: Map<string, (envelope: MessageEnvelope) => void> = new Map();
+  private messageHandlers: Map<string, (msg: GatewayMessage) => void> = new Map();
 
   constructor(
     agentId: string,
@@ -152,21 +153,22 @@ export class GatewayWebSocketClient extends BaseWebSocketClient {
 
   private handleMessage(event: MessageEvent): void {
     try {
-      const envelope: MessageEnvelope = JSON.parse(event.data);
-      const handler = this.messageHandlers.get(envelope.payload.type);
+      const msg: GatewayMessage = JSON.parse(event.data);
+      // v1: flat format, route by msg.type
+      const handler = this.messageHandlers.get(msg.type);
       if (handler) {
-        handler(envelope);
+        handler(msg);
       }
     } catch (error) {
-      console.error('Failed to parse message envelope:', error);
+      console.error('Failed to parse gateway message:', error);
     }
   }
 
-  sendMessage(envelope: MessageEnvelope): void {
-    this.send(envelope);
+  sendMessage(msg: GatewayMessage): void {
+    this.send(msg);
   }
 
-  onMessageType(type: string, handler: (envelope: MessageEnvelope) => void): void {
+  onMessageType(type: string, handler: (msg: GatewayMessage) => void): void {
     this.messageHandlers.set(type, handler);
   }
 
@@ -180,7 +182,7 @@ export class GatewayWebSocketClient extends BaseWebSocketClient {
 }
 
 /**
- * Skill Server WebSocket client
+ * Skill Server WebSocket client for stream subscriptions.
  */
 export class SkillWebSocketClient extends BaseWebSocketClient {
   private streamHandlers: Map<string, (message: StreamMessage) => void> = new Map();

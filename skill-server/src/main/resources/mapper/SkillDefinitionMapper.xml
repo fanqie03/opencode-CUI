@@ -2,9 +2,9 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
-<mapper namespace="com.yourapp.skill.repository.SkillDefinitionRepository">
+<mapper namespace="com.opencode.cui.skill.repository.SkillDefinitionRepository">
 
-    <resultMap id="SkillDefinitionResultMap" type="com.yourapp.skill.model.SkillDefinition">
+    <resultMap id="SkillDefinitionResultMap" type="com.opencode.cui.skill.model.SkillDefinition">
         <id     property="id"          column="id"/>
         <result property="skillCode"   column="skill_code"/>
         <result property="skillName"   column="skill_name"/>
@@ -13,7 +13,7 @@
         <result property="iconUrl"     column="icon_url"/>
         <result property="status"      column="status"
                 typeHandler="org.apache.ibatis.type.EnumTypeHandler"
-                javaType="com.yourapp.skill.model.SkillDefinition$Status"/>
+                javaType="com.opencode.cui.skill.model.SkillDefinition$Status"/>
         <result property="sortOrder"   column="sort_order"/>
         <result property="createdAt"   column="created_at"/>
         <result property="updatedAt"   column="updated_at"/>

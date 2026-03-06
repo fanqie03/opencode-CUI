@@ -11,7 +11,7 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.yourapp</groupId>
+    <groupId>com.opencode.cui</groupId>
     <artifactId>skill-server</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <name>skill-server</name>

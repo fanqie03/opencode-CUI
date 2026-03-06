@@ -30,7 +30,7 @@ spring:
 
 mybatis:
   mapper-locations: classpath:mapper/*.xml
-  type-aliases-package: com.yourapp.gateway.model
+  type-aliases-package: com.opencode.cui.gateway.model
   configuration:
     map-underscore-to-camel-case: true
 
@@ -39,7 +39,7 @@ gateway:
   # Skill Server WebSocket endpoint
   skill-server:
     ws-url: ${SKILL_SERVER_WS_URL:ws://localhost:8082/ws/internal/gateway}
-    internal-token: ${SKILL_SERVER_INTERNAL_TOKEN:changeme}
+    internal-token: ${SKILL_SERVER_INTERNAL_TOKEN:sk-intl-9f2a7d3e4b1c}
     reconnect-initial-delay-ms: 1000
     reconnect-max-delay-ms: 30000
 
@@ -55,5 +55,5 @@ gateway:
 
 logging:
   level:
-    com.yourapp.gateway: DEBUG
+    com.opencode.cui.gateway: DEBUG
     org.springframework.web.socket: INFO

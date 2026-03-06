@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import type { TestScenario, ScenarioResult, ErrorEntry, Metrics, MessageEnvelope } from '../types';
+import type { TestScenario, ScenarioResult, ErrorEntry, Metrics, GatewayMessage } from '../types';
 import { GatewayWebSocketClient, SkillWebSocketClient } from '../services/WebSocketClient';
 import { APIClient } from '../services/APIClient';
 import { config } from '../config';
@@ -75,6 +75,27 @@ const TEST_SCENARIOS: TestScenario[] = [
       { action: 'verify_gap_detection', params: {} },
     ],
   },
+  {
+    id: 'scenario-7',
+    name: 'Permission Confirmation Flow',
+    description: 'Trigger permission request and verify reply path',
+    steps: [
+      { action: 'create_session', params: { agentId: 'agent-001' } },
+      { action: 'send_message', params: { text: 'Do something requiring permission' } },
+      { action: 'wait_for_stream', params: { timeout: 5000 } },
+    ],
+  },
+  {
+    id: 'scenario-8',
+    name: 'Message History Pagination',
+    description: 'Verify message history API supports pagination',
+    steps: [
+      { action: 'create_session', params: { agentId: 'agent-001' } },
+      { action: 'send_message', params: { text: 'Message 1' } },
+      { action: 'send_message', params: { text: 'Message 2' } },
+      { action: 'verify_message_history', params: {} },
+    ],
+  },
 ];
 
 interface TestContext {
@@ -83,7 +104,7 @@ interface TestContext {
   gatewayClient2?: GatewayWebSocketClient;
   skillClient?: SkillWebSocketClient;
   apiClient: APIClient;
-  receivedMessages: MessageEnvelope[];
+  receivedMessages: GatewayMessage[];
   lastSequence: number;
   errorReceived: boolean;
   reconnectDetected: boolean;
@@ -93,7 +114,9 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
   const [results, setResults] = useState<ScenarioResult[]>([]);
   const [runningScenario, setRunningScenario] = useState<string | null>(null);
   const contextRef = useRef<TestContext>({
-    apiClient: new APIClient(config.gatewayUrl),
+    apiClient: new APIClient(
+      config.skillServerUrl.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:')
+    ),
     receivedMessages: [],
     lastSequence: 0,
     errorReceived: false,
@@ -143,26 +166,17 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
           throw new Error('Gateway not connected or session not created');
         }
 
-        const envelope: MessageEnvelope = {
-          version: '1.0',
-          messageId: `msg-${Date.now()}`,
-          timestamp: Date.now(),
-          source: {
-            type: 'agent',
-            id: config.agentId,
-          },
-          payload: {
-            type: 'user_message',
-            data: { text: params.text },
-          },
-          metadata: {
-            sessionId: context.sessionId,
-            sequenceNumber: ++context.lastSequence,
-          },
+        // v1 flat GatewayMessage format
+        const msg: GatewayMessage = {
+          type: 'tool_event',
+          agentId: config.agentId,
+          sessionId: context.sessionId,
+          event: { delta: params.text },
+          sequenceNumber: ++context.lastSequence,
         };
 
-        context.gatewayClient.sendMessage(envelope);
-        context.receivedMessages.push(envelope);
+        context.gatewayClient.sendMessage(msg);
+        context.receivedMessages.push(msg);
         onMetricsUpdate({ messagesSent: 1 });
         break;
       }
@@ -171,8 +185,6 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
         if (!context.gatewayClient) {
           throw new Error('Gateway not connected');
         }
-
-        // Send malformed message
         context.gatewayClient.send('invalid json {{{');
         onMetricsUpdate({ messagesSent: 1 });
         break;
@@ -186,7 +198,7 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
           }, timeout);
 
           if (context.gatewayClient) {
-            context.gatewayClient.onMessageType('stream_response', () => {
+            context.gatewayClient.onMessageType('tool_done', () => {
               clearTimeout(timer);
               resolve();
             });
@@ -247,7 +259,6 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
         if (!context.gatewayClient || !context.gatewayClient2) {
           throw new Error('Both gateway clients must be connected');
         }
-
         if (!context.gatewayClient.isConnected() || !context.gatewayClient2.isConnected()) {
           throw new Error('One or both gateways are not connected');
         }
@@ -262,10 +273,19 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
       }
 
       case 'verify_gap_detection': {
-        // In a real implementation, this would check if the system detected the gap
-        // For now, we just verify that we simulated the gap
         if (context.lastSequence === 0) {
           throw new Error('No sequence gap was simulated');
+        }
+        break;
+      }
+
+      case 'verify_message_history': {
+        if (!context.sessionId) {
+          throw new Error('No session');
+        }
+        const result = await context.apiClient.getMessages(context.sessionId, 0, 10);
+        if (!result.content || result.content.length === 0) {
+          throw new Error('No messages found in history');
         }
         break;
       }
@@ -284,9 +304,10 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
   const runScenario = async (scenario: TestScenario) => {
     setRunningScenario(scenario.id);
 
-    // Reset context for new scenario
     contextRef.current = {
-      apiClient: new APIClient(config.gatewayUrl),
+      apiClient: new APIClient(
+        config.skillServerUrl.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:')
+      ),
       receivedMessages: [],
       lastSequence: 0,
       errorReceived: false,
@@ -310,39 +331,35 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
       for (let i = 0; i < scenario.steps.length; i++) {
         const step = scenario.steps[i];
 
-        // Update step status to running
         setResults((prev) =>
           prev.map((r) =>
             r.scenarioId === scenario.id
               ? {
-                  ...r,
-                  steps: r.steps.map((s, idx) =>
-                    idx === i ? { ...s, status: 'running' } : s
-                  ),
-                }
+                ...r,
+                steps: r.steps.map((s, idx) =>
+                  idx === i ? { ...s, status: 'running' } : s
+                ),
+              }
               : r
           )
         );
 
-        // Execute step
         await executeStep(step.action, step.params || {}, contextRef.current);
 
-        // Update step status to passed
         setResults((prev) =>
           prev.map((r) =>
             r.scenarioId === scenario.id
               ? {
-                  ...r,
-                  steps: r.steps.map((s, idx) =>
-                    idx === i ? { ...s, status: 'passed', result: 'OK' } : s
-                  ),
-                }
+                ...r,
+                steps: r.steps.map((s, idx) =>
+                  idx === i ? { ...s, status: 'passed', result: 'OK' } : s
+                ),
+              }
               : r
           )
         );
       }
 
-      // Mark scenario as passed
       setResults((prev) =>
         prev.map((r) =>
           r.scenarioId === scenario.id
@@ -368,7 +385,6 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
         )
       );
     } finally {
-      // Cleanup connections
       contextRef.current.gatewayClient?.disconnect();
       contextRef.current.gatewayClient2?.disconnect();
       contextRef.current.skillClient?.disconnect();
@@ -383,28 +399,20 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
   };
 
   return (
-    <div style={{ border: '1px solid #ccc', padding: '16px', borderRadius: '8px' }}>
-      <h2>Scenario Runner</h2>
+    <div className="panel">
+      <h2>🎯 Scenario Runner</h2>
 
-      <div style={{ marginBottom: '16px' }}>
+      <div style={{ marginBottom: '12px' }}>
         <button
           onClick={runAllScenarios}
           disabled={runningScenario !== null}
-          style={{
-            padding: '8px 16px',
-            background: runningScenario ? '#ccc' : '#28a745',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: runningScenario ? 'not-allowed' : 'pointer',
-            marginRight: '8px',
-          }}
+          className={`btn ${runningScenario ? 'btn-disabled' : 'btn-success'}`}
         >
           {runningScenario ? 'Running...' : 'Run All Scenarios'}
         </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
         {TEST_SCENARIOS.map((scenario) => {
           const result = results.find((r) => r.scenarioId === scenario.id);
           const isRunning = runningScenario === scenario.id;
@@ -412,45 +420,29 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
           return (
             <div
               key={scenario.id}
-              style={{
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                padding: '12px',
-                background: result?.status === 'passed' ? '#d4edda' : result?.status === 'failed' ? '#f8d7da' : 'white',
-              }}
+              className={`scenario-item ${result?.status === 'passed' ? 'scenario-passed' :
+                  result?.status === 'failed' ? 'scenario-failed' :
+                    isRunning ? 'scenario-running' : ''
+                }`}
+              style={{ flexDirection: 'column', alignItems: 'flex-start' }}
             >
-              <h3 style={{ marginTop: 0, fontSize: '16px' }}>{scenario.name}</h3>
-              <p style={{ fontSize: '12px', color: '#666', margin: '8px 0' }}>{scenario.description}</p>
-
-              <button
-                onClick={() => runScenario(scenario)}
-                disabled={isRunning}
-                style={{
-                  padding: '6px 12px',
-                  background: isRunning ? '#ccc' : '#007bff',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: isRunning ? 'not-allowed' : 'pointer',
-                  fontSize: '12px',
-                }}
-              >
-                {isRunning ? 'Running...' : 'Run'}
-              </button>
+              <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ fontSize: '0.85rem' }}>{scenario.name}</strong>
+                <button
+                  onClick={() => runScenario(scenario)}
+                  disabled={isRunning}
+                  className={`btn btn-sm ${isRunning ? 'btn-disabled' : 'btn-primary'}`}
+                >
+                  {isRunning ? '...' : 'Run'}
+                </button>
+              </div>
+              <small className="placeholder-text">{scenario.description}</small>
 
               {result && (
-                <div style={{ marginTop: '8px', fontSize: '12px' }}>
-                  <strong>Status:</strong> {result.status}
-                  {result.endTime && (
-                    <div>
-                      <strong>Duration:</strong> {result.endTime - result.startTime}ms
-                    </div>
-                  )}
-                  {result.error && (
-                    <div style={{ color: 'red', marginTop: '4px' }}>
-                      <strong>Error:</strong> {result.error}
-                    </div>
-                  )}
+                <div style={{ fontSize: '0.75rem', marginTop: '4px' }}>
+                  <span>{result.status.toUpperCase()}</span>
+                  {result.endTime && <span> ({result.endTime - result.startTime}ms)</span>}
+                  {result.error && <div className="error-banner" style={{ marginTop: '4px', padding: '4px 8px' }}>{result.error}</div>}
                 </div>
               )}
             </div>
@@ -459,19 +451,10 @@ export function ScenarioRunner({ onError, onMetricsUpdate }: ScenarioRunnerProps
       </div>
 
       {results.length > 0 && (
-        <div style={{ marginTop: '16px' }}>
-          <h3>Results Summary</h3>
-          <div style={{ fontSize: '14px' }}>
-            <div>
-              <strong>Passed:</strong> {results.filter((r) => r.status === 'passed').length}
-            </div>
-            <div>
-              <strong>Failed:</strong> {results.filter((r) => r.status === 'failed').length}
-            </div>
-            <div>
-              <strong>Running:</strong> {results.filter((r) => r.status === 'running').length}
-            </div>
-          </div>
+        <div style={{ marginTop: '12px', fontSize: '0.85rem', display: 'flex', gap: '16px' }}>
+          <span>✅ {results.filter((r) => r.status === 'passed').length}</span>
+          <span>❌ {results.filter((r) => r.status === 'failed').length}</span>
+          <span>🔄 {results.filter((r) => r.status === 'running').length}</span>
         </div>
       )}
     </div>

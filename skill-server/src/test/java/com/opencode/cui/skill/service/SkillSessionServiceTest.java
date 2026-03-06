@@ -1,0 +1,125 @@
+package com.opencode.cui.skill.service;
+
+import com.opencode.cui.skill.model.PageResult;
+import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.repository.SkillSessionRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class SkillSessionServiceTest {
+
+    @Mock
+    private SkillSessionRepository sessionRepository;
+
+    private SkillSessionService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new SkillSessionService(sessionRepository);
+    }
+
+    @Test
+    @DisplayName("createSession inserts and returns session")
+    void createSessionInsertsAndReturns() {
+        SkillSession result = service.createSession(1L, 2L, 3L, "Test", "chat-1");
+        assertNotNull(result);
+        assertEquals(SkillSession.Status.ACTIVE, result.getStatus());
+        verify(sessionRepository).insert(any(SkillSession.class));
+    }
+
+    @Test
+    @DisplayName("getSession returns existing session")
+    void getSessionReturnsExisting() {
+        SkillSession session = new SkillSession();
+        session.setId(42L);
+        when(sessionRepository.findById(42L)).thenReturn(session);
+
+        SkillSession result = service.getSession(42L);
+        assertEquals(42L, result.getId());
+    }
+
+    @Test
+    @DisplayName("getSession throws for non-existent session")
+    void getSessionThrowsForNonExistent() {
+        when(sessionRepository.findById(999L)).thenReturn(null);
+        assertThrows(IllegalArgumentException.class, () -> service.getSession(999L));
+    }
+
+    @Test
+    @DisplayName("closeSession updates status to CLOSED")
+    void closeSessionUpdatesStatus() {
+        SkillSession session = new SkillSession();
+        session.setId(42L);
+        session.setStatus(SkillSession.Status.CLOSED);
+        when(sessionRepository.findById(42L)).thenReturn(session);
+
+        SkillSession result = service.closeSession(42L);
+        verify(sessionRepository).updateStatus(42L, "CLOSED");
+        assertEquals(SkillSession.Status.CLOSED, result.getStatus());
+    }
+
+    @Test
+    @DisplayName("touchSession updates last_active_at")
+    void touchSessionUpdatesTimestamp() {
+        service.touchSession(42L);
+        verify(sessionRepository).updateLastActiveAt(eq(42L), any());
+    }
+
+    @Test
+    @DisplayName("updateToolSessionId updates and returns session")
+    void updateToolSessionIdUpdatesAndReturns() {
+        SkillSession session = new SkillSession();
+        session.setId(42L);
+        when(sessionRepository.findById(42L)).thenReturn(session);
+
+        SkillSession result = service.updateToolSessionId(42L, "ts-abc");
+        verify(sessionRepository).updateToolSessionId(eq(42L), eq("ts-abc"), any());
+        assertEquals(42L, result.getId());
+    }
+
+    @Test
+    @DisplayName("findByAgentId delegates to repository")
+    void findByAgentIdDelegates() {
+        SkillSession s1 = new SkillSession();
+        s1.setId(1L);
+        when(sessionRepository.findByAgentId(99L)).thenReturn(List.of(s1));
+
+        List<SkillSession> result = service.findByAgentId(99L);
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    @DisplayName("listSessions without status filter")
+    void listSessionsWithoutFilter() {
+        when(sessionRepository.findByUserId(1L, 0, 10)).thenReturn(List.of());
+        when(sessionRepository.countByUserId(1L)).thenReturn(0L);
+
+        PageResult<SkillSession> result = service.listSessions(1L, null, 0, 10);
+        assertNotNull(result);
+        assertEquals(0, result.getTotalElements());
+    }
+
+    @Test
+    @DisplayName("listSessions with status filter")
+    void listSessionsWithFilter() {
+        when(sessionRepository.findByUserIdAndStatusIn(eq(1L), anyList(), eq(0), eq(10)))
+                .thenReturn(List.of());
+        when(sessionRepository.countByUserIdAndStatusIn(eq(1L), anyList())).thenReturn(0L);
+
+        PageResult<SkillSession> result = service.listSessions(
+                1L, List.of(SkillSession.Status.ACTIVE), 0, 10);
+        assertNotNull(result);
+    }
+}

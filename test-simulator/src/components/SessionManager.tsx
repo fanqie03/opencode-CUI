@@ -1,10 +1,16 @@
 import { useState } from 'react';
 import type { Session } from '../types';
+import { APIClient } from '../services/APIClient';
+import { config } from '../config';
 
 interface SessionManagerProps {
   onSessionCreated: (session: Session) => void;
   onSessionDestroyed: (sessionId: string) => void;
 }
+
+const apiClient = new APIClient(
+  config.skillServerUrl.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:')
+);
 
 export function SessionManager({ onSessionCreated, onSessionDestroyed }: SessionManagerProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -14,17 +20,13 @@ export function SessionManager({ onSessionCreated, onSessionDestroyed }: Session
   const handleCreateSession = async () => {
     setIsCreating(true);
     try {
-      const response = await fetch('http://localhost:8080/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to create session: ${response.statusText}`);
-      }
-
-      const session: Session = await response.json();
+      const response = await apiClient.createSession({ agentId });
+      const session: Session = {
+        id: response.sessionId,
+        agentId: response.agentId,
+        status: 'ACTIVE',
+        createdAt: response.createdAt,
+      };
       setSessions((prev) => [...prev, session]);
       onSessionCreated(session);
     } catch (err) {
@@ -36,14 +38,7 @@ export function SessionManager({ onSessionCreated, onSessionDestroyed }: Session
 
   const handleDestroySession = async (sessionId: string) => {
     try {
-      const response = await fetch(`http://localhost:8080/api/sessions/${sessionId}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to destroy session: ${response.statusText}`);
-      }
-
+      await apiClient.deleteSession(sessionId);
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
       onSessionDestroyed(sessionId);
     } catch (err) {
@@ -51,56 +46,49 @@ export function SessionManager({ onSessionCreated, onSessionDestroyed }: Session
     }
   };
 
-  return (
-    <div style={{ border: '1px solid #ccc', padding: '16px', borderRadius: '8px' }}>
-      <h2>Session Manager</h2>
+  const handleRefreshSessions = async () => {
+    try {
+      const list = await apiClient.listSessions();
+      setSessions(list);
+    } catch (err) {
+      alert(`Error refreshing sessions: ${err}`);
+    }
+  };
 
-      <div style={{ marginBottom: '12px' }}>
+  return (
+    <div className="panel">
+      <h2>📋 Session Manager</h2>
+
+      <div className="field-row">
         <label>
           Agent ID:
           <input
             type="text"
             value={agentId}
             onChange={(e) => setAgentId(e.target.value)}
-            style={{ marginLeft: '8px', width: '150px' }}
+            className="input-field"
           />
         </label>
         <button
           onClick={handleCreateSession}
           disabled={isCreating}
-          style={{
-            marginLeft: '8px',
-            padding: '6px 12px',
-            background: '#28a745',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: isCreating ? 'not-allowed' : 'pointer',
-          }}
+          className={`btn ${isCreating ? 'btn-disabled' : 'btn-success'}`}
         >
           {isCreating ? 'Creating...' : 'Create Session'}
+        </button>
+        <button onClick={handleRefreshSessions} className="btn btn-secondary">
+          Refresh
         </button>
       </div>
 
       <div>
         <h3>Active Sessions ({sessions.length})</h3>
         {sessions.length === 0 ? (
-          <p style={{ color: '#666' }}>No active sessions</p>
+          <p className="placeholder-text">No active sessions</p>
         ) : (
-          <ul style={{ listStyle: 'none', padding: 0 }}>
+          <ul className="session-list">
             {sessions.map((session) => (
-              <li
-                key={session.id}
-                style={{
-                  padding: '8px',
-                  marginBottom: '8px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
+              <li key={session.id} className="session-item">
                 <div>
                   <strong>{session.id}</strong>
                   <br />
@@ -110,14 +98,7 @@ export function SessionManager({ onSessionCreated, onSessionDestroyed }: Session
                 </div>
                 <button
                   onClick={() => handleDestroySession(session.id)}
-                  style={{
-                    padding: '4px 8px',
-                    background: '#dc3545',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                  }}
+                  className="btn btn-danger btn-sm"
                 >
                   Destroy
                 </button>

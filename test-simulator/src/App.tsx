@@ -5,11 +5,15 @@ import { StreamViewer } from './components/StreamViewer';
 import { ErrorPanel } from './components/ErrorPanel';
 import { MetricsPanel } from './components/MetricsPanel';
 import { ScenarioRunner } from './components/ScenarioRunner';
-import type { Session, ErrorEntry, Metrics } from './types';
+import { PermissionPanel } from './components/PermissionPanel';
+import { MessageHistory } from './components/MessageHistory';
+import type { Session, ErrorEntry, Metrics, PermissionRequest } from './types';
+import './App.css';
 
 function App() {
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
+  const [permissions, setPermissions] = useState<PermissionRequest[]>([]);
   const [metrics, setMetrics] = useState<Metrics>({
     messagesSent: 0,
     messagesReceived: 0,
@@ -62,12 +66,23 @@ function App() {
     setErrors([]);
   };
 
-  return (
-    <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
-      <h1 style={{ marginBottom: '20px' }}>E2E Integration Test Simulator</h1>
+  const handlePermissionRequest = (request: PermissionRequest) => {
+    setPermissions((prev) => [...prev, request]);
+  };
 
-      {/* Top Bar: Session Manager + Scenario Runner */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+  const handlePermissionHandled = (permId: string) => {
+    setPermissions((prev) => prev.filter((p) => p.permissionId !== permId));
+  };
+
+  return (
+    <div className="app-container">
+      <header className="app-header">
+        <h1>🧪 E2E Integration Test Simulator</h1>
+        <span className="header-badge">v1 Protocol</span>
+      </header>
+
+      {/* Row 1: Session Manager + Scenario Runner */}
+      <div className="grid-2">
         <SessionManager
           onSessionCreated={handleSessionCreated}
           onSessionDestroyed={handleSessionDestroyed}
@@ -78,14 +93,26 @@ function App() {
         />
       </div>
 
-      {/* Main Content: 3 Columns */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+      {/* Row 2: Agent + Stream + Permission */}
+      <div className="grid-3">
         <AgentSimulator agentId="agent-001" />
-        <StreamViewer sessionId={currentSession?.id || null} />
+        <StreamViewer
+          sessionId={currentSession?.id || null}
+          onPermissionRequest={handlePermissionRequest}
+        />
+        <PermissionPanel
+          permissions={permissions}
+          onPermissionHandled={handlePermissionHandled}
+        />
+      </div>
+
+      {/* Row 3: Message History + Metrics */}
+      <div className="grid-2">
+        <MessageHistory sessionId={currentSession?.id || null} />
         <MetricsPanel metrics={metrics} />
       </div>
 
-      {/* Bottom Panel: Error Panel */}
+      {/* Row 4: Error Panel */}
       <ErrorPanel errors={errors} onClear={handleClearErrors} />
     </div>
   );

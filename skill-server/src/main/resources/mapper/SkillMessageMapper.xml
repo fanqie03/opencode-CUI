@@ -2,19 +2,19 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
-<mapper namespace="com.yourapp.skill.repository.SkillMessageRepository">
+<mapper namespace="com.opencode.cui.skill.repository.SkillMessageRepository">
 
-    <resultMap id="SkillMessageResultMap" type="com.yourapp.skill.model.SkillMessage">
+    <resultMap id="SkillMessageResultMap" type="com.opencode.cui.skill.model.SkillMessage">
         <id     property="id"          column="id"/>
         <result property="sessionId"   column="session_id"/>
         <result property="seq"         column="seq"/>
         <result property="role"        column="role"
                 typeHandler="org.apache.ibatis.type.EnumTypeHandler"
-                javaType="com.yourapp.skill.model.SkillMessage$Role"/>
+                javaType="com.opencode.cui.skill.model.SkillMessage$Role"/>
         <result property="content"     column="content"/>
         <result property="contentType" column="content_type"
                 typeHandler="org.apache.ibatis.type.EnumTypeHandler"
-                javaType="com.yourapp.skill.model.SkillMessage$ContentType"/>
+                javaType="com.opencode.cui.skill.model.SkillMessage$ContentType"/>
         <result property="createdAt"   column="created_at"/>
         <result property="meta"        column="meta"/>
     </resultMap>
