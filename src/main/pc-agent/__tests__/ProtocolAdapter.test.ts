@@ -125,6 +125,17 @@ describe('ProtocolAdapter', () => {
             expect(result.session).toBe(session);
             expect(result.envelope).toBeDefined();
         });
+
+        test('includes sessionId when provided', () => {
+            const adapter = new ProtocolAdapter('OPENCODE', 'agent-123');
+            const session = { id: 'sess_abc', model: 'gpt-4' };
+
+            const result = adapter.wrapSessionCreated('sess_abc', session, '10');
+
+            expect(result.type).toBe('session_created');
+            expect(result.sessionId).toBe('10');
+            expect(result.toolSessionId).toBe('sess_abc');
+        });
     });
 
     // -----------------------------------------------------------------------

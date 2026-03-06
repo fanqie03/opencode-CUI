@@ -101,9 +101,11 @@ export class ProtocolAdapter {
   wrapSessionCreated(
     toolSessionId: string,
     session: unknown,
+    sessionId?: string,
   ): Record<string, unknown> {
     return {
       type: 'session_created',
+      sessionId,
       toolSessionId,
       session,
       envelope: this.createEnvelope(),

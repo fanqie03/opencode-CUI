@@ -216,6 +216,7 @@ export class EventRelay {
           });
           const sessionData = {
             type: 'session_created',
+            sessionId: msg.sessionId,  // Echo back skill service session ID
             toolSessionId: session?.id ?? session?.sessionId,
             session,
           };
@@ -225,6 +226,7 @@ export class EventRelay {
             ? this.protocolAdapter.wrapSessionCreated(
               sessionData.toolSessionId as string,
               sessionData.session,
+              msg.sessionId,  // Pass sessionId for envelope
             )
             : sessionData;
 
