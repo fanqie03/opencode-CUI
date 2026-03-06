@@ -11,7 +11,7 @@ interface StreamViewerProps {
   onPermissionRequest?: (request: PermissionRequest) => void;
 }
 
-const DEFAULT_SKILL_SERVER_URL = 'ws://localhost:8080';
+const DEFAULT_SKILL_SERVER_URL = 'http://localhost:8082';
 
 export function StreamViewer({
   sessionId,
@@ -41,7 +41,8 @@ export function StreamViewer({
       return;
     }
 
-    const url = `${skillServerUrl}/ws/skill/stream/${sessionId}`;
+    const wsUrl = skillServerUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
+    const url = `${wsUrl}/ws/skill/stream/${sessionId}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
