@@ -84,12 +84,32 @@ export function getDefinitions(): Promise<SkillDefinition[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Agent query
+// ---------------------------------------------------------------------------
+
+export interface AgentInfo {
+  id: number;
+  userId: number;
+  deviceName: string;
+  os: string;
+  toolType: string;
+  toolVersion: string;
+  status: string;
+}
+
+/** GET /api/skill/agents?userId={userId} */
+export function getOnlineAgents(userId: string): Promise<AgentInfo[]> {
+  return request<AgentInfo[]>(`/api/skill/agents?userId=${userId}`);
+}
+
+// ---------------------------------------------------------------------------
 // Session CRUD
 // ---------------------------------------------------------------------------
 
 export interface CreateSessionParams {
   userId?: number;
   skillDefinitionId: number;
+  agentId: number;
   title?: string;
   imChatId?: string;
 }

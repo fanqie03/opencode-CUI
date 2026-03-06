@@ -26,6 +26,10 @@
         SELECT * FROM agent_connection WHERE user_id = #{userId}
     </select>
 
+    <select id="findByUserIdAndStatus" resultMap="AgentConnectionResultMap">
+        SELECT * FROM agent_connection WHERE user_id = #{userId} AND status = #{status}
+    </select>
+
     <select id="findByAkIdAndToolTypeAndStatus" resultMap="AgentConnectionResultMap">
         SELECT * FROM agent_connection
         WHERE ak_id = #{akId}

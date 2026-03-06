@@ -3,9 +3,11 @@ import { SessionSidebar } from '../components/SessionSidebar';
 import { ConversationView } from '../components/ConversationView';
 import { MessageInput } from '../components/MessageInput';
 import { SendToImButton } from '../components/SendToImButton';
+import { AgentSelector } from '../components/AgentSelector';
 import { useSkillSession } from '../hooks/useSkillSession';
 import { useSkillStream } from '../hooks/useSkillStream';
 import { useSendToIm } from '../hooks/useSendToIm';
+import { useAgentSelector } from '../hooks/useAgentSelector';
 
 interface SkillMainProps {
   onCollapse: () => void;
@@ -154,20 +156,32 @@ export const SkillMain: React.FC<SkillMainProps> = ({
     error: imError,
   } = useSendToIm(activeSessionId);
 
+  // Agent selector
+  const {
+    agents,
+    selectedAgent,
+    selectAgent,
+    loading: agentsLoading,
+  } = useAgentSelector(userId);
+
   const handleNewSession = useCallback(async () => {
+    if (!selectedAgent) return;
     await createSession({
       skillDefinitionId: SKILL_DEFINITION_ID,
+      agentId: selectedAgent.id,
       title: `Session ${new Date().toLocaleString()}`,
       imChatId,
     });
-  }, [createSession, imChatId]);
+  }, [createSession, imChatId, selectedAgent]);
 
   const handleSendMessage = useCallback(
     async (text: string) => {
+      if (!selectedAgent) return;
       // Auto-create a session if none exists
       if (!activeSessionId) {
         const session = await createSession({
           skillDefinitionId: SKILL_DEFINITION_ID,
+          agentId: selectedAgent.id,
           title: text.slice(0, 50),
           imChatId,
         });
@@ -179,7 +193,7 @@ export const SkillMain: React.FC<SkillMainProps> = ({
       }
       await sendMessage(text);
     },
-    [activeSessionId, createSession, imChatId, sendMessage],
+    [activeSessionId, createSession, imChatId, sendMessage, selectedAgent],
   );
 
   const handleSendToIm = useCallback(
@@ -243,13 +257,21 @@ export const SkillMain: React.FC<SkillMainProps> = ({
               loading={sessionsLoading}
             />
           </div>
+          <AgentSelector
+            agents={agents}
+            selectedAgent={selectedAgent}
+            onSelect={selectAgent}
+            loading={agentsLoading}
+          />
           <MessageInput
             onSend={handleSendMessage}
-            disabled={isStreaming}
+            disabled={isStreaming || !selectedAgent}
             placeholder={
-              activeSessionId
-                ? '输入消息... (Shift+Enter 换行)'
-                : '输入消息开始新会话...'
+              !selectedAgent
+                ? '请先选择 Agent...'
+                : activeSessionId
+                  ? '输入消息... (Shift+Enter 换行)'
+                  : '输入消息开始新会话...'
             }
           />
         </div>

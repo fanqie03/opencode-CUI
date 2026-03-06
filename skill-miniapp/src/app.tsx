@@ -2,8 +2,10 @@ import React, { useState, useCallback, useRef } from 'react';
 import { SessionSidebar } from './components/SessionSidebar';
 import { ConversationView } from './components/ConversationView';
 import { MessageInput } from './components/MessageInput';
+import { AgentSelector } from './components/AgentSelector';
 import { useSkillSession } from './hooks/useSkillSession';
 import { useSkillStream } from './hooks/useSkillStream';
+import { useAgentSelector } from './hooks/useAgentSelector';
 import './index.css';
 
 const SKILL_DEFINITION_ID = 1;
@@ -38,20 +40,32 @@ const App: React.FC = () => {
     error: streamError,
   } = useSkillStream(activeSessionId);
 
+  const {
+    agents,
+    selectedAgent,
+    selectAgent,
+    loading: agentsLoading,
+  } = useAgentSelector(DEFAULT_USER_ID);
+
   const handleNewSession = useCallback(async () => {
+    if (!selectedAgent) return;
     await createSession({
       skillDefinitionId: SKILL_DEFINITION_ID,
       userId: 1,
+      agentId: selectedAgent.id,
       title: `Session ${new Date().toLocaleString()}`,
     });
-  }, [createSession]);
+  }, [createSession, selectedAgent]);
 
   const handleSendMessage = useCallback(
     async (text: string) => {
+      if (!selectedAgent) return;
+
       if (!activeSessionId) {
         const session = await createSession({
           skillDefinitionId: SKILL_DEFINITION_ID,
           userId: 1,
+          agentId: selectedAgent.id,
           title: text.slice(0, 50),
         });
         if (session) {
@@ -61,11 +75,12 @@ const App: React.FC = () => {
       }
       await sendMessage(text);
     },
-    [activeSessionId, createSession, sendMessage],
+    [activeSessionId, createSession, sendMessage, selectedAgent],
   );
 
   const displayError = sessionError ?? streamError;
   const statusCfg = agentStatusConfig[agentStatus] ?? agentStatusConfig.unknown;
+  const inputDisabled = isStreaming || !selectedAgent;
 
   return (
     <div className="app-layout">
@@ -102,13 +117,21 @@ const App: React.FC = () => {
           <div ref={conversationContainerRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <ConversationView messages={messages} loading={sessionsLoading} />
           </div>
+          <AgentSelector
+            agents={agents}
+            selectedAgent={selectedAgent}
+            onSelect={selectAgent}
+            loading={agentsLoading}
+          />
           <MessageInput
             onSend={handleSendMessage}
-            disabled={isStreaming}
+            disabled={inputDisabled}
             placeholder={
-              activeSessionId
-                ? '输入消息... (Enter 发送, Shift+Enter 换行)'
-                : '输入消息开始新会话...'
+              !selectedAgent
+                ? '请先选择 Agent...'
+                : activeSessionId
+                  ? '输入消息... (Enter 发送, Shift+Enter 换行)'
+                  : '输入消息开始新会话...'
             }
           />
         </div>

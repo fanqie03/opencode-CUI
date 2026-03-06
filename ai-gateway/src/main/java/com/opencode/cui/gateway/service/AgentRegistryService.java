@@ -13,10 +13,12 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Agent lifecycle management: registration, heartbeat, online/offline transitions.
+ * Agent lifecycle management: registration, heartbeat, online/offline
+ * transitions.
  *
  * Key behaviors:
- * - Same AK + same toolType -> kick old connection (only one active connection per AK+toolType)
+ * - Same AK + same toolType -> kick old connection (only one active connection
+ * per AK+toolType)
  * - Heartbeat updates last_seen_at
  * - Scheduled task marks stale agents offline
  */
@@ -31,7 +33,7 @@ public class AgentRegistryService {
     private int heartbeatTimeoutSeconds;
 
     public AgentRegistryService(AgentConnectionRepository repository,
-                                EventRelayService eventRelayService) {
+            EventRelayService eventRelayService) {
         this.repository = repository;
         this.eventRelayService = eventRelayService;
     }
@@ -44,7 +46,7 @@ public class AgentRegistryService {
      */
     @Transactional
     public AgentConnection register(Long userId, String akId, String deviceName,
-                                    String os, String toolType, String toolVersion) {
+            String os, String toolType, String toolVersion) {
         // Kick old connection with same AK + toolType
         AgentConnection existing = repository
                 .findByAkIdAndToolTypeAndStatus(akId, toolType, AgentStatus.ONLINE);
@@ -102,6 +104,13 @@ public class AgentRegistryService {
     }
 
     /**
+     * Find all online agents for a specific user.
+     */
+    public List<AgentConnection> findOnlineByUserId(Long userId) {
+        return repository.findByUserIdAndStatus(userId, AgentStatus.ONLINE);
+    }
+
+    /**
      * Get agent by ID.
      */
     public AgentConnection findById(Long agentId) {
@@ -110,7 +119,8 @@ public class AgentRegistryService {
 
     /**
      * Scheduled task: check for timed-out agents and mark them offline.
-     * Runs at the interval configured by gateway.agent.heartbeat-check-interval-seconds.
+     * Runs at the interval configured by
+     * gateway.agent.heartbeat-check-interval-seconds.
      */
     @Scheduled(fixedDelayString = "${gateway.agent.heartbeat-check-interval-seconds:30}000")
     @Transactional

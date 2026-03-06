@@ -17,7 +17,17 @@ public interface AgentConnectionRepository {
     /** Find agents by user ID */
     List<AgentConnection> findByUserId(@Param("userId") Long userId);
 
-    /** Find an existing online connection for the same AK and tool type (for kick-old logic) */
+    /**
+     * Find agents by user ID and status (e.g. ONLINE agents for a specific user)
+     */
+    List<AgentConnection> findByUserIdAndStatus(
+            @Param("userId") Long userId,
+            @Param("status") AgentStatus status);
+
+    /**
+     * Find an existing online connection for the same AK and tool type (for
+     * kick-old logic)
+     */
     AgentConnection findByAkIdAndToolTypeAndStatus(
             @Param("akId") String akId,
             @Param("toolType") String toolType,
