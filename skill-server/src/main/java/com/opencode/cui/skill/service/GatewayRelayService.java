@@ -339,13 +339,17 @@ public class GatewayRelayService {
         String toolSessionId = node.path("toolSessionId").asText(null);
         String sessionId = node.path("sessionId").asText(null);
 
-        if (sessionId != null && toolSessionId != null) {
-            try {
-                sessionService.updateToolSessionId(Long.valueOf(sessionId), toolSessionId);
-                log.info("Tool session created: sessionId={}, toolSessionId={}", sessionId, toolSessionId);
-            } catch (Exception e) {
-                log.error("Failed to update tool session ID: sessionId={}, error={}", sessionId, e.getMessage());
-            }
+        if (sessionId == null || toolSessionId == null) {
+            log.warn("session_created missing fields: sessionId={}, toolSessionId={}, agentId={}, raw={}",
+                    sessionId, toolSessionId, agentId, node.toString());
+            return;
+        }
+
+        try {
+            sessionService.updateToolSessionId(Long.valueOf(sessionId), toolSessionId);
+            log.info("Tool session created: sessionId={}, toolSessionId={}", sessionId, toolSessionId);
+        } catch (Exception e) {
+            log.error("Failed to update tool session ID: sessionId={}, error={}", sessionId, e.getMessage());
         }
     }
 

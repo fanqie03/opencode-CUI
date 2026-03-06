@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Session } from '../protocol/types';
 import * as api from '../utils/api';
 
@@ -18,6 +18,7 @@ export function useSkillSession(userId: string): UseSkillSessionReturn {
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const creatingRef = useRef(false);
 
   const loadSessions = useCallback(async () => {
     if (!userId) return;
@@ -37,6 +38,8 @@ export function useSkillSession(userId: string): UseSkillSessionReturn {
 
   const createSession = useCallback(
     async (params: api.CreateSessionParams): Promise<Session | null> => {
+      if (creatingRef.current) return null;
+      creatingRef.current = true;
       setError(null);
       try {
         const session = await api.createSession(params);
@@ -48,6 +51,8 @@ export function useSkillSession(userId: string): UseSkillSessionReturn {
           err instanceof Error ? err.message : 'Failed to create session';
         setError(message);
         return null;
+      } finally {
+        creatingRef.current = false;
       }
     },
     [],

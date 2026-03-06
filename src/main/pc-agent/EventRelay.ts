@@ -211,14 +211,24 @@ export class EventRelay {
 
       case 'create_session': {
         try {
-          const session = await (this.client as any).session.create({
+          const result = await (this.client as any).session.create({
             body: payload,
           });
+
+          // SDK returns RequestResult wrapper: { data: Session, error, request, response }
+          // Session object is inside result.data, NOT at the top level
+          const sessionObj = result?.data ?? result;
+          const extractedId = sessionObj?.id ?? sessionObj?.sessionId;
+
+          if (!extractedId) {
+            console.warn('[EventRelay] create_session: unable to extract toolSessionId. result keys:', Object.keys(result ?? {}), 'data keys:', Object.keys(result?.data ?? {}));
+          }
+
           const sessionData = {
             type: 'session_created',
             sessionId: msg.sessionId,  // Echo back skill service session ID
-            toolSessionId: session?.id ?? session?.sessionId,
-            session,
+            toolSessionId: extractedId,
+            session: sessionObj,
           };
 
           // Wrap in envelope if protocol adapter is available

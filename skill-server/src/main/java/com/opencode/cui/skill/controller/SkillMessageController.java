@@ -78,6 +78,11 @@ public class SkillMessageController {
 
         // Send chat invoke to AI-Gateway to trigger OpenCode processing
         if (session.getAgentId() != null) {
+            if (session.getToolSessionId() == null) {
+                log.warn("Session {} has no toolSessionId, cannot invoke AI", sessionId);
+                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                        .body(message);
+            }
             String payload = buildChatPayload(request.getContent(), session.getToolSessionId());
             gatewayRelayService.sendInvokeToGateway(
                     session.getAgentId().toString(),
