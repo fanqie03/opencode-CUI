@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import type { GatewayMessage, StreamMessage } from '../types';
 import { GatewayWebSocketClient } from '../services/WebSocketClient';
 import { config } from '../config';
@@ -14,11 +14,14 @@ interface UseAgentWebSocketReturn {
   messages: StreamMessage[];
   error: string | null;
   reconnectCount: number;
+  connect: () => void;
+  disconnect: () => void;
 }
 
 /**
  * React hook for managing a Gateway WebSocket connection (v1 protocol).
- * Converts incoming GatewayMessage (flat) to StreamMessage for UI rendering.
+ * Does NOT auto-connect — call connect() manually.
+ * Gateway requires AK/SK auth, so this is only for real agent scenarios.
  */
 export function useAgentWebSocket({
   agentId,
@@ -34,6 +37,14 @@ export function useAgentWebSocket({
   const connect = useCallback(() => {
     if (!agentId) return;
 
+    // Disconnect existing
+    if (clientRef.current) {
+      clientRef.current.disconnect();
+      clientRef.current = null;
+    }
+
+    setError(null);
+
     const client = new GatewayWebSocketClient(agentId, {
       gatewayUrl,
       reconnectDelay: config.reconnectDelay,
@@ -47,11 +58,9 @@ export function useAgentWebSocket({
       },
       onMessage: (event) => {
         try {
-          // v1: flat GatewayMessage format
           const msg: GatewayMessage = JSON.parse(event.data);
 
           if (msg.type === 'tool_event') {
-            // tool_event contains event.delta for streaming content
             const delta = (msg.event as Record<string, unknown>)?.delta;
             const streamMsg: StreamMessage = {
               type: 'delta',
@@ -81,9 +90,8 @@ export function useAgentWebSocket({
           setError(`Failed to parse message: ${err}`);
         }
       },
-      onError: (evt) => {
-        setError('WebSocket connection error');
-        console.error('WebSocket error:', evt);
+      onError: () => {
+        setError('WebSocket connection error — Gateway requires AK/SK auth');
       },
       onClose: () => {
         setIsConnected(false);
@@ -93,10 +101,18 @@ export function useAgentWebSocket({
     clientRef.current = client;
 
     client.connect().catch((err) => {
-      setError(`Connection failed: ${err}`);
-      console.error('Connection error:', err);
+      setError(`Connection failed: ${err}. Gateway requires AK/SK authentication.`);
     });
   }, [agentId, gatewayUrl]);
+
+  const disconnect = useCallback(() => {
+    if (clientRef.current) {
+      clientRef.current.disconnect();
+      clientRef.current = null;
+    }
+    setIsConnected(false);
+    setError(null);
+  }, []);
 
   const sendMessage = useCallback((msg: GatewayMessage) => {
     if (clientRef.current?.isConnected()) {
@@ -110,22 +126,13 @@ export function useAgentWebSocket({
     }
   }, []);
 
-  useEffect(() => {
-    connect();
-
-    return () => {
-      if (clientRef.current) {
-        clientRef.current.disconnect();
-        clientRef.current = null;
-      }
-    };
-  }, [connect]);
-
   return {
     isConnected,
     sendMessage,
     messages,
     error,
     reconnectCount,
+    connect,
+    disconnect,
   };
 }

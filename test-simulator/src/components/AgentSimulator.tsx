@@ -8,17 +8,14 @@ interface AgentSimulatorProps {
 }
 
 export function AgentSimulator({ agentId, gatewayUrl }: AgentSimulatorProps) {
-  const { isConnected, sendMessage, messages, error, reconnectCount } = useAgentWebSocket({
-    agentId,
-    gatewayUrl,
-  });
+  const { isConnected, sendMessage, messages, error, reconnectCount, connect, disconnect } =
+    useAgentWebSocket({ agentId, gatewayUrl });
 
   const [messageType, setMessageType] = useState('tool_event');
   const [payloadData, setPayloadData] = useState('{"delta": "Hello from agent"}');
 
   const handleSendMessage = () => {
     try {
-      // v1 flat GatewayMessage format
       const msg: GatewayMessage = {
         type: messageType,
         agentId,
@@ -49,6 +46,23 @@ export function AgentSimulator({ agentId, gatewayUrl }: AgentSimulatorProps) {
       <div className="field-row">
         <strong>Reconnects:</strong> {reconnectCount}
       </div>
+
+      {!isConnected ? (
+        <div>
+          <button onClick={connect} className="btn btn-primary">
+            Connect to Gateway
+          </button>
+          <p className="hint-text">
+            ⚠️ Gateway requires AK/SK authentication. This connects to{' '}
+            <code>ws://localhost:8081/ws/agent</code>.
+            Other panels (Session, Stream, Messages) work via Skill Server and don't need this.
+          </p>
+        </div>
+      ) : (
+        <button onClick={disconnect} className="btn btn-danger">
+          Disconnect
+        </button>
+      )}
 
       {error && <div className="error-banner">{error}</div>}
 
