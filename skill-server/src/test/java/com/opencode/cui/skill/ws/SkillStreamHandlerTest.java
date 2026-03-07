@@ -1,6 +1,7 @@
 package com.opencode.cui.skill.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.service.StreamBufferService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,11 +17,13 @@ class SkillStreamHandlerTest {
 
     private SkillStreamHandler handler;
     private ObjectMapper objectMapper;
+    private StreamBufferService bufferService;
 
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
-        handler = new SkillStreamHandler(objectMapper);
+        bufferService = mock(StreamBufferService.class);
+        handler = new SkillStreamHandler(objectMapper, bufferService);
     }
 
     @Test
@@ -98,7 +101,7 @@ class SkillStreamHandlerTest {
         WebSocketSession session = mock(WebSocketSession.class);
         when(session.getUri()).thenReturn(new URI("/ws/skill/stream/"));
 
-        // Should not throw
         handler.afterConnectionEstablished(session);
+        verify(session).close(any());
     }
 }

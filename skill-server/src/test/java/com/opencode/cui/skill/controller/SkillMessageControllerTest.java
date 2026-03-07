@@ -3,7 +3,9 @@ package com.opencode.cui.skill.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.SkillMessage;
+import com.opencode.cui.skill.model.SkillMessageView;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.repository.SkillMessagePartRepository;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
 import com.opencode.cui.skill.service.SkillMessageService;
@@ -38,6 +40,8 @@ class SkillMessageControllerTest {
     private GatewayRelayService gatewayRelayService;
     @Mock
     private ImMessageService imMessageService;
+    @Mock
+    private SkillMessagePartRepository partRepository;
 
     private SkillMessageController controller;
 
@@ -45,7 +49,7 @@ class SkillMessageControllerTest {
     void setUp() {
         controller = new SkillMessageController(
                 messageService, sessionService, gatewayRelayService,
-                imMessageService, new ObjectMapper());
+                imMessageService, new ObjectMapper(), partRepository);
     }
 
     @Test
@@ -54,6 +58,7 @@ class SkillMessageControllerTest {
         SkillSession session = new SkillSession();
         session.setId(1L);
         session.setAgentId(99L);
+        session.setToolSessionId("tool-session-1");
         session.setStatus(SkillSession.Status.ACTIVE);
         when(sessionService.getSession(1L)).thenReturn(session);
 
@@ -101,7 +106,7 @@ class SkillMessageControllerTest {
         when(messageService.getMessageHistory(1L, 0, 50))
                 .thenReturn(new PageResult<>(List.of(), 0, 0, 50));
 
-        ResponseEntity<PageResult<SkillMessage>> response =
+        ResponseEntity<PageResult<SkillMessageView>> response =
                 controller.getMessages(1L, 0, 50);
         assertEquals(HttpStatus.OK, response.getStatusCode());
     }

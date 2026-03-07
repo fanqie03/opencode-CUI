@@ -4,7 +4,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.SkillMessage;
+import com.opencode.cui.skill.model.SkillMessageView;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.repository.SkillMessagePartRepository;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
 import com.opencode.cui.skill.service.SkillMessageService;
@@ -33,17 +35,20 @@ public class SkillMessageController {
     private final GatewayRelayService gatewayRelayService;
     private final ImMessageService imMessageService;
     private final ObjectMapper objectMapper;
+    private final SkillMessagePartRepository partRepository;
 
     public SkillMessageController(SkillMessageService messageService,
             SkillSessionService sessionService,
             GatewayRelayService gatewayRelayService,
             ImMessageService imMessageService,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            SkillMessagePartRepository partRepository) {
         this.messageService = messageService;
         this.sessionService = sessionService;
         this.gatewayRelayService = gatewayRelayService;
         this.imMessageService = imMessageService;
         this.objectMapper = objectMapper;
+        this.partRepository = partRepository;
     }
 
     /**
@@ -101,7 +106,7 @@ public class SkillMessageController {
      * Get message history with pagination.
      */
     @GetMapping("/messages")
-    public ResponseEntity<PageResult<SkillMessage>> getMessages(
+    public ResponseEntity<PageResult<SkillMessageView>> getMessages(
             @PathVariable Long sessionId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
@@ -114,7 +119,15 @@ public class SkillMessageController {
         }
 
         PageResult<SkillMessage> messages = messageService.getMessageHistory(sessionId, page, size);
-        return ResponseEntity.ok(messages);
+        var content = messages.getContent().stream()
+                .map(message -> SkillMessageView.from(
+                        message,
+                        partRepository.findByMessageId(message.getId())))
+                .toList();
+        return ResponseEntity.ok(new PageResult<>(content,
+                messages.getTotalElements(),
+                messages.getNumber(),
+                messages.getSize()));
     }
 
     /**

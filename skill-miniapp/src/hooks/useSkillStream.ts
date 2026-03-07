@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message, StreamMessage } from '../protocol/types';
 import { StreamAssembler } from '../protocol/StreamAssembler';
+import { normalizeHistoryMessages } from '../protocol/history';
 import * as api from '../utils/api';
 
 type AgentStatus = 'online' | 'offline' | 'unknown';
@@ -56,7 +57,7 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
       try {
         const res = await api.getMessages(sessionId, 0, 50);
         if (!cancelled) {
-          setMessages(res.content);
+          setMessages(normalizeHistoryMessages(res.content as unknown as Array<Record<string, unknown>>));
         }
       } catch {
         /* history load failure is non-fatal */

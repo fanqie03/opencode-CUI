@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * Translates raw OpenCode SSE events into semantic StreamMessage DTOs.
@@ -39,6 +41,7 @@ import java.util.Map;
 public class OpenCodeEventTranslator {
 
     private final ObjectMapper objectMapper;
+    private final ConcurrentMap<String, String> partTypes = new ConcurrentHashMap<>();
 
     public OpenCodeEventTranslator(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
@@ -60,18 +63,30 @@ public class OpenCodeEventTranslator {
 
         return switch (eventType) {
             case "message.part.updated" -> translatePartUpdated(event);
+            case "message.part.delta" -> translatePartDelta(event);
+            case "message.part.removed" -> {
+                evictPartType(
+                        event.path("properties").path("sessionID").asText(null),
+                        event.path("properties").path("partID").asText(null));
+                yield null;
+            }
             case "message.updated" -> translateMessageUpdated(event);
             case "session.status" -> translateSessionStatus(event);
-            case "session.idle" -> StreamMessage.builder()
-                    .type(StreamMessage.Types.SESSION_STATUS)
-                    .sessionStatus("idle")
-                    .build();
+            case "session.idle" -> {
+                clearSessionPartTypes(event.path("properties").path("sessionID").asText(null));
+                yield StreamMessage.builder()
+                        .type(StreamMessage.Types.SESSION_STATUS)
+                        .sessionStatus("idle")
+                        .build();
+            }
             case "session.updated" -> translateSessionUpdated(event);
             case "session.error" -> StreamMessage.builder()
                     .type(StreamMessage.Types.SESSION_ERROR)
                     .error(event.path("properties").path("error").toString())
                     .build();
             case "permission.updated" -> translatePermission(event);
+            case "permission.asked" -> translatePermission(event);
+            case "question.asked" -> translateQuestionAsked(event);
             default -> {
                 log.debug("Ignoring OpenCode event type: {}", eventType);
                 yield null;
@@ -110,6 +125,9 @@ public class OpenCodeEventTranslator {
         String delta = props.has("delta") && !props.get("delta").isNull()
                 ? props.path("delta").asText(null)
                 : null;
+        String sessionId = part.path("sessionID").asText(null);
+
+        rememberPartType(sessionId, partId, partType);
 
         return switch (partType) {
             case "text" -> translateTextPart(partId, part, delta);
@@ -122,6 +140,45 @@ public class OpenCodeEventTranslator {
             case "file" -> translateFilePart(partId, part);
             default -> {
                 log.debug("Ignoring part type: {}", partType);
+                yield null;
+            }
+        };
+    }
+
+    private StreamMessage translatePartDelta(JsonNode event) {
+        JsonNode props = event.get("properties");
+        if (props == null) {
+            return null;
+        }
+
+        String sessionId = props.path("sessionID").asText(null);
+        String partId = props.path("partID").asText(null);
+        String delta = props.path("delta").asText(null);
+        if (partId == null || delta == null) {
+            return null;
+        }
+
+        String partType = getPartType(sessionId, partId);
+        if (partType == null) {
+            log.debug("Ignoring delta for unknown part: sessionId={}, partId={}, field={}",
+                    sessionId, partId, props.path("field").asText(null));
+            return null;
+        }
+
+        return switch (partType) {
+            case "text" -> StreamMessage.builder()
+                    .type(StreamMessage.Types.TEXT_DELTA)
+                    .partId(partId)
+                    .content(delta)
+                    .build();
+            case "reasoning" -> StreamMessage.builder()
+                    .type(StreamMessage.Types.THINKING_DELTA)
+                    .partId(partId)
+                    .content(delta)
+                    .build();
+            default -> {
+                log.debug("Ignoring delta for unsupported part type: sessionId={}, partId={}, partType={}",
+                        sessionId, partId, partType);
                 yield null;
             }
         };
@@ -264,6 +321,9 @@ public class OpenCodeEventTranslator {
     private StreamMessage translateSessionStatus(JsonNode event) {
         String status = event.path("properties").path("status").path("type").asText(
                 event.path("properties").path("status").asText(""));
+        if ("idle".equals(status)) {
+            clearSessionPartTypes(event.path("properties").path("sessionID").asText(null));
+        }
         return StreamMessage.builder()
                 .type(StreamMessage.Types.SESSION_STATUS)
                 .sessionStatus(status)
@@ -305,10 +365,85 @@ public class OpenCodeEventTranslator {
         return StreamMessage.builder()
                 .type(StreamMessage.Types.PERMISSION_ASK)
                 .permissionId(props.path("id").asText(null))
-                .permType(props.path("type").asText(null))
-                .title(props.path("title").asText(null))
+                .permType(props.path("type").asText(
+                        props.path("permission").asText(null)))
+                .title(props.path("title").asText(
+                        props.path("permission").asText(null)))
                 .metadata(jsonNodeToMap(props.get("metadata")))
                 .build();
+    }
+
+    private StreamMessage translateQuestionAsked(JsonNode event) {
+        JsonNode props = event.get("properties");
+        if (props == null) {
+            return null;
+        }
+
+        JsonNode questionsNode = props.get("questions");
+        JsonNode firstQuestion = questionsNode != null && questionsNode.isArray() && !questionsNode.isEmpty()
+                ? questionsNode.get(0)
+                : null;
+        if (firstQuestion == null) {
+            return null;
+        }
+
+        List<String> options = new ArrayList<>();
+        JsonNode optionsNode = firstQuestion.get("options");
+        if (optionsNode != null && optionsNode.isArray()) {
+            for (JsonNode opt : optionsNode) {
+                String label = opt.path("label").asText(null);
+                if (label == null || label.isBlank()) {
+                    label = opt.asText(null);
+                }
+                if (label != null && !label.isBlank()) {
+                    options.add(label);
+                }
+            }
+        }
+
+        return StreamMessage.builder()
+                .type(StreamMessage.Types.QUESTION)
+                .partId(props.path("id").asText(null))
+                .toolName("question")
+                .status("running")
+                .header(firstQuestion.path("header").asText(null))
+                .question(firstQuestion.path("question").asText(null))
+                .options(options.isEmpty() ? null : options)
+                .build();
+    }
+
+    private void rememberPartType(String sessionId, String partId, String partType) {
+        if (sessionId == null || sessionId.isBlank() || partId == null || partId.isBlank()
+                || partType == null || partType.isBlank()) {
+            return;
+        }
+        partTypes.put(partCacheKey(sessionId, partId), partType);
+    }
+
+    private String getPartType(String sessionId, String partId) {
+        if (sessionId == null || sessionId.isBlank() || partId == null || partId.isBlank()) {
+            return null;
+        }
+        return partTypes.get(partCacheKey(sessionId, partId));
+    }
+
+    private void evictPartType(String sessionId, String partId) {
+        if (sessionId == null || sessionId.isBlank() || partId == null || partId.isBlank()) {
+            return;
+        }
+        partTypes.remove(partCacheKey(sessionId, partId));
+    }
+
+    private void clearSessionPartTypes(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        String prefix = sessionId + ":";
+        partTypes.keySet().removeIf(key -> key.startsWith(prefix));
+    }
+
+    private String partCacheKey(String sessionId, String partId) {
+        return sessionId + ":" + partId;
     }
 
     // ==================== Utilities ====================

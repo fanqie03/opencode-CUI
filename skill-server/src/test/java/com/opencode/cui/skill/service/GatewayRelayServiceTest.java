@@ -1,6 +1,7 @@
 package com.opencode.cui.skill.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.ws.GatewayWSHandler;
 import com.opencode.cui.skill.ws.SkillStreamHandler;
@@ -32,6 +33,12 @@ class GatewayRelayServiceTest {
     private SequenceTracker sequenceTracker;
     @Mock
     private GatewayWSHandler gatewayWSHandler;
+    @Mock
+    private OpenCodeEventTranslator translator;
+    @Mock
+    private MessagePersistenceService persistenceService;
+    @Mock
+    private StreamBufferService bufferService;
 
     private ObjectMapper objectMapper;
     private GatewayRelayService service;
@@ -42,7 +49,7 @@ class GatewayRelayServiceTest {
         service = new GatewayRelayService(
                 objectMapper, skillStreamHandler, messageService,
                 sessionService, redisMessageBroker, sequenceTracker,
-                gatewayWSHandler);
+                gatewayWSHandler, translator, persistenceService, bufferService);
     }
 
     // ==================== Upstream: Gateway �?Skill ====================
@@ -51,14 +58,17 @@ class GatewayRelayServiceTest {
     @DisplayName("tool_event persists and broadcasts to Skill Redis")
     void toolEventPersistsAndBroadcasts() {
         String msg = "{\"type\":\"tool_event\",\"sessionId\":\"123\",\"event\":{\"data\":\"hello\"}}";
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.TEXT_DELTA)
+                .partId("part-1")
+                .content("hello")
+                .build());
+
         service.handleGatewayMessage(msg);
 
-        // Should persist to DB
-        verify(messageService).saveAssistantMessage(eq(123L), contains("hello"), isNull());
-        // Should broadcast via Redis (not direct pushToSession)
-        verify(redisMessageBroker).publishToSession(eq("123"), contains("delta"));
-        // Should NOT call pushToSession directly (that's done by the broadcast
-        // callback)
+        verify(redisMessageBroker).publishToSession(eq("123"), contains("text.delta"));
+        verify(bufferService).accumulate(eq("123"), any(StreamMessage.class));
+        verify(persistenceService).persistIfFinal(eq(123L), any(StreamMessage.class));
         verifyNoInteractions(skillStreamHandler);
     }
 
@@ -68,7 +78,9 @@ class GatewayRelayServiceTest {
         String msg = "{\"type\":\"tool_done\",\"sessionId\":\"42\",\"usage\":{\"tokens\":100}}";
         service.handleGatewayMessage(msg);
 
-        verify(redisMessageBroker).publishToSession(eq("42"), contains("done"));
+        verify(redisMessageBroker).publishToSession(eq("42"), contains("session.status"));
+        verify(bufferService).accumulate(eq("42"), any(StreamMessage.class));
+        verify(persistenceService).persistIfFinal(eq(42L), any(StreamMessage.class));
         verifyNoInteractions(skillStreamHandler);
     }
 
@@ -93,7 +105,7 @@ class GatewayRelayServiceTest {
         String msg = "{\"type\":\"agent_online\",\"agentId\":\"99\",\"toolType\":\"opencode\",\"toolVersion\":\"1.0\"}";
         service.handleGatewayMessage(msg);
 
-        verify(redisMessageBroker).publishToSession(eq("1"), contains("agent_online"));
+        verify(redisMessageBroker).publishToSession(eq("1"), contains("agent.online"));
     }
 
     @Test
@@ -106,7 +118,7 @@ class GatewayRelayServiceTest {
         String msg = "{\"type\":\"agent_offline\",\"agentId\":\"99\"}";
         service.handleGatewayMessage(msg);
 
-        verify(redisMessageBroker).publishToSession(eq("2"), contains("agent_offline"));
+        verify(redisMessageBroker).publishToSession(eq("2"), contains("agent.offline"));
     }
 
     @Test
@@ -121,10 +133,15 @@ class GatewayRelayServiceTest {
     @Test
     @DisplayName("permission_request broadcasts via Redis")
     void permissionRequestBroadcasts() {
+        when(translator.translatePermissionFromGateway(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.PERMISSION_ASK)
+                .permissionId("p-1")
+                .build());
+
         String msg = "{\"type\":\"permission_request\",\"sessionId\":\"42\",\"permissionId\":\"p-1\",\"command\":\"rm -rf /\",\"workingDirectory\":\"/tmp\"}";
         service.handleGatewayMessage(msg);
 
-        verify(redisMessageBroker).publishToSession(eq("42"), contains("permission_request"));
+        verify(redisMessageBroker).publishToSession(eq("42"), contains("permission.ask"));
     }
 
     @Test
