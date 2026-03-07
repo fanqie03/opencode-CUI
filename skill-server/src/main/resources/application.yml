@@ -6,10 +6,10 @@ spring:
     name: skill-server
 
   datasource:
-    url: jdbc:mariadb://localhost:3306/skill_db?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8mb4
-    username: root
-    password: ${DB_PASSWORD:root}
-    driver-class-name: org.mariadb.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_SKILL_DB:skill_db}?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf-8&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:Root@123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       minimum-idle: 5
       maximum-pool-size: 20
@@ -21,6 +21,7 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
       password: ${REDIS_PASSWORD:}
       timeout: 3000ms
       lettuce:
@@ -52,9 +53,25 @@ skill:
     # Cleanup interval in minutes for scheduled IDLE session cleanup
     cleanup-interval-minutes: 10
 
+opencode:
+  logging:
+    base-dir: ${OPENCODE_LOG_DIR:D:/02_Lab/Logs}
+    file: ${SKILL_SERVER_LOG_FILE:${opencode.logging.base-dir}/skill-server/skill-server.log}
+    archive-dir: ${SKILL_SERVER_LOG_ARCHIVE_DIR:${opencode.logging.base-dir}/skill-server/archive}
+
 logging:
+  file:
+    name: ${opencode.logging.file}
   level:
     com.opencode.cui.skill: DEBUG
     org.springframework.web.socket: INFO
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  logback:
+    rollingpolicy:
+      file-name-pattern: ${SKILL_SERVER_LOG_ARCHIVE_PATTERN:${opencode.logging.archive-dir}/skill-server.%d{yyyy-MM-dd}.%i.log.gz}
+      max-file-size: ${SKILL_SERVER_LOG_MAX_FILE_SIZE:20MB}
+      max-history: ${SKILL_SERVER_LOG_MAX_HISTORY:30}
+      total-size-cap: ${SKILL_SERVER_LOG_TOTAL_SIZE_CAP:2GB}
+      clean-history-on-start: ${SKILL_SERVER_LOG_CLEAN_HISTORY_ON_START:false}

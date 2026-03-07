@@ -6,10 +6,10 @@ spring:
     name: ai-gateway
 
   datasource:
-    url: jdbc:mariadb://localhost:3306/ai_gateway?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8mb4
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_AI_GATEWAY_DB:ai_gateway}?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf-8&allowPublicKeyRetrieval=true
     username: root
-    password: ${DB_PASSWORD:root}
-    driver-class-name: org.mariadb.jdbc.Driver
+    password: Root@123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 20
       minimum-idle: 5
@@ -18,9 +18,10 @@ spring:
 
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:}
+      host: localhost
+      port: 6379
+      database: 0
+      password: 
       timeout: 3000ms
       lettuce:
         pool:
@@ -53,7 +54,24 @@ gateway:
     timestamp-tolerance-seconds: 300
     nonce-ttl-seconds: 300
 
+opencode:
+  logging:
+    base-dir: ${OPENCODE_LOG_DIR:D:/02_Lab/Logs}
+    file: ${AI_GATEWAY_LOG_FILE:${opencode.logging.base-dir}/ai-gateway/ai-gateway.log}
+    archive-dir: ${AI_GATEWAY_LOG_ARCHIVE_DIR:${opencode.logging.base-dir}/ai-gateway/archive}
+
 logging:
+  file:
+    name: ${opencode.logging.file}
   level:
     com.opencode.cui.gateway: DEBUG
     org.springframework.web.socket: INFO
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  logback:
+    rollingpolicy:
+      file-name-pattern: ${AI_GATEWAY_LOG_ARCHIVE_PATTERN:${opencode.logging.archive-dir}/ai-gateway.%d{yyyy-MM-dd}.%i.log.gz}
+      max-file-size: ${AI_GATEWAY_LOG_MAX_FILE_SIZE:20MB}
+      max-history: ${AI_GATEWAY_LOG_MAX_HISTORY:30}
+      total-size-cap: ${AI_GATEWAY_LOG_TOTAL_SIZE_CAP:2GB}
+      clean-history-on-start: ${AI_GATEWAY_LOG_CLEAN_HISTORY_ON_START:false}
