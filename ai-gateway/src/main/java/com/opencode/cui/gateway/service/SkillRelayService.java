@@ -19,34 +19,36 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * Manages Skill Server WebSocket connections and routes upstream messages
+ * to any available Skill link.
+ *
+ * Gateway does NOT perform session-level routing. All upstream messages are
+ * sent to any available Skill Server instance. Skill Server resolves
+ * toolSessionId → welinkSessionId via its own DB.
+ */
 @Slf4j
 @Service
 public class SkillRelayService {
-
-    private static final String TOOL_DONE = "tool_done";
 
     private final RedisMessageBroker redisMessageBroker;
     private final ObjectMapper objectMapper;
 
     private final String instanceId;
     private final Duration ownerTtl;
-    private final Duration sessionRouteTtl;
 
     private final Map<String, WebSocketSession> skillSessions = new ConcurrentHashMap<>();
-    private final Map<String, String> sessionBindings = new ConcurrentHashMap<>();
     private final AtomicReference<String> defaultLinkId = new AtomicReference<>();
     private final AtomicBoolean relaySubscribed = new AtomicBoolean(false);
 
     public SkillRelayService(RedisMessageBroker redisMessageBroker,
             ObjectMapper objectMapper,
             @Value("${gateway.instance-id:${HOSTNAME:gateway-local}}") String instanceId,
-            @Value("${gateway.skill-relay.owner-ttl-seconds:30}") long ownerTtlSeconds,
-            @Value("${gateway.skill-relay.session-route-ttl-seconds:1800}") long sessionRouteTtlSeconds) {
+            @Value("${gateway.skill-relay.owner-ttl-seconds:30}") long ownerTtlSeconds) {
         this.redisMessageBroker = redisMessageBroker;
         this.objectMapper = objectMapper;
         this.instanceId = instanceId;
         this.ownerTtl = Duration.ofSeconds(ownerTtlSeconds);
-        this.sessionRouteTtl = Duration.ofSeconds(sessionRouteTtlSeconds);
     }
 
     public void registerSkillSession(WebSocketSession session) {
@@ -64,7 +66,6 @@ public class SkillRelayService {
     public void removeSkillSession(WebSocketSession session) {
         String linkId = session.getId();
         skillSessions.remove(linkId);
-        sessionBindings.entrySet().removeIf(entry -> linkId.equals(entry.getValue()));
 
         if (linkId.equals(defaultLinkId.get())) {
             defaultLinkId.set(selectAnyOpenLinkId());
@@ -80,12 +81,10 @@ public class SkillRelayService {
                 instanceId, linkId, getActiveSkillConnectionCount());
     }
 
+    /**
+     * Handle invoke messages FROM Skill Server → route to target agent via Redis.
+     */
     public void handleInvokeFromSkill(WebSocketSession session, GatewayMessage message) {
-        if (message.getSessionId() != null && !message.getSessionId().isBlank()) {
-            bindSession(message.getSessionId(), session.getId());
-            touchSessionOwner(message.getSessionId(), instanceId);
-        }
-
         if (message.getAgentId() == null || message.getAgentId().isBlank()) {
             log.warn("Invoke from skill missing agentId: linkId={}, action={}",
                     session.getId(), message.getAction());
@@ -97,78 +96,41 @@ public class SkillRelayService {
                 session.getId(), message.getAgentId(), message.getAction());
     }
 
+    /**
+     * Route an upstream message (from PC Agent) to any available Skill link.
+     * No session-level routing — just pick any open link on this instance,
+     * or relay to another Gateway instance that has a Skill connection.
+     */
     public boolean relayToSkill(GatewayMessage message) {
-        String sessionId = normalize(message.getSessionId());
-        if (sessionId != null) {
-            if (sendToBoundLink(sessionId, message)) {
-                touchSessionOwner(sessionId, instanceId);
-                cleanupLocalBindingIfCompleted(message);
-                return true;
-            }
-
-            String ownerId = resolveSessionOwner(sessionId);
-            if (ownerId == null) {
-                ownerId = selectOwner(sessionId);
-                if (ownerId == null) {
-                    log.warn("No active skill owner available for sessionId={}, type={}",
-                            sessionId, message.getType());
-                    return false;
-                }
-                touchSessionOwner(sessionId, ownerId);
-            }
-
-            if (instanceId.equals(ownerId)) {
-                boolean sent = sendViaDefaultLink(message, sessionId);
-                if (sent) {
-                    touchSessionOwner(sessionId, instanceId);
-                    cleanupLocalBindingIfCompleted(message);
-                }
-                return sent;
-            }
-
-            redisMessageBroker.publishToRelay(ownerId, message);
+        // Try local: send via any available skill link on this instance
+        if (sendViaDefaultLink(message)) {
             return true;
         }
 
-        if (sendViaDefaultLink(message, null)) {
-            return true;
-        }
-
-        String ownerId = selectOwner(normalize(message.getAgentId()) != null
-                ? message.getAgentId()
-                : message.getType());
+        // Local failed — relay to another Gateway instance with a Skill connection
+        String ownerId = selectOwner(message.getType());
         if (ownerId == null) {
-            log.warn("No active skill owner available for non-session message: type={}, agentId={}",
+            log.warn("No active skill owner available: type={}, agentId={}",
                     message.getType(), message.getAgentId());
             return false;
         }
 
         if (instanceId.equals(ownerId)) {
-            return sendViaDefaultLink(message, null);
+            // We are the selected owner but local send failed — no skill link available
+            return sendViaDefaultLink(message);
         }
 
         redisMessageBroker.publishToRelay(ownerId, message);
         return true;
     }
 
+    /**
+     * Handle a message relayed from another Gateway instance.
+     */
     public void handleRelayedMessage(GatewayMessage message) {
-        String sessionId = normalize(message.getSessionId());
-
-        if (sessionId != null && sendToBoundLink(sessionId, message)) {
-            touchSessionOwner(sessionId, instanceId);
-            cleanupLocalBindingIfCompleted(message);
-            return;
-        }
-
-        if (!sendViaDefaultLink(message, sessionId)) {
-            log.warn("Relay target gateway has no active skill link: instanceId={}, type={}, sessionId={}",
-                    instanceId, message.getType(), sessionId);
-            return;
-        }
-
-        if (sessionId != null) {
-            touchSessionOwner(sessionId, instanceId);
-            cleanupLocalBindingIfCompleted(message);
+        if (!sendViaDefaultLink(message)) {
+            log.warn("Relay target gateway has no active skill link: instanceId={}, type={}",
+                    instanceId, message.getType());
         }
     }
 
@@ -190,36 +152,14 @@ public class SkillRelayService {
         clearOwnerState();
     }
 
-    private boolean sendToBoundLink(String sessionId, GatewayMessage message) {
-        String linkId = sessionBindings.get(sessionId);
-        if (linkId == null) {
-            return false;
-        }
+    // ========== Internal methods ==========
 
-        WebSocketSession session = skillSessions.get(linkId);
-        if (session == null || !session.isOpen()) {
-            sessionBindings.remove(sessionId, linkId);
-            return false;
-        }
-
-        boolean sent = sendToSession(session, message);
-        if (!sent) {
-            sessionBindings.remove(sessionId, linkId);
-        }
-        return sent;
-    }
-
-    private boolean sendViaDefaultLink(GatewayMessage message, String sessionIdToBind) {
+    private boolean sendViaDefaultLink(GatewayMessage message) {
         WebSocketSession session = resolveDefaultSession();
         if (session == null) {
             return false;
         }
-
-        boolean sent = sendToSession(session, message);
-        if (sent && sessionIdToBind != null) {
-            bindSession(sessionIdToBind, session.getId());
-        }
-        return sent;
+        return sendToSession(session, message);
     }
 
     private boolean sendToSession(WebSocketSession session, GatewayMessage message) {
@@ -238,35 +178,6 @@ public class SkillRelayService {
         }
     }
 
-    private void bindSession(String sessionId, String linkId) {
-        sessionBindings.put(sessionId, linkId);
-    }
-
-    private void cleanupLocalBindingIfCompleted(GatewayMessage message) {
-        if (TOOL_DONE.equals(message.getType())) {
-            String sessionId = normalize(message.getSessionId());
-            if (sessionId != null) {
-                sessionBindings.remove(sessionId);
-            }
-        }
-    }
-
-    private void touchSessionOwner(String sessionId, String ownerId) {
-        redisMessageBroker.setSessionOwner(sessionId, ownerId, sessionRouteTtl);
-    }
-
-    private String resolveSessionOwner(String sessionId) {
-        String ownerId = normalize(redisMessageBroker.getSessionOwner(sessionId));
-        if (ownerId == null) {
-            return null;
-        }
-        if (!redisMessageBroker.hasActiveSkillOwner(ownerId)) {
-            redisMessageBroker.clearSessionOwner(sessionId);
-            return null;
-        }
-        return ownerId;
-    }
-
     private String selectOwner(String key) {
         Set<String> owners = redisMessageBroker.getActiveSkillOwners();
         if (owners.isEmpty()) {
@@ -279,7 +190,7 @@ public class SkillRelayService {
     }
 
     private long rendezvousScore(String key, String ownerId) {
-        String stableKey = normalize(key) != null ? key : "default";
+        String stableKey = key != null && !key.isBlank() ? key : "default";
         return Integer.toUnsignedLong((stableKey + "|" + ownerId).hashCode());
     }
 
@@ -320,12 +231,5 @@ public class SkillRelayService {
         if (relaySubscribed.compareAndSet(true, false)) {
             redisMessageBroker.unsubscribeFromRelay(instanceId);
         }
-    }
-
-    private String normalize(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        return value;
     }
 }

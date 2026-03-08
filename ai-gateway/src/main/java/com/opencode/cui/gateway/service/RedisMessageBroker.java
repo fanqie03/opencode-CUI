@@ -19,16 +19,19 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
- * Redis pub/sub message broker for Gateway multi-instance coordination (v1
- * protocol).
+ * Redis pub/sub message broker for Gateway multi-instance coordination.
  *
  * Channel patterns:
- * - agent:{agentId} �?route invoke commands to the Gateway instance holding the
+ * - agent:{ak} — route invoke commands to the Gateway instance holding the
  * Agent WS
+ * - gw:relay:{instanceId} — cross-instance message relay
  *
- * In v1 (方案5), session:{sessionId} channels are handled by Skill Server's own
- * Redis,
- * not by Gateway. Gateway Redis is used exclusively for internal agent routing.
+ * Key patterns:
+ * - gw:skill:owner:{instanceId} — Skill Server heartbeat (KV + TTL)
+ * - gw:skill:owners — active Skill Server instance set
+ *
+ * Session-level routing is NOT handled by Gateway. Skill Server resolves
+ * toolSessionId → welinkSessionId via its own DB.
  */
 @Slf4j
 @Service
@@ -37,7 +40,6 @@ public class RedisMessageBroker {
     private static final String AGENT_CHANNEL_PREFIX = "agent:";
     private static final String RELAY_CHANNEL_PREFIX = "gw:relay:";
     private static final String SKILL_OWNER_KEY_PREFIX = "gw:skill:owner:";
-    private static final String SESSION_OWNER_KEY_PREFIX = "gw:session:skill-owner:";
     private static final String SKILL_OWNERS_SET_KEY = "gw:skill:owners";
 
     private final StringRedisTemplate redisTemplate;
@@ -107,18 +109,6 @@ public class RedisMessageBroker {
     public void removeSkillOwner(String instanceId) {
         redisTemplate.delete(skillOwnerKey(instanceId));
         redisTemplate.opsForSet().remove(SKILL_OWNERS_SET_KEY, instanceId);
-    }
-
-    public void setSessionOwner(String sessionId, String instanceId, Duration ttl) {
-        redisTemplate.opsForValue().set(sessionOwnerKey(sessionId), instanceId, ttl);
-    }
-
-    public String getSessionOwner(String sessionId) {
-        return redisTemplate.opsForValue().get(sessionOwnerKey(sessionId));
-    }
-
-    public void clearSessionOwner(String sessionId) {
-        redisTemplate.delete(sessionOwnerKey(sessionId));
     }
 
     public boolean hasActiveSkillOwner(String instanceId) {
@@ -199,7 +189,4 @@ public class RedisMessageBroker {
         return SKILL_OWNER_KEY_PREFIX + instanceId;
     }
 
-    private String sessionOwnerKey(String sessionId) {
-        return SESSION_OWNER_KEY_PREFIX + sessionId;
-    }
 }
