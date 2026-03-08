@@ -15,7 +15,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Tests for EventRelayService v1 protocol routing (方案5).
+ * Tests for EventRelayService — agent sessions keyed by AK.
  */
 @ExtendWith(MockitoExtension.class)
 class EventRelayServiceTest {
@@ -39,19 +39,19 @@ class EventRelayServiceTest {
     // ==================== Agent Session Management ====================
 
     @Test
-    @DisplayName("registerAgentSession subscribes to Redis and stores session")
+    @DisplayName("registerAgentSession subscribes to Redis agent:{ak} and stores session")
     void registerAgentSessionSubscribesAndStores() {
         when(wsSession.isOpen()).thenReturn(true);
         when(wsSession.getId()).thenReturn("ws-1");
 
-        service.registerAgentSession("agent-1", wsSession);
+        service.registerAgentSession("ak_test_001", wsSession);
 
-        verify(redisMessageBroker).subscribeToAgent(eq("agent-1"), any());
-        assertTrue(service.hasAgentSession("agent-1"));
+        verify(redisMessageBroker).subscribeToAgent(eq("ak_test_001"), any());
+        assertTrue(service.hasAgentSession("ak_test_001"));
     }
 
     @Test
-    @DisplayName("registerAgentSession closes old session when re-registering")
+    @DisplayName("registerAgentSession closes old session when re-registering same ak")
     void registerAgentSessionClosesOldSession() throws Exception {
         WebSocketSession oldSession = mock(WebSocketSession.class);
         when(oldSession.isOpen()).thenReturn(true);
@@ -59,11 +59,11 @@ class EventRelayServiceTest {
         when(wsSession.isOpen()).thenReturn(true);
         when(wsSession.getId()).thenReturn("ws-new");
 
-        service.registerAgentSession("agent-1", oldSession);
-        service.registerAgentSession("agent-1", wsSession);
+        service.registerAgentSession("ak_test_001", oldSession);
+        service.registerAgentSession("ak_test_001", wsSession);
 
         verify(oldSession).close();
-        assertTrue(service.hasAgentSession("agent-1"));
+        assertTrue(service.hasAgentSession("ak_test_001"));
     }
 
     @Test
@@ -72,31 +72,31 @@ class EventRelayServiceTest {
         when(wsSession.isOpen()).thenReturn(true);
         when(wsSession.getId()).thenReturn("ws-1");
 
-        service.registerAgentSession("agent-1", wsSession);
-        service.removeAgentSession("agent-1");
+        service.registerAgentSession("ak_test_001", wsSession);
+        service.removeAgentSession("ak_test_001");
 
-        verify(redisMessageBroker).unsubscribeFromAgent("agent-1");
-        assertFalse(service.hasAgentSession("agent-1"));
+        verify(redisMessageBroker).unsubscribeFromAgent("ak_test_001");
+        assertFalse(service.hasAgentSession("ak_test_001"));
     }
 
     @Test
-    @DisplayName("hasAgentSession returns false for unregistered agent")
+    @DisplayName("hasAgentSession returns false for unregistered ak")
     void hasAgentSessionReturnsFalseForUnregistered() {
-        assertFalse(service.hasAgentSession("unknown-agent"));
+        assertFalse(service.hasAgentSession("unknown-ak"));
     }
 
-    // ==================== Upstream: PCAgent �?Skill Server ====================
+    // ==================== Upstream: PCAgent → Skill Server ====================
 
     @Test
-    @DisplayName("relayToSkillServer attaches agentId and routes to skill relay service")
-    void relayToSkillServerAttachesAgentIdAndRoutes() {
+    @DisplayName("relayToSkillServer attaches ak and routes to skill relay service")
+    void relayToSkillServerAttachesAkAndRoutes() {
         when(skillRelayService.relayToSkill(any())).thenReturn(true);
         GatewayMessage msg = GatewayMessage.builder().type("tool_event").sessionId("42").build();
 
-        service.relayToSkillServer("agent-1", msg);
+        service.relayToSkillServer("ak_test_001", msg);
 
         verify(skillRelayService)
-                .relayToSkill(argThat(m -> "agent-1".equals(m.getAgentId()) && "tool_event".equals(m.getType())));
+                .relayToSkill(argThat(m -> "ak_test_001".equals(m.getAk()) && "tool_event".equals(m.getType())));
     }
 
     @Test
@@ -105,21 +105,21 @@ class EventRelayServiceTest {
         when(skillRelayService.relayToSkill(any())).thenReturn(false);
         GatewayMessage msg = GatewayMessage.builder().type("tool_event").build();
 
-        service.relayToSkillServer("agent-1", msg);
+        service.relayToSkillServer("ak_test_001", msg);
         verify(skillRelayService).relayToSkill(any());
         verifyNoInteractions(redisMessageBroker);
     }
 
-    // ==================== Downstream: Skill �?PCAgent ====================
+    // ==================== Downstream: Skill → PCAgent ====================
 
     @Test
-    @DisplayName("relayToAgent publishes invoke to Gateway Redis agent:{id}")
+    @DisplayName("relayToAgent publishes invoke to Gateway Redis agent:{ak}")
     void relayToAgentPublishesToRedis() {
-        GatewayMessage msg = GatewayMessage.builder().type("invoke").agentId("agent-1").build();
+        GatewayMessage msg = GatewayMessage.builder().type("invoke").ak("ak_test_001").build();
 
-        service.relayToAgent("agent-1", msg);
+        service.relayToAgent("ak_test_001", msg);
 
-        verify(redisMessageBroker).publishToAgent(eq("agent-1"), eq(msg));
+        verify(redisMessageBroker).publishToAgent(eq("ak_test_001"), eq(msg));
     }
 
     @Test
@@ -129,7 +129,7 @@ class EventRelayServiceTest {
 
         when(wsSession.isOpen()).thenReturn(true);
         when(wsSession.getId()).thenReturn("ws-1");
-        service.registerAgentSession("agent-1", wsSession);
+        service.registerAgentSession("ak_test_001", wsSession);
 
         assertEquals(1, service.getActiveSessionCount());
     }

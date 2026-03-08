@@ -38,8 +38,11 @@ public class GatewayMessage {
     /** Message type discriminator */
     private String type;
 
-    /** Agent connection ID (used in Gateway <-> Skill Server communication) */
+    /** Agent connection ID (used for DB operations) */
     private String agentId;
+
+    /** Agent AK identifier (used for routing — agent:{ak} Redis channel) */
+    private String ak;
 
     /** Session identifier */
     private String sessionId;
@@ -135,20 +138,20 @@ public class GatewayMessage {
     }
 
     /** Gateway -> Skill Server: agent came online */
-    public static GatewayMessage agentOnline(String agentId, String toolType, String toolVersion) {
+    public static GatewayMessage agentOnline(String ak, String toolType, String toolVersion) {
         return GatewayMessage.builder()
                 .type("agent_online")
-                .agentId(agentId)
+                .ak(ak)
                 .toolType(toolType)
                 .toolVersion(toolVersion)
                 .build();
     }
 
     /** Gateway -> Skill Server: agent went offline */
-    public static GatewayMessage agentOffline(String agentId) {
+    public static GatewayMessage agentOffline(String ak) {
         return GatewayMessage.builder()
                 .type("agent_offline")
-                .agentId(agentId)
+                .ak(ak)
                 .build();
     }
 
@@ -180,6 +183,35 @@ public class GatewayMessage {
                 .envelope(this.envelope)
                 .type(this.type)
                 .agentId(agentId)
+                .ak(this.ak)
+                .sessionId(this.sessionId)
+                .action(this.action)
+                .payload(this.payload)
+                .event(this.event)
+                .error(this.error)
+                .usage(this.usage)
+                .sequenceNumber(this.sequenceNumber)
+                .deviceName(this.deviceName)
+                .os(this.os)
+                .toolType(this.toolType)
+                .toolVersion(this.toolVersion)
+                .toolSessionId(this.toolSessionId)
+                .session(this.session)
+                .opencodeOnline(this.opencodeOnline)
+                .build();
+        return copy;
+    }
+
+    /**
+     * Attach ak to an existing message (for relay to Skill Server).
+     * Returns a new instance with ak set.
+     */
+    public GatewayMessage withAk(String ak) {
+        GatewayMessage copy = GatewayMessage.builder()
+                .envelope(this.envelope)
+                .type(this.type)
+                .agentId(this.agentId)
+                .ak(ak)
                 .sessionId(this.sessionId)
                 .action(this.action)
                 .payload(this.payload)
@@ -208,6 +240,7 @@ public class GatewayMessage {
                 .envelope(this.envelope)
                 .type(this.type)
                 .agentId(this.agentId)
+                .ak(this.ak)
                 .sessionId(this.sessionId)
                 .action(this.action)
                 .payload(this.payload)

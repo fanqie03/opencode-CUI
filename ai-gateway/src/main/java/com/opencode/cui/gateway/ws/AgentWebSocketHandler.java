@@ -48,8 +48,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
     private final EventRelayService eventRelayService;
     private final ObjectMapper objectMapper;
 
-    /** sessionId -> agentId mapping for cleanup on disconnect */
-    private final Map<String, String> sessionAgentMap = new ConcurrentHashMap<>();
+    /** wsSessionId -> ak mapping for routing cleanup on disconnect */
+    private final Map<String, String> sessionAkMap = new ConcurrentHashMap<>();
 
     public AgentWebSocketHandler(AkSkAuthService akSkAuthService,
             AgentRegistryService agentRegistryService,
@@ -139,20 +139,24 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        String agentId = sessionAgentMap.remove(session.getId());
-        if (agentId != null) {
-            log.info("PCAgent disconnected: agentId={}, sessionId={}, status={}",
-                    agentId, session.getId(), status);
+        String ak = sessionAkMap.remove(session.getId());
+        if (ak != null) {
+            // Retrieve agentId (Long) from session attributes for DB operation
+            Long agentId = (Long) session.getAttributes().get(ATTR_AGENT_ID);
+            log.info("PCAgent disconnected: ak={}, agentId={}, sessionId={}, status={}",
+                    ak, agentId, session.getId(), status);
 
-            // Mark agent offline in database
-            agentRegistryService.markOffline(Long.parseLong(agentId));
+            // Mark agent offline in database (requires agentId Long)
+            if (agentId != null) {
+                agentRegistryService.markOffline(agentId);
+            }
 
-            // Remove from relay service
-            eventRelayService.removeAgentSession(agentId);
+            // Remove from relay service (uses ak)
+            eventRelayService.removeAgentSession(ak);
 
-            // Notify Skill Server that agent went offline
-            GatewayMessage offlineMsg = GatewayMessage.agentOffline(agentId);
-            eventRelayService.relayToSkillServer(agentId, offlineMsg);
+            // Notify Skill Server that agent went offline (uses ak)
+            GatewayMessage offlineMsg = GatewayMessage.agentOffline(ak);
+            eventRelayService.relayToSkillServer(ak, offlineMsg);
         } else {
             log.info("PCAgent WebSocket closed (not registered): sessionId={}, status={}",
                     session.getId(), status);
@@ -161,9 +165,9 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
-        String agentId = sessionAgentMap.get(session.getId());
-        log.error("WebSocket transport error: agentId={}, sessionId={}, error={}",
-                agentId, session.getId(), exception.getMessage());
+        String ak = sessionAkMap.get(session.getId());
+        log.error("WebSocket transport error: ak={}, sessionId={}, error={}",
+                ak, session.getId(), exception.getMessage());
     }
 
     // ==================== Message Handlers ====================
@@ -181,45 +185,46 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
                 userId, akId, deviceName, os, toolType, toolVersion);
 
         Long agentId = agent.getId();
-        String agentIdStr = String.valueOf(agentId);
 
-        // Store agentId in session attributes and mapping
+        // Store agentId in session attributes (for DB operations on disconnect)
         session.getAttributes().put(ATTR_AGENT_ID, agentId);
-        sessionAgentMap.put(session.getId(), agentIdStr);
+        // Store ak in session-ak map (for routing)
+        sessionAkMap.put(session.getId(), akId);
 
-        // Register WebSocket session in relay service
-        eventRelayService.registerAgentSession(agentIdStr, session);
+        // Register WebSocket session in relay service (keyed by ak)
+        eventRelayService.registerAgentSession(akId, session);
 
-        // Notify Skill Server that agent is online
+        // Notify Skill Server that agent is online (keyed by ak)
         GatewayMessage onlineMsg = GatewayMessage.agentOnline(
-                agentIdStr, toolType, toolVersion);
-        eventRelayService.relayToSkillServer(agentIdStr, onlineMsg);
+                akId, toolType, toolVersion);
+        eventRelayService.relayToSkillServer(akId, onlineMsg);
 
-        log.info("Agent registered via WebSocket: agentId={}, device={}, os={}, tool={}/{}",
-                agentId, deviceName, os, toolType, toolVersion);
+        log.info("Agent registered via WebSocket: ak={}, agentId={}, device={}, os={}, tool={}/{}",
+                akId, agentId, deviceName, os, toolType, toolVersion);
     }
 
     private void handleHeartbeat(WebSocketSession session) {
-        String agentId = sessionAgentMap.get(session.getId());
+        // Heartbeat needs agentId (Long) from session attributes for DB operation
+        Long agentId = (Long) session.getAttributes().get(ATTR_AGENT_ID);
         if (agentId != null) {
-            agentRegistryService.heartbeat(Long.parseLong(agentId));
+            agentRegistryService.heartbeat(agentId);
         } else {
             log.warn("Heartbeat from unregistered session: sessionId={}", session.getId());
         }
     }
 
     private void handleRelayToSkillServer(WebSocketSession session, GatewayMessage message) {
-        String agentId = sessionAgentMap.get(session.getId());
-        if (agentId == null) {
+        String ak = sessionAkMap.get(session.getId());
+        if (ak == null) {
             log.warn("Relay attempt from unregistered session: sessionId={}, type={}",
                     session.getId(), message.getType());
             return;
         }
 
         // Trace: log sessionId from PCAgent message for upstream debugging
-        log.debug("PCAgent -> Skill relay: agentId={}, type={}, sessionId={}",
-                agentId, message.getType(), message.getSessionId());
+        log.debug("PCAgent -> Skill relay: ak={}, type={}, sessionId={}",
+                ak, message.getType(), message.getSessionId());
 
-        eventRelayService.relayToSkillServer(agentId, message);
+        eventRelayService.relayToSkillServer(ak, message);
     }
 }

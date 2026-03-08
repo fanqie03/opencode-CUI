@@ -11,10 +11,16 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Routes messages between PC Agent WebSocket sessions and Skill Server.
+ * Agent sessions are keyed by AK (access key) for consistent routing
+ * across the entire system (Gateway ↔ Skill Server).
+ */
 @Slf4j
 @Service
 public class EventRelayService {
 
+    /** Map of ak → WebSocket session for connected agents */
     private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMap<>();
 
     private final ObjectMapper objectMapper;
@@ -29,74 +35,68 @@ public class EventRelayService {
         this.skillRelayService = skillRelayService;
     }
 
-    public void registerAgentSession(String agentId, WebSocketSession session) {
-        WebSocketSession old = agentSessions.put(agentId, session);
+    public void registerAgentSession(String ak, WebSocketSession session) {
+        WebSocketSession old = agentSessions.put(ak, session);
         if (old != null && old.isOpen()) {
             try {
                 old.close();
-                log.info("Closed old WebSocket session for agentId={}", agentId);
+                log.info("Closed old WebSocket session for ak={}", ak);
             } catch (IOException e) {
-                log.warn("Error closing old session for agentId={}", agentId, e);
+                log.warn("Error closing old session for ak={}", ak, e);
             }
         }
 
-        redisMessageBroker.subscribeToAgent(agentId, message -> sendToLocalAgent(agentId, message));
-        log.info("Registered agent session: agentId={}, sessionId={}", agentId, session.getId());
+        redisMessageBroker.subscribeToAgent(ak, message -> sendToLocalAgent(ak, message));
+        log.info("Registered agent session: ak={}, wsSessionId={}", ak, session.getId());
     }
 
-    public void removeAgentSession(String agentId) {
-        WebSocketSession session = agentSessions.remove(agentId);
+    public void removeAgentSession(String ak) {
+        WebSocketSession session = agentSessions.remove(ak);
         if (session != null && session.isOpen()) {
             try {
                 session.close();
             } catch (IOException e) {
-                log.warn("Error closing session during removal for agentId={}", agentId, e);
+                log.warn("Error closing session during removal for ak={}", ak, e);
             }
         }
 
-        redisMessageBroker.unsubscribeFromAgent(agentId);
-        log.debug("Removed agent session: agentId={}", agentId);
+        redisMessageBroker.unsubscribeFromAgent(ak);
+        log.debug("Removed agent session: ak={}", ak);
     }
 
-    public boolean hasAgentSession(String agentId) {
-        WebSocketSession session = agentSessions.get(agentId);
+    public boolean hasAgentSession(String ak) {
+        WebSocketSession session = agentSessions.get(ak);
         return session != null && session.isOpen();
     }
 
-    public void relayToSkillServer(String agentId, GatewayMessage message) {
-        GatewayMessage forwarded = message.withAgentId(agentId);
+    public void relayToSkillServer(String ak, GatewayMessage message) {
+        GatewayMessage forwarded = message.withAk(ak);
 
-        log.debug("Relaying to skill: agentId={}, type={}, sessionId={}, toolSessionId={}",
-                agentId, message.getType(), forwarded.getSessionId(), forwarded.getToolSessionId());
-
-        if (forwarded.hasEnvelope()) {
-            var env = forwarded.getEnvelope();
-            log.debug("Relaying enveloped message: agentId={}, type={}, messageId={}, seq={}, source={}",
-                    agentId, message.getType(), env.getMessageId(), env.getSequenceNumber(), env.getSource());
-        }
+        log.debug("Relaying to skill: ak={}, type={}, sessionId={}, toolSessionId={}",
+                ak, message.getType(), forwarded.getSessionId(), forwarded.getToolSessionId());
 
         try {
             boolean routed = skillRelayService.relayToSkill(forwarded);
             if (!routed) {
-                log.warn("Failed to route message to skill: agentId={}, type={}, sessionId={}",
-                        agentId, message.getType(), forwarded.getSessionId());
+                log.warn("Failed to route message to skill: ak={}, type={}, sessionId={}",
+                        ak, message.getType(), forwarded.getSessionId());
             }
         } catch (Exception e) {
-            log.error("Failed to relay to skill: agentId={}, type={}",
-                    agentId, message.getType(), e);
+            log.error("Failed to relay to skill: ak={}, type={}",
+                    ak, message.getType(), e);
         }
     }
 
-    public void relayToAgent(String agentId, GatewayMessage message) {
-        redisMessageBroker.publishToAgent(agentId, message);
-        log.debug("Published to agent channel: agentId={}, type={}", agentId, message.getType());
+    public void relayToAgent(String ak, GatewayMessage message) {
+        redisMessageBroker.publishToAgent(ak, message);
+        log.debug("Published to agent channel: ak={}, type={}", ak, message.getType());
     }
 
-    private void sendToLocalAgent(String agentId, GatewayMessage message) {
-        WebSocketSession session = agentSessions.get(agentId);
+    private void sendToLocalAgent(String ak, GatewayMessage message) {
+        WebSocketSession session = agentSessions.get(ak);
         if (session == null || !session.isOpen()) {
-            log.debug("Agent not connected to this instance: agentId={}, type={}",
-                    agentId, message.getType());
+            log.debug("Agent not connected to this instance: ak={}, type={}",
+                    ak, message.getType());
             return;
         }
 
@@ -105,11 +105,11 @@ public class EventRelayService {
             synchronized (session) {
                 session.sendMessage(new TextMessage(json));
             }
-            log.debug("Sent to local agent: agentId={}, type={}, seq={}",
-                    agentId, message.getType(), message.getSequenceNumber());
+            log.debug("Sent to local agent: ak={}, type={}, seq={}",
+                    ak, message.getType(), message.getSequenceNumber());
         } catch (IOException e) {
-            log.error("Failed to send to local agent: agentId={}, type={}",
-                    agentId, message.getType(), e);
+            log.error("Failed to send to local agent: ak={}, type={}",
+                    ak, message.getType(), e);
         }
     }
 
