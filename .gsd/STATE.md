@@ -5,13 +5,24 @@
 ## Current Position
 
 ```
-Phase: 2 — Gateway 架构简化与 AK 路由改造
-Status: Planning complete — 3 plans created
+Phase: 3 — Skill Server 协议对齐
+Status: Planning complete — 5 plans created (3 waves)
 Milestone: v1.0
-Next: /execute 2
+Next: /execute 3
 ```
 
 ## Session Log
+
+### 2026-03-08: Phase 2 执行完成
+- Plan 2.1: 删除 session routing（RedisMessageBroker 删 4 方法，SkillRelayService 简化 100+ 行）
+- Plan 2.2: agent channel 从 agentId 改为 ak（GatewayMessage/EventRelayService/AgentWebSocketHandler）
+- Plan 2.3: 删除 MessageEnvelope 类及所有 envelope 引用
+- 3 次原子提交，35/35 测试通过
+- Next: /plan 3 — Skill Server 协议对齐
+
+### 2026-03-08: Phase 2 规划完成
+- 制定 3 个执行计划（2 Wave）
+- Next: /execute 2
 
 ### 2026-03-08: Gap Analysis → Phase 2-5 插入
 - 完成协议 Gap Analysis：17 个差异项（P0×4, P1×4, P2×4）
