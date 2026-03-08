@@ -35,6 +35,7 @@ public class SkillSessionService {
             String title, String imGroupId) {
         SkillSession session = SkillSession.builder()
                 .userId(userId)
+                .skillDefinitionId(1L) // Default: OpenCode skill
                 .ak(ak)
                 .title(title)
                 .imGroupId(imGroupId)

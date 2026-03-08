@@ -105,6 +105,7 @@ export function getDefinitions(): Promise<SkillDefinition[]> {
 export interface AgentInfo {
   id: number;
   userId: number;
+  akId: string;
   deviceName: string;
   os: string;
   toolType: string;
@@ -123,10 +124,9 @@ export function getOnlineAgents(userId: string): Promise<AgentInfo[]> {
 
 export interface CreateSessionParams {
   userId?: number;
-  skillDefinitionId: number;
-  agentId: number;
+  ak: string;
   title?: string;
-  imChatId?: string;
+  imGroupId?: string;
 }
 
 interface PaginatedResponse<T> {

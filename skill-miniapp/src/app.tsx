@@ -8,7 +8,6 @@ import { useSkillStream } from './hooks/useSkillStream';
 import { useAgentSelector } from './hooks/useAgentSelector';
 import './index.css';
 
-const SKILL_DEFINITION_ID = 1;
 const DEFAULT_USER_ID = '1'; // Test user
 
 const agentStatusConfig: Record<string, { className: string; label: string }> = {
@@ -52,9 +51,8 @@ const App: React.FC = () => {
   const handleNewSession = useCallback(async () => {
     if (!selectedAgent) return;
     await createSession({
-      skillDefinitionId: SKILL_DEFINITION_ID,
+      ak: selectedAgent.akId,
       userId: 1,
-      agentId: selectedAgent.id,
       title: `Session ${new Date().toLocaleString()}`,
     });
   }, [createSession, selectedAgent]);
@@ -76,9 +74,8 @@ const App: React.FC = () => {
       if (!activeSessionId) {
         pendingInitialMessageRef.current = text;
         const session = await createSession({
-          skillDefinitionId: SKILL_DEFINITION_ID,
+          ak: selectedAgent.akId,
           userId: 1,
-          agentId: selectedAgent.id,
           title: text.slice(0, 50),
         });
         if (!session) {

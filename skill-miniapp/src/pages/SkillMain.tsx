@@ -19,7 +19,7 @@ interface SkillMainProps {
   imChatId?: string;
 }
 
-const SKILL_DEFINITION_ID = 1; // OpenCode skill definition
+
 
 const styles: Record<string, React.CSSProperties> = {
   overlay: {
@@ -170,10 +170,9 @@ export const SkillMain: React.FC<SkillMainProps> = ({
   const handleNewSession = useCallback(async () => {
     if (!selectedAgent) return;
     await createSession({
-      skillDefinitionId: SKILL_DEFINITION_ID,
-      agentId: selectedAgent.id,
+      ak: selectedAgent.akId,
       title: `Session ${new Date().toLocaleString()}`,
-      imChatId,
+      imGroupId: imChatId,
     });
   }, [createSession, imChatId, selectedAgent]);
 
@@ -194,10 +193,9 @@ export const SkillMain: React.FC<SkillMainProps> = ({
       if (!activeSessionId) {
         pendingInitialMessageRef.current = text;
         const session = await createSession({
-          skillDefinitionId: SKILL_DEFINITION_ID,
-          agentId: selectedAgent.id,
+          ak: selectedAgent.akId,
           title: text.slice(0, 50),
-          imChatId,
+          imGroupId: imChatId,
         });
         if (!session) {
           pendingInitialMessageRef.current = null;
