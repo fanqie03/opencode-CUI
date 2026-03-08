@@ -69,7 +69,7 @@
 ---
 
 ### Phase 4: PC Agent 协议对齐
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Objective**: 补齐 PC Agent 缺失的 invoke handler，修复错误调用
 **Depends on**: Phase 2
 **Source**: [Gap Analysis — 层④](file:///C:/Users/15721/.gemini/antigravity/brain/b295cd8f-2d9a-422d-8d16-98a7b01a5e9b/gap_analysis.md)
@@ -89,7 +89,7 @@
 ---
 
 ### Phase 5: 协议规范化
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Objective**: 统一全链路 ID 命名、响应格式、清理技术债
 **Depends on**: Phase 3, Phase 4
 **Source**: [Gap Analysis — P2](file:///C:/Users/15721/.gemini/antigravity/brain/b295cd8f-2d9a-422d-8d16-98a7b01a5e9b/gap_analysis.md)

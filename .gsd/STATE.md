@@ -6,12 +6,18 @@
 
 ```
 Phase: 5 — 协议规范化
-Status: Planning complete — 3 plans created
+Status: ✅ Complete — 3 plans, 3 atomic commits
 Milestone: v1.0
-Next: /execute 5
+Next: /verify 5 or /plan 6
 ```
 
 ## Session Log
+
+### 2026-03-08: Phase 5 执行完成
+- Plan 5.1: 删除 4 个 envelope 残留文件 (-537 行)
+- Plan 5.2: 创建 ApiResponse 类 + 改造 9 个端点 + 修复 2 个测试文件
+- Plan 5.3: sendStatusQuery 方法 + StreamMessage @JsonProperty("welinkSessionId")
+- 3 次原子提交
 
 ### 2026-03-08: Phase 4 执行完成
 - Plan 4.1: 新增 question_reply/abort_session handler + 修复 close_session (session.delete)
