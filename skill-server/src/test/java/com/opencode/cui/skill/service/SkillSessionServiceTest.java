@@ -33,7 +33,7 @@ class SkillSessionServiceTest {
     @Test
     @DisplayName("createSession inserts and returns session")
     void createSessionInsertsAndReturns() {
-        SkillSession result = service.createSession(1L, 1L, "ak-3", "Test", "chat-1");
+        SkillSession result = service.createSession(1L, "ak-3", "Test", "chat-1");
         assertNotNull(result);
         assertEquals(SkillSession.Status.ACTIVE, result.getStatus());
         verify(sessionRepository).insert(any(SkillSession.class));

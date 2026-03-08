@@ -51,24 +51,18 @@ public class SkillSessionController {
             return ResponseEntity.badRequest().body(ApiResponse.error(400, "userId is required"));
         }
 
-        // Resolve ak from agentId (agent primary key → string ak used for WS routing)
-        String ak = request.getAgentId() != null
-                ? request.getAgentId().toString()
-                : request.getAk();
-
         SkillSession session = sessionService.createSession(
                 request.getUserId(),
-                request.getSkillDefinitionId(),
-                ak,
+                request.getAk(),
                 request.getTitle(),
-                request.getImChatId() != null ? request.getImChatId() : request.getImGroupId());
+                request.getImGroupId());
 
         gatewayRelayService.subscribeToSessionBroadcast(session.getId().toString());
 
         // Send create_session invoke to AI-Gateway if ak is provided
-        if (ak != null) {
+        if (request.getAk() != null) {
             gatewayRelayService.sendInvokeToGateway(
-                    ak,
+                    request.getAk(),
                     session.getId().toString(),
                     "create_session",
                     null);
@@ -184,14 +178,8 @@ public class SkillSessionController {
     @Data
     public static class CreateSessionRequest {
         private Long userId;
-        private Long skillDefinitionId;
-        private Long agentId;
-        /** @deprecated — use agentId instead */
         private String ak;
         private String title;
-        /** Frontend sends imChatId */
-        private String imChatId;
-        /** Legacy field name */
         private String imGroupId;
     }
 }
