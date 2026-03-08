@@ -6,12 +6,18 @@
 
 ```
 Phase: 4 — PC Agent 协议对齐
-Status: Planning complete — 2 plans created
+Status: ✅ Complete and verified (4/4 must-haves PASS)
 Milestone: v1.0
-Next: /execute 4
+Next: /plan 5
 ```
 
 ## Session Log
+
+### 2026-03-08: Phase 4 执行完成
+- Plan 4.1: 新增 question_reply/abort_session handler + 修复 close_session (session.delete)
+- Plan 4.2: 移除 sessionMap/lastSkillSessionId + 清理 envelope/ProtocolAdapter (删除 94 行)
+- 2 次原子提交，仅修改 1 个文件 (EventRelay.ts)
+- Next: /verify 4 or /plan 5
 
 ### 2026-03-08: Phase 3 执行完成
 - Plan 3.1: question_reply invoke 分支（toolCallId → invoke.question_reply）
