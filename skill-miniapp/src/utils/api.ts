@@ -61,7 +61,22 @@ async function request<T>(
     return undefined as T;
   }
 
-  return res.json() as Promise<T>;
+  const json = await res.json();
+
+  // Auto-unwrap ApiResponse wrapper: { code, errormsg, data }
+  if (
+    json !== null &&
+    typeof json === 'object' &&
+    'code' in json &&
+    'data' in json
+  ) {
+    if (json.code !== 0) {
+      throw new ApiError(res.status, json.errormsg ?? 'Unknown error', json);
+    }
+    return json.data as T;
+  }
+
+  return json as T;
 }
 
 // ---------------------------------------------------------------------------
