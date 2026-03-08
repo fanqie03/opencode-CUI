@@ -2,6 +2,7 @@ package com.opencode.cui.skill.controller;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.ApiResponse;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.service.GatewayRelayService;
@@ -45,9 +46,9 @@ public class SkillSessionController {
      * session.
      */
     @PostMapping
-    public ResponseEntity<SkillSession> createSession(@RequestBody CreateSessionRequest request) {
+    public ResponseEntity<ApiResponse<SkillSession>> createSession(@RequestBody CreateSessionRequest request) {
         if (request.getUserId() == null) {
-            return ResponseEntity.badRequest().build();
+            return ResponseEntity.badRequest().body(ApiResponse.error(400, "userId is required"));
         }
 
         SkillSession session = sessionService.createSession(
@@ -67,7 +68,7 @@ public class SkillSessionController {
                     null);
         }
 
-        return ResponseEntity.status(HttpStatus.CREATED).body(session);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(session));
     }
 
     /**
@@ -75,14 +76,14 @@ public class SkillSessionController {
      * List sessions for a user with pagination.
      */
     @GetMapping
-    public ResponseEntity<PageResult<SkillSession>> listSessions(
+    public ResponseEntity<ApiResponse<PageResult<SkillSession>>> listSessions(
             @RequestParam Long userId,
             @RequestParam(required = false) List<SkillSession.Status> statuses,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
 
         PageResult<SkillSession> sessions = sessionService.listSessions(userId, statuses, page, size);
-        return ResponseEntity.ok(sessions);
+        return ResponseEntity.ok(ApiResponse.ok(sessions));
     }
 
     /**
@@ -90,12 +91,12 @@ public class SkillSessionController {
      * Get a single session by ID.
      */
     @GetMapping("/{id}")
-    public ResponseEntity<SkillSession> getSession(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<SkillSession>> getSession(@PathVariable Long id) {
         try {
             SkillSession session = sessionService.getSession(id);
-            return ResponseEntity.ok(session);
+            return ResponseEntity.ok(ApiResponse.ok(session));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(404, "Session not found"));
         }
     }
 
@@ -105,7 +106,7 @@ public class SkillSessionController {
      * exists.
      */
     @DeleteMapping("/{id}")
-    public ResponseEntity<Map<String, String>> closeSession(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<Map<String, String>>> closeSession(@PathVariable Long id) {
         try {
             SkillSession session = sessionService.getSession(id);
 
@@ -127,9 +128,9 @@ public class SkillSessionController {
             }
             sessionService.closeSession(id);
             gatewayRelayService.unsubscribeFromSession(id.toString());
-            return ResponseEntity.ok(Map.of("status", "closed", "sessionId", id.toString()));
+            return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "closed", "sessionId", id.toString())));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(404, "Session not found"));
         }
     }
 
@@ -140,13 +141,13 @@ public class SkillSessionController {
      * then marks the session as CLOSED.
      */
     @PostMapping("/{id}/abort")
-    public ResponseEntity<Map<String, String>> abortSession(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<Map<String, String>>> abortSession(@PathVariable Long id) {
         try {
             SkillSession session = sessionService.getSession(id);
 
             if (session.getStatus() == SkillSession.Status.CLOSED) {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body(Map.of("error", "Session is already closed"));
+                        .body(ApiResponse.error(409, "Session is already closed"));
             }
 
             // Send abort_session to AI-Gateway if toolSessionId and ak exist
@@ -168,9 +169,9 @@ public class SkillSessionController {
 
             sessionService.closeSession(id);
             gatewayRelayService.unsubscribeFromSession(id.toString());
-            return ResponseEntity.ok(Map.of("status", "aborted", "sessionId", id.toString()));
+            return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "aborted", "sessionId", id.toString())));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(404, "Session not found"));
         }
     }
 

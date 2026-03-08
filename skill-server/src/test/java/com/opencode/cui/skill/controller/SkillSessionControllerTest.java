@@ -1,6 +1,7 @@
 package com.opencode.cui.skill.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.ApiResponse;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.SkillSessionService;
@@ -48,9 +49,11 @@ class SkillSessionControllerTest {
         request.setAk("3");
         request.setTitle("Test");
 
-        ResponseEntity<SkillSession> response = controller.createSession(request);
+        var response = controller.createSession(request);
         assertEquals(HttpStatus.CREATED, response.getStatusCode());
         assertNotNull(response.getBody());
+        assertEquals(0, response.getBody().getCode());
+        assertNotNull(response.getBody().getData());
         verify(gatewayRelayService).subscribeToSessionBroadcast("1");
         verify(gatewayRelayService).sendInvokeToGateway(eq("3"), eq("1"), eq("create_session"), isNull());
     }
@@ -61,7 +64,7 @@ class SkillSessionControllerTest {
         var request = new SkillSessionController.CreateSessionRequest();
         // userId is null
 
-        ResponseEntity<SkillSession> response = controller.createSession(request);
+        var response = controller.createSession(request);
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     }
 
@@ -72,9 +75,9 @@ class SkillSessionControllerTest {
         session.setId(42L);
         when(sessionService.getSession(42L)).thenReturn(session);
 
-        ResponseEntity<SkillSession> response = controller.getSession(42L);
+        var response = controller.getSession(42L);
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(42L, response.getBody().getId());
+        assertEquals(42L, response.getBody().getData().getId());
     }
 
     @Test
@@ -82,7 +85,7 @@ class SkillSessionControllerTest {
     void getSession404() {
         when(sessionService.getSession(999L)).thenThrow(new IllegalArgumentException("Not found"));
 
-        ResponseEntity<SkillSession> response = controller.getSession(999L);
+        var response = controller.getSession(999L);
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
     }
 
@@ -125,7 +128,7 @@ class SkillSessionControllerTest {
 
         var response = controller.abortSession(42L);
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals("aborted", response.getBody().get("status"));
+        assertEquals("aborted", response.getBody().getData().get("status"));
         verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("42"), eq("abort_session"), any());
         verify(sessionService).closeSession(42L);
         verify(gatewayRelayService).unsubscribeFromSession("42");

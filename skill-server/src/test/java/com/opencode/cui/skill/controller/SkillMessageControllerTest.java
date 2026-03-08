@@ -134,7 +134,7 @@ class SkillMessageControllerTest {
         when(messageService.getMessageHistory(1L, 0, 50))
                 .thenReturn(new PageResult<>(List.of(), 0, 0, 50));
 
-        ResponseEntity<PageResult<SkillMessageView>> response = controller.getMessages(1L, 0, 50);
+        var response = controller.getMessages(1L, 0, 50);
         assertEquals(HttpStatus.OK, response.getStatusCode());
     }
 
@@ -150,11 +150,11 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.PermissionReplyRequest();
         request.setResponse("once");
 
-        ResponseEntity<Map<String, Object>> response = controller.replyPermission(1L, "p-abc", request);
+        var response = controller.replyPermission(1L, "p-abc", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(true, response.getBody().get("success"));
-        assertEquals("p-abc", response.getBody().get("permissionId"));
-        assertEquals("once", response.getBody().get("response"));
+        assertEquals(true, response.getBody().getData().get("success"));
+        assertEquals("p-abc", response.getBody().getData().get("permissionId"));
+        assertEquals("once", response.getBody().getData().get("response"));
         verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("permission_reply"), any());
         verify(gatewayRelayService).publishProtocolMessage(eq("1"), any());
     }
@@ -165,7 +165,7 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.PermissionReplyRequest();
         // response is null
 
-        ResponseEntity<Map<String, Object>> response = controller.replyPermission(1L, "p-abc", request);
+        var response = controller.replyPermission(1L, "p-abc", request);
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     }
 
@@ -175,7 +175,7 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.PermissionReplyRequest();
         request.setResponse("invalid");
 
-        ResponseEntity<Map<String, Object>> response = controller.replyPermission(1L, "p-abc", request);
+        var response = controller.replyPermission(1L, "p-abc", request);
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     }
 
@@ -190,7 +190,7 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.PermissionReplyRequest();
         request.setResponse("once");
 
-        ResponseEntity<Map<String, Object>> response = controller.replyPermission(1L, "p-abc", request);
+        var response = controller.replyPermission(1L, "p-abc", request);
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
     }
 
@@ -206,8 +206,8 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.SendToImRequest();
         request.setContent("Hello IM");
 
-        ResponseEntity<Map<String, Object>> response = controller.sendToIm(1L, request);
+        var response = controller.sendToIm(1L, request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(true, response.getBody().get("success"));
+        assertEquals(true, response.getBody().getData().get("success"));
     }
 }
