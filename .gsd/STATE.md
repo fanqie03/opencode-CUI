@@ -6,12 +6,21 @@
 
 ```
 Phase: 3 — Skill Server 协议对齐
-Status: Planning complete — 5 plans created (3 waves)
+Status: ✅ Complete and verified (6/6 must-haves PASS)
 Milestone: v1.0
-Next: /execute 3
+Next: /plan 4 — PC Agent 协议对齐
 ```
 
 ## Session Log
+
+### 2026-03-08: Phase 3 执行完成
+- Plan 3.1: question_reply invoke 分支（toolCallId → invoke.question_reply）
+- Plan 3.2: abort API + abort_session invoke
+- Plan 3.3: 权限回复 approved:Boolean → response:String(once/always/reject)
+- Plan 3.4: agentId→ak, imChatId→imGroupId 全链路改名（12 文件）
+- Plan 3.5: toolSessionId→welinkSessionId DB 查找 + envelope 代码清理
+- 5 次原子提交，74/74 测试通过
+- Next: /plan 4 — PC Agent 协议对齐
 
 ### 2026-03-08: Phase 2 执行完成
 - Plan 2.1: 删除 session routing（RedisMessageBroker 删 4 方法，SkillRelayService 简化 100+ 行）

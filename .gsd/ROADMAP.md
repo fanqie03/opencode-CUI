@@ -1,6 +1,6 @@
 # ROADMAP.md
 
-> **Current Phase**: Phase 2
+> **Current Phase**: Phase 3 ✅
 > **Milestone**: v1.0 — Web UI 全功能联调版
 
 ## Must-Haves (from SPEC)
@@ -24,7 +24,7 @@
 ---
 
 ### Phase 2: Gateway 架构简化与 AK 路由改造
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Objective**: 按 Gap Analysis 结论简化 Gateway 路由架构——移除 session 级路由、agent channel 改用 ak 做 key
 **Depends on**: Phase 1
 **Source**: [Gap Analysis — Redis Pub/Sub 影响分析](file:///C:/Users/15721/.gemini/antigravity/brain/b295cd8f-2d9a-422d-8d16-98a7b01a5e9b/gap_analysis.md)
@@ -45,7 +45,7 @@
 ---
 
 ### Phase 3: Skill Server 协议对齐
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Objective**: 将 Skill Server 的 REST API 和 Gateway 通信对齐目标协议，解决 P0/P1 级别的字段缺失和类型不匹配
 **Depends on**: Phase 2
 **Source**: [Gap Analysis — 层① & 层②](file:///C:/Users/15721/.gemini/antigravity/brain/b295cd8f-2d9a-422d-8d16-98a7b01a5e9b/gap_analysis.md)
