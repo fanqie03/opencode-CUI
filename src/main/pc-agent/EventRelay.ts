@@ -11,9 +11,7 @@
 import type { GatewayConnection } from './GatewayConnection';
 import type { OpencodeClient } from '@opencode-ai/sdk';
 import type { OpenCodeEvent } from './types/PluginTypes';
-import { ProtocolAdapter } from './ProtocolAdapter';
 import { mapPermissionResponse } from './PermissionMapper';
-import { hasEnvelope, type MessageEnvelope } from './types/MessageEnvelope';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -81,17 +79,7 @@ export class EventRelay {
   /** Optional error handler. Defaults to console.error. */
   private onError: RelayErrorHandler;
 
-  /** Protocol adapter for envelope wrapping/unwrapping. */
-  private protocolAdapter: ProtocolAdapter | null = null;
 
-  /** Whether to use envelope protocol (enabled after agentId is set). */
-  private useEnvelope = false;
-
-  /** toolSessionId -> skillSessionId mapping for upstream event routing. */
-  private sessionMap = new Map<string, string>();
-
-  /** Last known skill sessionId (fallback for events without any sessionId). */
-  private lastSkillSessionId: string | null = null;
 
   /**
    * @param gateway   The AI-Gateway WebSocket connection.
@@ -106,16 +94,7 @@ export class EventRelay {
     this.onError = onError ?? ((ctx, err) => console.error(`[EventRelay] ${ctx}:`, err));
   }
 
-  /**
-   * Set the agent ID and enable envelope protocol.
-   * Should be called after successful registration with the gateway.
-   *
-   * @param agentId  The agent connection ID assigned by the gateway
-   */
-  setAgentId(agentId: string): void {
-    this.protocolAdapter = new ProtocolAdapter('OPENCODE', agentId);
-    this.useEnvelope = true;
-  }
+
 
   // -----------------------------------------------------------------------
   // Upstream: OpenCode --> Gateway (pushed by Plugin event hook)
@@ -135,25 +114,15 @@ export class EventRelay {
       (event.properties?.sessionId as string | undefined) ??
       (event as Record<string, unknown>).sessionId as string | undefined;
 
-    // Map toolSessionId back to skill service's sessionId
-    let sessionId: string | undefined;
-    if (toolSessionId && this.sessionMap.has(toolSessionId)) {
-      sessionId = this.sessionMap.get(toolSessionId);
-    } else {
-      // Fallback: use last known skill sessionId for events without sessionId
-      sessionId = this.lastSkillSessionId ?? undefined;
-    }
+    debugLog('relayUpstream', `toolSessionId=${toolSessionId}`);
 
-    debugLog('relayUpstream', `toolSessionId=${toolSessionId}, mapped skillSessionId=${sessionId}, mapSize=${this.sessionMap.size}`);
-
-    // Wrap in envelope if protocol adapter is available
-    const message = this.useEnvelope && this.protocolAdapter
-      ? this.protocolAdapter.wrapToolEvent(event, sessionId)
-      : {
-        type: 'tool_event',
-        sessionId,
-        event,
-      };
+    // Send upstream with toolSessionId only — Skill Server resolves
+    // welinkSessionId via DB lookup (findByToolSessionId)
+    const message = {
+      type: 'tool_event',
+      toolSessionId,
+      event,
+    };
 
     try {
       this.gateway.send(message);
@@ -191,20 +160,7 @@ export class EventRelay {
 
     debugLog('downstream', 'Received raw message:', raw);
 
-    // Unwrap envelope if present (backward compatibility)
-    let msg: Record<string, unknown>;
-    if (hasEnvelope(raw)) {
-      const envelope = raw as MessageEnvelope;
-      msg = {
-        type: envelope.type,
-        ...(typeof envelope.payload === 'object' && envelope.payload !== null
-          ? (envelope.payload as Record<string, unknown>)
-          : { payload: envelope.payload }),
-      };
-      debugLog('downstream', 'Unwrapped envelope, msg:', msg);
-    } else {
-      msg = raw as Record<string, unknown>;
-    }
+    const msg = raw as Record<string, unknown>;
 
     const type = msg.type as string | undefined;
     debugLog('downstream', 'Message type:', type);
@@ -227,14 +183,7 @@ export class EventRelay {
       case 'chat': {
         const toolSessionId = payload.toolSessionId as string | undefined;
         const text = payload.text as string | undefined;
-        debugLog('invoke.chat', `toolSessionId=${toolSessionId}, text=${text}, skillSessionId=${msg.sessionId}, payload keys:`, Object.keys(payload));
-
-        // Record mapping: toolSessionId -> skill sessionId
-        if (toolSessionId && msg.sessionId) {
-          this.sessionMap.set(toolSessionId, msg.sessionId);
-          this.lastSkillSessionId = msg.sessionId;
-          debugLog('invoke.chat', `Recorded session mapping: ${toolSessionId} -> ${msg.sessionId}`);
-        }
+        debugLog('invoke.chat', `toolSessionId=${toolSessionId}, text=${text}, payload keys:`, Object.keys(payload));
 
         if (!toolSessionId || !text) {
           debugLog('invoke.chat', 'MISSING fields! toolSessionId:', toolSessionId, 'text:', text);
@@ -264,12 +213,6 @@ export class EventRelay {
         const text = payload.text as string | undefined;
         const toolCallId = payload.toolCallId as string | undefined;
         debugLog('invoke.question_reply', `toolSessionId=${toolSessionId}, text=${text}, toolCallId=${toolCallId}`);
-
-        // Record mapping (same as chat)
-        if (toolSessionId && msg.sessionId) {
-          this.sessionMap.set(toolSessionId, msg.sessionId);
-          this.lastSkillSessionId = msg.sessionId;
-        }
 
         if (!toolSessionId || !text) {
           this.onError('invoke.question_reply', new Error('Missing toolSessionId or text in payload'));
@@ -308,13 +251,6 @@ export class EventRelay {
             console.warn('[EventRelay] create_session: unable to extract toolSessionId. result keys:', Object.keys(result ?? {}), 'data keys:', Object.keys(result?.data ?? {}));
           }
 
-          // Record mapping: toolSessionId -> skill sessionId
-          if (extractedId && msg.sessionId) {
-            this.sessionMap.set(extractedId, msg.sessionId);
-            this.lastSkillSessionId = msg.sessionId;
-            debugLog('invoke.create_session', `Recorded session mapping: ${extractedId} -> ${msg.sessionId}`);
-          }
-
           const sessionData = {
             type: 'session_created',
             sessionId: msg.sessionId,  // Echo back skill service session ID
@@ -322,16 +258,7 @@ export class EventRelay {
             session: sessionObj,
           };
 
-          // Wrap in envelope if protocol adapter is available
-          const message = this.useEnvelope && this.protocolAdapter
-            ? this.protocolAdapter.wrapSessionCreated(
-              sessionData.toolSessionId as string,
-              sessionData.session,
-              msg.sessionId,  // Pass sessionId for envelope
-            )
-            : sessionData;
-
-          this.gateway.send(message);
+          this.gateway.send(sessionData);
         } catch (err) {
           this.onError('invoke.create_session', err);
           this.trySendError(msg.sessionId, err);
@@ -438,15 +365,11 @@ export class EventRelay {
   private trySendError(sessionId: string | undefined, err: unknown): void {
     try {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      const message = this.useEnvelope && this.protocolAdapter
-        ? this.protocolAdapter.wrapToolError(errorMsg, sessionId)
-        : {
-          type: 'tool_error',
-          sessionId,
-          error: errorMsg,
-        };
-
-      this.gateway.send(message);
+      this.gateway.send({
+        type: 'tool_error',
+        sessionId,
+        error: errorMsg,
+      });
     } catch {
       // If the gateway is disconnected we cannot report the error upstream.
     }
