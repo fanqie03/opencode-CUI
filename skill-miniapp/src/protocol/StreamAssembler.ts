@@ -1,5 +1,50 @@
 import type { StreamMessage, MessagePart } from './types';
 
+function normalizeQuestionOptions(options: unknown): string[] | undefined {
+  if (!Array.isArray(options)) {
+    return undefined;
+  }
+
+  const labels = options
+    .map((option) => {
+      if (typeof option === 'string') {
+        return option;
+      }
+      if (option && typeof option === 'object') {
+        const label = (option as { label?: unknown }).label;
+        return typeof label === 'string' ? label : '';
+      }
+      return '';
+    })
+    .filter((option): option is string => Boolean(option));
+
+  return labels.length > 0 ? labels : undefined;
+}
+
+function extractQuestionFields(input?: Record<string, unknown>): Pick<MessagePart, 'header' | 'question' | 'options'> {
+  if (!input) {
+    return {};
+  }
+
+  if (Array.isArray(input.questions) && input.questions.length > 0) {
+    const firstQuestion = input.questions[0];
+    if (firstQuestion && typeof firstQuestion === 'object') {
+      const question = firstQuestion as Record<string, unknown>;
+      return {
+        header: typeof question.header === 'string' ? question.header : undefined,
+        question: typeof question.question === 'string' ? question.question : undefined,
+        options: normalizeQuestionOptions(question.options),
+      };
+    }
+  }
+
+  return {
+    header: typeof input.header === 'string' ? input.header : undefined,
+    question: typeof input.question === 'string' ? input.question : undefined,
+    options: normalizeQuestionOptions(input.options),
+  };
+}
+
 /**
  * StreamAssembler v2: manages message parts by partId.
  *
@@ -85,20 +130,12 @@ export class StreamAssembler {
       }
 
       case 'text.done': {
-        const id = msg.partId || this.findActivePartId('text');
-        if (id) {
-          const part = this.parts.get(id);
-          if (part) {
-            if (msg.content) part.content = msg.content;
-            part.isStreaming = false;
-          }
-        } else {
-          // Create a completed text part directly
-          const newId = this.genPartId('text');
-          const part = this.getOrCreatePart(newId, 'text', msg.partSeq);
-          part.content = msg.content ?? '';
-          part.isStreaming = false;
+        const id = msg.partId || this.findActivePartId('text') || this.genPartId('text');
+        const part = this.getOrCreatePart(id, 'text', msg.partSeq);
+        if (msg.content !== undefined) {
+          part.content = msg.content;
         }
+        part.isStreaming = false;
         break;
       }
 
@@ -111,19 +148,12 @@ export class StreamAssembler {
       }
 
       case 'thinking.done': {
-        const id = msg.partId || this.findActivePartId('thinking');
-        if (id) {
-          const part = this.parts.get(id);
-          if (part) {
-            if (msg.content) part.content = msg.content;
-            part.isStreaming = false;
-          }
-        } else {
-          const newId = this.genPartId('thinking');
-          const part = this.getOrCreatePart(newId, 'thinking', msg.partSeq);
-          part.content = msg.content ?? '';
-          part.isStreaming = false;
+        const id = msg.partId || this.findActivePartId('thinking') || this.genPartId('thinking');
+        const part = this.getOrCreatePart(id, 'thinking', msg.partSeq);
+        if (msg.content !== undefined) {
+          part.content = msg.content;
         }
+        part.isStreaming = false;
         break;
       }
 
@@ -144,10 +174,22 @@ export class StreamAssembler {
       case 'question': {
         const id = msg.partId || this.genPartId('question');
         const part = this.getOrCreatePart(id, 'question', msg.partSeq);
-        part.toolName = msg.toolName;
-        part.header = msg.header;
-        part.question = msg.question;
-        part.options = msg.options;
+        const questionFields = extractQuestionFields(msg.input);
+        part.type = 'question';
+        part.toolName = msg.toolName ?? part.toolName;
+        part.toolCallId = msg.toolCallId ?? part.toolCallId;
+        part.toolStatus = msg.status ?? part.toolStatus;
+        if (msg.input) {
+          part.toolInput = msg.input;
+        }
+        part.header = msg.header ?? questionFields.header ?? part.header;
+        part.question = msg.question ?? questionFields.question ?? part.question;
+        part.options = msg.options ?? questionFields.options ?? part.options;
+        if (msg.content !== undefined && msg.content !== '') {
+          part.content = msg.content;
+        } else if (part.question && !part.content) {
+          part.content = part.question;
+        }
         part.isStreaming = false;
         break;
       }

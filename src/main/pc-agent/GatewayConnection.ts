@@ -65,6 +65,9 @@ export declare interface GatewayConnection {
  * ```
  */
 export class GatewayConnection extends EventEmitter {
+  /** Callback used to produce fresh auth params for each connect attempt. */
+  private authProvider: (() => AuthParams) | null = null;
+
   /** Current connection state. */
   private _state: ConnectionState = ConnectionState.CLOSED;
 
@@ -85,9 +88,6 @@ export class GatewayConnection extends EventEmitter {
 
   /** Whether the user explicitly called {@link close}. */
   private intentionallyClosed = false;
-
-  /** Stored auth params for reconnection. */
-  private authParams: AuthParams | null = null;
 
   /**
    * @param gatewayUrl  Base WebSocket URL of the AI-Gateway
@@ -124,10 +124,10 @@ export class GatewayConnection extends EventEmitter {
    * @param authParams  Output of {@link AkSkAuth.sign}.
    * @returns Resolves once the connection is open; rejects on first-connect failure.
    */
-  connect(authParams: AuthParams): Promise<void> {
-    this.authParams = authParams;
+  connect(auth: AuthParams | (() => AuthParams)): Promise<void> {
+    this.authProvider = typeof auth === 'function' ? auth : () => auth;
     this.intentionallyClosed = false;
-    return this.doConnect(authParams);
+    return this.doConnect(this.authProvider());
   }
 
   /**
@@ -255,9 +255,9 @@ export class GatewayConnection extends EventEmitter {
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.reconnectMaxMs);
 
     this.reconnectTimer = setTimeout(async () => {
-      if (this.intentionallyClosed || !this.authParams) return;
+      if (this.intentionallyClosed || !this.authProvider) return;
       try {
-        await this.doConnect(this.authParams);
+        await this.doConnect(this.authProvider());
       } catch {
         // doConnect rejection triggers 'error' + 'close' which re-schedules.
       }

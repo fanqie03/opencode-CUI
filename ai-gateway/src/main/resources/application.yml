@@ -54,6 +54,9 @@ gateway:
     timestamp-tolerance-seconds: 300
     nonce-ttl-seconds: 300
 
+  websocket:
+    max-text-message-buffer-size-bytes: 1048576
+
 skill:
   gateway:
     internal-token: ${SKILL_SERVER_INTERNAL_TOKEN:sk-intl-9f2a7d3e4b1c}

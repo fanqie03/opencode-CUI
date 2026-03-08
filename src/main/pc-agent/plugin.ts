@@ -58,8 +58,6 @@ export const PlatformAgent: Plugin = async (ctx) => {
     const config = resolveConfig({ ak, sk, gatewayUrl });
 
     // ----- Step 1: Generate AK/SK auth parameters -----
-    const authParams = AkSkAuth.sign(config.ak, config.sk);
-
     // ----- Step 2: Connect to AI-Gateway -----
     const gateway = new GatewayConnection(
         config.gatewayUrl,
@@ -70,6 +68,7 @@ export const PlatformAgent: Plugin = async (ctx) => {
 
     gateway.on('connected', () => {
         console.log('[PlatformAgent] Gateway connected');
+        sendRegisterMessage(gateway);
     });
     gateway.on('disconnected', ({ code, reason }) => {
         console.warn(`[PlatformAgent] Gateway disconnected: code=${code} reason=${reason}`);
@@ -78,7 +77,7 @@ export const PlatformAgent: Plugin = async (ctx) => {
         console.error('[PlatformAgent] Gateway error:', err.message);
     });
 
-    await gateway.connect(authParams);
+    await gateway.connect(() => AkSkAuth.sign(config.ak, config.sk));
 
     // ----- Step 3: Initialize bidirectional event relay -----
     const relay = new EventRelay(gateway, ctx.client, (context, err) => {
@@ -89,9 +88,6 @@ export const PlatformAgent: Plugin = async (ctx) => {
     // ----- Step 4: Start health monitoring -----
     const healthChecker = new HealthChecker(ctx.client, gateway);
     healthChecker.start(config.healthCheckIntervalMs);
-
-    // ----- Step 5: Send register message -----
-    sendRegisterMessage(gateway);
 
     console.log('[PlatformAgent] Initialized successfully');
 
