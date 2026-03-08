@@ -56,26 +56,26 @@ class GatewayMessageTest {
 
     @Test
     void testAgentOnlineSerialization() throws Exception {
-        GatewayMessage msg = GatewayMessage.agentOnline("123", "OPENCODE", "1.0.0");
+        GatewayMessage msg = GatewayMessage.agentOnline("ak_test_001", "OPENCODE", "1.0.0");
 
         String json = objectMapper.writeValueAsString(msg);
         GatewayMessage deserialized = objectMapper.readValue(json, GatewayMessage.class);
 
         assertEquals("agent_online", deserialized.getType());
-        assertEquals("123", deserialized.getAgentId());
+        assertEquals("ak_test_001", deserialized.getAk());
         assertEquals("OPENCODE", deserialized.getToolType());
         assertEquals("1.0.0", deserialized.getToolVersion());
     }
 
     @Test
     void testAgentOfflineSerialization() throws Exception {
-        GatewayMessage msg = GatewayMessage.agentOffline("123");
+        GatewayMessage msg = GatewayMessage.agentOffline("ak_test_001");
 
         String json = objectMapper.writeValueAsString(msg);
         GatewayMessage deserialized = objectMapper.readValue(json, GatewayMessage.class);
 
         assertEquals("agent_offline", deserialized.getType());
-        assertEquals("123", deserialized.getAgentId());
+        assertEquals("ak_test_001", deserialized.getAk());
     }
 
     @Test
@@ -102,6 +102,17 @@ class GatewayMessageTest {
         assertEquals("agent-123", withAgent.getAgentId());
         assertEquals("sess-42", withAgent.getSessionId());
         assertEquals("tool_event", withAgent.getType());
+    }
+
+    @Test
+    void testWithAkCreatesNewInstance() {
+        GatewayMessage original = GatewayMessage.toolEvent("sess-42", null);
+        GatewayMessage withAk = original.withAk("ak_test_001");
+
+        assertNull(original.getAk());
+        assertEquals("ak_test_001", withAk.getAk());
+        assertEquals("sess-42", withAk.getSessionId());
+        assertEquals("tool_event", withAk.getType());
     }
 
     @Test
@@ -135,53 +146,6 @@ class GatewayMessageTest {
         assertEquals("WINDOWS", msg.getOs());
         assertEquals("OPENCODE", msg.getToolType());
         assertEquals("1.0.0", msg.getToolVersion());
-    }
-
-    @Test
-    void testEnvelopeSerialization() throws Exception {
-        MessageEnvelope.EnvelopeMetadata envelope = MessageEnvelope.EnvelopeMetadata.builder()
-                .version("1.0.0")
-                .messageId("msg-123")
-                .timestamp("2026-03-06T00:00:00Z")
-                .source("OPENCODE")
-                .agentId("agent-1")
-                .sessionId("sess-42")
-                .sequenceNumber(1L)
-                .sequenceScope("session")
-                .build();
-
-        GatewayMessage msg = GatewayMessage.builder()
-                .envelope(envelope)
-                .type("tool_event")
-                .sessionId("sess-42")
-                .build();
-
-        String json = objectMapper.writeValueAsString(msg);
-        GatewayMessage deserialized = objectMapper.readValue(json, GatewayMessage.class);
-
-        assertTrue(deserialized.hasEnvelope());
-        assertEquals("1.0.0", deserialized.getEnvelope().getVersion());
-        assertEquals("msg-123", deserialized.getEnvelope().getMessageId());
-        assertEquals("OPENCODE", deserialized.getEnvelope().getSource());
-    }
-
-    @Test
-    void testHasEnvelopeFalseForNull() {
-        GatewayMessage msg = GatewayMessage.heartbeat();
-        assertFalse(msg.hasEnvelope());
-    }
-
-    @Test
-    void testGetEnvelopeOrDefaultWhenNoEnvelope() {
-        GatewayMessage msg = GatewayMessage.builder()
-                .type("tool_event")
-                .agentId("123")
-                .build();
-
-        MessageEnvelope.EnvelopeMetadata env = msg.getEnvelopeOrDefault();
-        assertNotNull(env);
-        assertEquals("0.0.0", env.getVersion());
-        assertEquals("123", env.getAgentId());
     }
 
     @Test

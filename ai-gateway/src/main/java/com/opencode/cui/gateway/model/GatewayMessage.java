@@ -1,6 +1,5 @@
 package com.opencode.cui.gateway.model;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Data;
@@ -20,20 +19,14 @@ import lombok.Builder;
  * Internal (Gateway <-> Skill Server):
  * tool_event, tool_done, tool_error, agent_online, agent_offline,
  * session_created, invoke
- *
- * Protocol Evolution:
- * - Legacy format: flat fields (type, sessionId, event, etc.)
- * - Envelope format: envelope + type + payload (unified protocol)
  */
+
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class GatewayMessage {
-
-    /** Unified protocol envelope (optional, for envelope-aware clients) */
-    private MessageEnvelope.EnvelopeMetadata envelope;
 
     /** Message type discriminator */
     private String type;
@@ -180,7 +173,6 @@ public class GatewayMessage {
      */
     public GatewayMessage withAgentId(String agentId) {
         GatewayMessage copy = GatewayMessage.builder()
-                .envelope(this.envelope)
                 .type(this.type)
                 .agentId(agentId)
                 .ak(this.ak)
@@ -208,7 +200,6 @@ public class GatewayMessage {
      */
     public GatewayMessage withAk(String ak) {
         GatewayMessage copy = GatewayMessage.builder()
-                .envelope(this.envelope)
                 .type(this.type)
                 .agentId(this.agentId)
                 .ak(ak)
@@ -237,7 +228,6 @@ public class GatewayMessage {
      */
     public GatewayMessage withSequenceNumber(Long sequenceNumber) {
         GatewayMessage copy = GatewayMessage.builder()
-                .envelope(this.envelope)
                 .type(this.type)
                 .agentId(this.agentId)
                 .ak(this.ak)
@@ -259,31 +249,4 @@ public class GatewayMessage {
         return copy;
     }
 
-    /**
-     * Check if this message has a valid envelope.
-     */
-    @JsonIgnore
-    public boolean hasEnvelope() {
-        return envelope != null && envelope.getVersion() != null;
-    }
-
-    /**
-     * Get envelope or return a default with minimal metadata.
-     */
-    @JsonIgnore
-    public MessageEnvelope.EnvelopeMetadata getEnvelopeOrDefault() {
-        if (hasEnvelope()) {
-            return envelope;
-        }
-        return MessageEnvelope.EnvelopeMetadata.builder()
-                .version("0.0.0")
-                .messageId("unknown")
-                .timestamp("")
-                .source("UNKNOWN")
-                .agentId(agentId != null ? agentId : "unknown")
-                .sessionId(sessionId)
-                .sequenceNumber(sequenceNumber != null ? sequenceNumber : 0L)
-                .sequenceScope("agent")
-                .build();
-    }
 }
