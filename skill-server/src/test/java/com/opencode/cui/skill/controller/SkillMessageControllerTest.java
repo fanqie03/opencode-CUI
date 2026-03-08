@@ -139,8 +139,8 @@ class SkillMessageControllerTest {
     }
 
     @Test
-    @DisplayName("replyPermission returns 200 with success")
-    void permissionReply200() {
+    @DisplayName("replyPermission returns 200 with once response")
+    void permissionReplyOnce200() {
         SkillSession session = new SkillSession();
         session.setId(1L);
         session.setAgentId(99L);
@@ -148,21 +148,32 @@ class SkillMessageControllerTest {
         when(sessionService.getSession(1L)).thenReturn(session);
 
         var request = new SkillMessageController.PermissionReplyRequest();
-        request.setApproved(true);
+        request.setResponse("once");
 
         ResponseEntity<Map<String, Object>> response = controller.replyPermission(1L, "p-abc", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(true, response.getBody().get("success"));
         assertEquals("p-abc", response.getBody().get("permissionId"));
+        assertEquals("once", response.getBody().get("response"));
         verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("permission_reply"), any());
         verify(gatewayRelayService).publishProtocolMessage(eq("1"), any());
     }
 
     @Test
-    @DisplayName("replyPermission returns 400 when approved is null")
-    void permissionReplyMissingApproved400() {
+    @DisplayName("replyPermission returns 400 when response is null")
+    void permissionReplyMissingResponse400() {
         var request = new SkillMessageController.PermissionReplyRequest();
-        // approved is null
+        // response is null
+
+        ResponseEntity<Map<String, Object>> response = controller.replyPermission(1L, "p-abc", request);
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
+    @DisplayName("replyPermission returns 400 for invalid response value")
+    void permissionReplyInvalidResponse400() {
+        var request = new SkillMessageController.PermissionReplyRequest();
+        request.setResponse("invalid");
 
         ResponseEntity<Map<String, Object>> response = controller.replyPermission(1L, "p-abc", request);
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
@@ -177,7 +188,7 @@ class SkillMessageControllerTest {
         when(sessionService.getSession(1L)).thenReturn(session);
 
         var request = new SkillMessageController.PermissionReplyRequest();
-        request.setApproved(true);
+        request.setResponse("once");
 
         ResponseEntity<Map<String, Object>> response = controller.replyPermission(1L, "p-abc", request);
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
