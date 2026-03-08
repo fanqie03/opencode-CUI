@@ -61,7 +61,7 @@ class SkillMessageControllerTest {
     void sendMessage201() {
         SkillSession session = new SkillSession();
         session.setId(1L);
-        session.setAgentId(99L);
+        session.setAk("99");
         session.setToolSessionId("tool-session-1");
         session.setStatus(SkillSession.Status.ACTIVE);
         when(sessionService.getSession(1L)).thenReturn(session);
@@ -84,7 +84,7 @@ class SkillMessageControllerTest {
     void sendMessageWithToolCallIdSendsQuestionReply() {
         SkillSession session = new SkillSession();
         session.setId(1L);
-        session.setAgentId(99L);
+        session.setAk("99");
         session.setToolSessionId("tool-session-1");
         session.setStatus(SkillSession.Status.ACTIVE);
         when(sessionService.getSession(1L)).thenReturn(session);
@@ -143,7 +143,7 @@ class SkillMessageControllerTest {
     void permissionReplyOnce200() {
         SkillSession session = new SkillSession();
         session.setId(1L);
-        session.setAgentId(99L);
+        session.setAk("99");
         session.setStatus(SkillSession.Status.ACTIVE);
         when(sessionService.getSession(1L)).thenReturn(session);
 
@@ -199,7 +199,7 @@ class SkillMessageControllerTest {
     void sendToIm200() {
         SkillSession session = new SkillSession();
         session.setId(1L);
-        session.setImChatId("chat-123");
+        session.setImGroupId("chat-123");
         when(sessionService.getSession(1L)).thenReturn(session);
         when(imMessageService.sendMessage("chat-123", "Hello IM")).thenReturn(true);
 

@@ -33,7 +33,7 @@ class SkillSessionServiceTest {
     @Test
     @DisplayName("createSession inserts and returns session")
     void createSessionInsertsAndReturns() {
-        SkillSession result = service.createSession(1L, 2L, 3L, "Test", "chat-1");
+        SkillSession result = service.createSession(1L, "ak-3", "Test", "chat-1");
         assertNotNull(result);
         assertEquals(SkillSession.Status.ACTIVE, result.getStatus());
         verify(sessionRepository).insert(any(SkillSession.class));
@@ -90,13 +90,13 @@ class SkillSessionServiceTest {
     }
 
     @Test
-    @DisplayName("findByAgentId delegates to repository")
-    void findByAgentIdDelegates() {
+    @DisplayName("findByAk delegates to repository")
+    void findByAkDelegates() {
         SkillSession s1 = new SkillSession();
         s1.setId(1L);
-        when(sessionRepository.findByAgentId(99L)).thenReturn(List.of(s1));
+        when(sessionRepository.findByAk("99")).thenReturn(List.of(s1));
 
-        List<SkillSession> result = service.findByAgentId(99L);
+        List<SkillSession> result = service.findByAk("99");
         assertEquals(1, result.size());
     }
 

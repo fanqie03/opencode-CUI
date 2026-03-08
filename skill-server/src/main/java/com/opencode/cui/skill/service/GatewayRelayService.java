@@ -143,15 +143,15 @@ public class GatewayRelayService {
     /**
      * Send an invoke command to AI-Gateway over the active internal WebSocket.
      *
-     * @param agentId   the target agent ID
+     * @param ak        the target agent key
      * @param sessionId the skill session ID
      * @param action    the action to invoke (e.g., "chat", "create_session")
      * @param payload   the action payload as a JSON string
      */
-    public void sendInvokeToGateway(String agentId, String sessionId, String action, String payload) {
+    public void sendInvokeToGateway(String ak, String sessionId, String action, String payload) {
         ObjectNode message = objectMapper.createObjectNode();
         message.put("type", "invoke");
-        message.put("agentId", agentId);
+        message.put("ak", ak);
         message.put("sessionId", sessionId);
         message.put("action", action);
 
@@ -175,19 +175,19 @@ public class GatewayRelayService {
 
         GatewayRelayTarget relayTarget = gatewayRelayTarget;
         if (relayTarget == null || !relayTarget.hasActiveConnection()) {
-            log.warn("Gateway WS connection not available, invoke dropped: agentId={}, action={}",
-                    agentId, action);
+            log.warn("Gateway WS connection not available, invoke dropped: ak={}, action={}",
+                    ak, action);
             return;
         }
 
         boolean sent = relayTarget.sendToGateway(messageText);
         if (!sent) {
-            log.warn("Failed to send invoke through Gateway WS: agentId={}, action={}",
-                    agentId, action);
+            log.warn("Failed to send invoke through Gateway WS: ak={}, action={}",
+                    ak, action);
             return;
         }
 
-        log.debug("Invoke sent via Gateway WS: agentId={}, action={}", agentId, action);
+        log.debug("Invoke sent via Gateway WS: ak={}, action={}", ak, action);
     }
 
     // ==================== Upstream: Gateway -> Skill (via WS) ====================
@@ -341,15 +341,11 @@ public class GatewayRelayService {
         log.info("Agent online: agentId={}, toolType={}, toolVersion={}", agentId, toolType, toolVersion);
 
         if (agentId != null) {
-            try {
-                StreamMessage msg = StreamMessage.builder()
-                        .type(StreamMessage.Types.AGENT_ONLINE)
-                        .build();
-                sessionService.findByAgentId(Long.valueOf(agentId)).forEach(
-                        session -> broadcastStreamMessage(session.getId().toString(), msg));
-            } catch (NumberFormatException e) {
-                log.warn("Invalid agentId for online event: {}", agentId);
-            }
+            StreamMessage msg = StreamMessage.builder()
+                    .type(StreamMessage.Types.AGENT_ONLINE)
+                    .build();
+            sessionService.findByAk(agentId).forEach(
+                    session -> broadcastStreamMessage(session.getId().toString(), msg));
         }
     }
 
@@ -357,15 +353,11 @@ public class GatewayRelayService {
         log.warn("Agent offline: agentId={}", agentId);
 
         if (agentId != null) {
-            try {
-                StreamMessage msg = StreamMessage.builder()
-                        .type(StreamMessage.Types.AGENT_OFFLINE)
-                        .build();
-                sessionService.findByAgentId(Long.valueOf(agentId)).forEach(
-                        session -> broadcastStreamMessage(session.getId().toString(), msg));
-            } catch (NumberFormatException e) {
-                log.warn("Invalid agentId for offline event: {}", agentId);
-            }
+            StreamMessage msg = StreamMessage.builder()
+                    .type(StreamMessage.Types.AGENT_OFFLINE)
+                    .build();
+            sessionService.findByAk(agentId).forEach(
+                    session -> broadcastStreamMessage(session.getId().toString(), msg));
         }
     }
 
@@ -447,37 +439,12 @@ public class GatewayRelayService {
     }
 
     /**
-     * @deprecated Use broadcastStreamMessage instead. Kept for backward
-     *             compatibility during migration.
-     */
-    @Deprecated
-    private void broadcastToSession(String sessionId, String type, String content) {
-        ObjectNode message = objectMapper.createObjectNode();
-        message.put("type", type);
-        message.put("sessionId", sessionId);
-        if (content != null) {
-            try {
-                message.set("content", objectMapper.readTree(content));
-            } catch (JsonProcessingException e) {
-                message.put("content", content);
-            }
-        }
-
-        try {
-            String messageText = objectMapper.writeValueAsString(message);
-            redisMessageBroker.publishToSession(sessionId, messageText);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to broadcast to session {}: {}", sessionId, e.getMessage());
-        }
-    }
-
-    /**
      * Request recovery of missing messages for a session.
      */
     private void requestRecovery(String sessionId, long fromSequence) {
         try {
             var session = sessionService.getSession(Long.valueOf(sessionId));
-            if (session.getAgentId() != null) {
+            if (session.getAk() != null) {
                 ObjectNode payload = objectMapper.createObjectNode();
                 payload.put("fromSequence", fromSequence);
                 payload.put("sessionId", sessionId);
@@ -490,7 +457,7 @@ public class GatewayRelayService {
                 }
 
                 sendInvokeToGateway(
-                        session.getAgentId().toString(),
+                        session.getAk(),
                         sessionId,
                         "request_recovery",
                         payloadStr);

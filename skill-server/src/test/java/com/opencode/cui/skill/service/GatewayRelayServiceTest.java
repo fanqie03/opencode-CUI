@@ -106,7 +106,7 @@ class GatewayRelayServiceTest {
     void agentOnlineBroadcastsToSessions() {
         SkillSession session = new SkillSession();
         session.setId(1L);
-        when(sessionService.findByAgentId(99L)).thenReturn(java.util.List.of(session));
+        when(sessionService.findByAk("99")).thenReturn(java.util.List.of(session));
 
         String msg = "{\"type\":\"agent_online\",\"agentId\":\"99\",\"toolType\":\"opencode\",\"toolVersion\":\"1.0\"}";
         service.handleGatewayMessage(msg);
@@ -119,7 +119,7 @@ class GatewayRelayServiceTest {
     void agentOfflineBroadcastsToSessions() {
         SkillSession session = new SkillSession();
         session.setId(2L);
-        when(sessionService.findByAgentId(99L)).thenReturn(java.util.List.of(session));
+        when(sessionService.findByAk("99")).thenReturn(java.util.List.of(session));
 
         String msg = "{\"type\":\"agent_offline\",\"agentId\":\"99\"}";
         service.handleGatewayMessage(msg);

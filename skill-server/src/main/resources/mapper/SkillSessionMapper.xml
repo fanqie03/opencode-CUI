@@ -8,13 +8,13 @@
         <id     property="id"                column="id"/>
         <result property="userId"            column="user_id"/>
         <result property="skillDefinitionId" column="skill_definition_id"/>
-        <result property="agentId"           column="agent_id"/>
+        <result property="ak"                column="agent_id"/>
         <result property="toolSessionId"     column="tool_session_id"/>
         <result property="title"             column="title"/>
         <result property="status"            column="status"
                 typeHandler="org.apache.ibatis.type.EnumTypeHandler"
                 javaType="com.opencode.cui.skill.model.SkillSession$Status"/>
-        <result property="imChatId"          column="im_chat_id"/>
+        <result property="imGroupId"         column="im_chat_id"/>
         <result property="createdAt"         column="created_at"/>
         <result property="lastActiveAt"      column="last_active_at"/>
     </resultMap>
@@ -61,9 +61,9 @@
           </foreach>
     </select>
 
-    <select id="findByAgentId" resultMap="SkillSessionResultMap">
+    <select id="findByAk" resultMap="SkillSessionResultMap">
         <include refid="selectAllColumns"/>
-        WHERE agent_id = #{agentId}
+        WHERE agent_id = #{ak}
     </select>
 
     <select id="findByStatus" resultMap="SkillSessionResultMap">
@@ -75,8 +75,8 @@
         INSERT INTO skill_session
             (user_id, skill_definition_id, agent_id, tool_session_id, title, status, im_chat_id, created_at, last_active_at)
         VALUES
-            (#{userId}, #{skillDefinitionId}, #{agentId}, #{toolSessionId}, #{title},
-             #{status}, #{imChatId}, NOW(), NOW())
+            (#{userId}, #{skillDefinitionId}, #{ak}, #{toolSessionId}, #{title},
+             #{status}, #{imGroupId}, NOW(), NOW())
     </insert>
 
     <update id="updateStatus">
@@ -98,9 +98,9 @@
         WHERE id = #{id}
     </update>
 
-    <update id="updateAgentId">
+    <update id="updateAk">
         UPDATE skill_session
-        SET agent_id = #{agentId}
+        SET agent_id = #{ak}
         WHERE id = #{id}
     </update>
 

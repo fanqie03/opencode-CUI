@@ -91,7 +91,7 @@ public class SkillMessageController {
         SkillMessage message = messageService.saveUserMessage(sessionId, request.getContent());
 
         // Send invoke to AI-Gateway to trigger OpenCode processing
-        if (session.getAgentId() != null) {
+        if (session.getAk() != null) {
             if (session.getToolSessionId() == null) {
                 log.warn("Session {} has no toolSessionId, cannot invoke AI", sessionId);
                 return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
@@ -111,7 +111,7 @@ public class SkillMessageController {
             }
 
             gatewayRelayService.sendInvokeToGateway(
-                    session.getAgentId().toString(),
+                    session.getAk(),
                     sessionId.toString(),
                     action,
                     payload);
@@ -170,7 +170,7 @@ public class SkillMessageController {
         if (chatId == null || chatId.isBlank()) {
             try {
                 SkillSession session = sessionService.getSession(sessionId);
-                chatId = session.getImChatId();
+                chatId = session.getImGroupId();
             } catch (IllegalArgumentException e) {
                 return ResponseEntity.notFound().build();
             }
@@ -230,7 +230,7 @@ public class SkillMessageController {
                     .body(Map.of("success", false, "error", "Session is closed"));
         }
 
-        if (session.getAgentId() == null) {
+        if (session.getAk() == null) {
             return ResponseEntity.badRequest()
                     .body(Map.of("success", false, "error", "No agent associated with this session"));
         }
@@ -241,7 +241,7 @@ public class SkillMessageController {
 
         // Send permission_reply invoke to AI-Gateway
         gatewayRelayService.sendInvokeToGateway(
-                session.getAgentId().toString(),
+                session.getAk(),
                 sessionId.toString(),
                 "permission_reply",
                 payload);

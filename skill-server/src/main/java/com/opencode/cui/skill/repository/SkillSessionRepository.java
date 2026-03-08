@@ -10,36 +10,36 @@ import java.util.List;
 @Mapper
 public interface SkillSessionRepository {
 
-    SkillSession findById(@Param("id") Long id);
+        SkillSession findById(@Param("id") Long id);
 
-    List<SkillSession> findByUserId(@Param("userId") Long userId,
-            @Param("offset") int offset,
-            @Param("limit") int limit);
+        List<SkillSession> findByUserId(@Param("userId") Long userId,
+                        @Param("offset") int offset,
+                        @Param("limit") int limit);
 
-    List<SkillSession> findByUserIdAndStatusIn(@Param("userId") Long userId,
-            @Param("statuses") List<String> statuses,
-            @Param("offset") int offset,
-            @Param("limit") int limit);
+        List<SkillSession> findByUserIdAndStatusIn(@Param("userId") Long userId,
+                        @Param("statuses") List<String> statuses,
+                        @Param("offset") int offset,
+                        @Param("limit") int limit);
 
-    long countByUserId(@Param("userId") Long userId);
+        long countByUserId(@Param("userId") Long userId);
 
-    long countByUserIdAndStatusIn(@Param("userId") Long userId,
-            @Param("statuses") List<String> statuses);
+        long countByUserIdAndStatusIn(@Param("userId") Long userId,
+                        @Param("statuses") List<String> statuses);
 
-    List<SkillSession> findByAgentId(@Param("agentId") Long agentId);
+        List<SkillSession> findByAk(@Param("ak") String ak);
 
-    List<SkillSession> findByStatus(@Param("status") String status);
+        List<SkillSession> findByStatus(@Param("status") String status);
 
-    int insert(SkillSession session);
+        int insert(SkillSession session);
 
-    int updateStatus(@Param("id") Long id, @Param("status") String status);
+        int updateStatus(@Param("id") Long id, @Param("status") String status);
 
-    int updateLastActiveAt(@Param("id") Long id, @Param("lastActiveAt") LocalDateTime lastActiveAt);
+        int updateLastActiveAt(@Param("id") Long id, @Param("lastActiveAt") LocalDateTime lastActiveAt);
 
-    int updateToolSessionId(@Param("id") Long id, @Param("toolSessionId") String toolSessionId,
-            @Param("lastActiveAt") LocalDateTime lastActiveAt);
+        int updateToolSessionId(@Param("id") Long id, @Param("toolSessionId") String toolSessionId,
+                        @Param("lastActiveAt") LocalDateTime lastActiveAt);
 
-    int updateAgentId(@Param("id") Long id, @Param("agentId") Long agentId);
+        int updateAk(@Param("id") Long id, @Param("ak") String ak);
 
-    int markIdleSessions(@Param("status") String status, @Param("cutoff") LocalDateTime cutoff);
+        int markIdleSessions(@Param("status") String status, @Param("cutoff") LocalDateTime cutoff);
 }

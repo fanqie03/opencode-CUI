@@ -16,14 +16,14 @@ public class SkillSession {
     private Long id;
     private Long userId;
     private Long skillDefinitionId;
-    private Long agentId;
+    private String ak;
     private String toolSessionId;
     private String title;
 
     @Builder.Default
     private Status status = Status.ACTIVE;
 
-    private String imChatId;
+    private String imGroupId;
     private LocalDateTime createdAt;
     private LocalDateTime lastActiveAt;
 

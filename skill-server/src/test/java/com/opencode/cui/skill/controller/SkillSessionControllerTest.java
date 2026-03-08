@@ -41,12 +41,11 @@ class SkillSessionControllerTest {
         SkillSession session = new SkillSession();
         session.setId(1L);
         session.setStatus(SkillSession.Status.ACTIVE);
-        when(sessionService.createSession(any(), any(), any(), any(), any())).thenReturn(session);
+        when(sessionService.createSession(any(), any(), any(), any())).thenReturn(session);
 
         var request = new SkillSessionController.CreateSessionRequest();
         request.setUserId(1L);
-        request.setSkillDefinitionId(2L);
-        request.setAgentId(3L);
+        request.setAk("3");
         request.setTitle("Test");
 
         ResponseEntity<SkillSession> response = controller.createSession(request);
@@ -106,7 +105,7 @@ class SkillSessionControllerTest {
     void closeSessionSendsGatewayInvoke() {
         SkillSession session = new SkillSession();
         session.setId(42L);
-        session.setAgentId(99L);
+        session.setAk("99");
         session.setToolSessionId("ts-abc");
         when(sessionService.getSession(42L)).thenReturn(session);
 
@@ -119,7 +118,7 @@ class SkillSessionControllerTest {
     void abortSession200() {
         SkillSession session = new SkillSession();
         session.setId(42L);
-        session.setAgentId(99L);
+        session.setAk("99");
         session.setToolSessionId("ts-abc");
         session.setStatus(SkillSession.Status.ACTIVE);
         when(sessionService.getSession(42L)).thenReturn(session);

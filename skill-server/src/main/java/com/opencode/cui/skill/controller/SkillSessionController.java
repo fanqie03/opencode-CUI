@@ -46,23 +46,22 @@ public class SkillSessionController {
      */
     @PostMapping
     public ResponseEntity<SkillSession> createSession(@RequestBody CreateSessionRequest request) {
-        if (request.getUserId() == null || request.getSkillDefinitionId() == null) {
+        if (request.getUserId() == null) {
             return ResponseEntity.badRequest().build();
         }
 
         SkillSession session = sessionService.createSession(
                 request.getUserId(),
-                request.getSkillDefinitionId(),
-                request.getAgentId(),
+                request.getAk(),
                 request.getTitle(),
-                request.getImChatId());
+                request.getImGroupId());
 
         gatewayRelayService.subscribeToSessionBroadcast(session.getId().toString());
 
-        // Send create_session invoke to AI-Gateway if agentId is provided
-        if (request.getAgentId() != null) {
+        // Send create_session invoke to AI-Gateway if ak is provided
+        if (request.getAk() != null) {
             gatewayRelayService.sendInvokeToGateway(
-                    request.getAgentId().toString(),
+                    request.getAk(),
                     session.getId().toString(),
                     "create_session",
                     null);
@@ -111,7 +110,7 @@ public class SkillSessionController {
             SkillSession session = sessionService.getSession(id);
 
             // Send close_session to AI-Gateway if toolSessionId and agentId exist
-            if (session.getAgentId() != null && session.getToolSessionId() != null) {
+            if (session.getAk() != null && session.getToolSessionId() != null) {
                 var node = objectMapper.createObjectNode();
                 node.put("toolSessionId", session.getToolSessionId());
                 String payload;
@@ -121,12 +120,11 @@ public class SkillSessionController {
                     payload = "{}";
                 }
                 gatewayRelayService.sendInvokeToGateway(
-                        session.getAgentId().toString(),
+                        session.getAk(),
                         session.getId().toString(),
                         "close_session",
                         payload);
             }
-
             sessionService.closeSession(id);
             gatewayRelayService.unsubscribeFromSession(id.toString());
             return ResponseEntity.ok(Map.of("status", "closed", "sessionId", id.toString()));
@@ -151,8 +149,8 @@ public class SkillSessionController {
                         .body(Map.of("error", "Session is already closed"));
             }
 
-            // Send abort_session to AI-Gateway if toolSessionId and agentId exist
-            if (session.getAgentId() != null && session.getToolSessionId() != null) {
+            // Send abort_session to AI-Gateway if toolSessionId and ak exist
+            if (session.getAk() != null && session.getToolSessionId() != null) {
                 var node = objectMapper.createObjectNode();
                 node.put("toolSessionId", session.getToolSessionId());
                 String payload;
@@ -162,7 +160,7 @@ public class SkillSessionController {
                     payload = "{}";
                 }
                 gatewayRelayService.sendInvokeToGateway(
-                        session.getAgentId().toString(),
+                        session.getAk(),
                         session.getId().toString(),
                         "abort_session",
                         payload);
@@ -179,9 +177,8 @@ public class SkillSessionController {
     @Data
     public static class CreateSessionRequest {
         private Long userId;
-        private Long skillDefinitionId;
-        private Long agentId;
+        private String ak;
         private String title;
-        private String imChatId;
+        private String imGroupId;
     }
 }

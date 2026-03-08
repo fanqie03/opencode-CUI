@@ -31,19 +31,18 @@ public class SkillSessionService {
      * Create a new skill session.
      */
     @Transactional
-    public SkillSession createSession(Long userId, Long skillDefinitionId, Long agentId,
-            String title, String imChatId) {
+    public SkillSession createSession(Long userId, String ak,
+            String title, String imGroupId) {
         SkillSession session = SkillSession.builder()
                 .userId(userId)
-                .skillDefinitionId(skillDefinitionId)
-                .agentId(agentId)
+                .ak(ak)
                 .title(title)
-                .imChatId(imChatId)
+                .imGroupId(imGroupId)
                 .status(SkillSession.Status.ACTIVE)
                 .build();
 
         sessionRepository.insert(session);
-        log.info("Created skill session: id={}, userId={}, skillDefId={}", session.getId(), userId, skillDefinitionId);
+        log.info("Created skill session: id={}, userId={}, ak={}", session.getId(), userId, ak);
         return session;
     }
 
@@ -110,11 +109,11 @@ public class SkillSessionService {
     }
 
     /**
-     * Find sessions by agent ID (used when agent goes offline).
+     * Find sessions by AK (used when agent goes offline).
      */
     @Transactional(readOnly = true)
-    public List<SkillSession> findByAgentId(Long agentId) {
-        return sessionRepository.findByAgentId(agentId);
+    public List<SkillSession> findByAk(String ak) {
+        return sessionRepository.findByAk(ak);
     }
 
     /**
