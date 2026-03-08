@@ -259,6 +259,40 @@ export class EventRelay {
         break;
       }
 
+      case 'question_reply': {
+        const toolSessionId = payload.toolSessionId as string | undefined;
+        const text = payload.text as string | undefined;
+        const toolCallId = payload.toolCallId as string | undefined;
+        debugLog('invoke.question_reply', `toolSessionId=${toolSessionId}, text=${text}, toolCallId=${toolCallId}`);
+
+        // Record mapping (same as chat)
+        if (toolSessionId && msg.sessionId) {
+          this.sessionMap.set(toolSessionId, msg.sessionId);
+          this.lastSkillSessionId = msg.sessionId;
+        }
+
+        if (!toolSessionId || !text) {
+          this.onError('invoke.question_reply', new Error('Missing toolSessionId or text in payload'));
+          return;
+        }
+        try {
+          const promptArgs = {
+            path: { id: toolSessionId },
+            body: {
+              parts: [{ type: 'text' as const, text }],
+            },
+          };
+          debugLog('invoke.question_reply', 'Calling session.prompt with:', promptArgs);
+          const result = await (this.client as any).session.prompt(promptArgs);
+          debugLog('invoke.question_reply', 'session.prompt result:', result);
+        } catch (err) {
+          debugLog('invoke.question_reply', 'session.prompt ERROR:', err instanceof Error ? { message: err.message, stack: err.stack } : err);
+          this.onError('invoke.question_reply', err);
+          this.trySendError(msg.sessionId, err);
+        }
+        break;
+      }
+
       case 'create_session': {
         try {
           const result = await (this.client as any).session.create({
@@ -305,6 +339,26 @@ export class EventRelay {
         break;
       }
 
+      case 'abort_session': {
+        const toolSessionId = payload.toolSessionId as string | undefined;
+        if (!toolSessionId) {
+          this.onError('invoke.abort_session', new Error('Missing toolSessionId in payload'));
+          return;
+        }
+        try {
+          debugLog('invoke.abort_session', `Aborting session: ${toolSessionId}`);
+          await (this.client as any).session.abort({
+            path: { id: toolSessionId },
+          });
+          debugLog('invoke.abort_session', 'session.abort succeeded');
+        } catch (err) {
+          debugLog('invoke.abort_session', 'session.abort ERROR:', err);
+          this.onError('invoke.abort_session', err);
+          this.trySendError(msg.sessionId, err);
+        }
+        break;
+      }
+
       case 'close_session': {
         const toolSessionId = payload.toolSessionId as string | undefined;
         if (!toolSessionId) {
@@ -312,9 +366,11 @@ export class EventRelay {
           return;
         }
         try {
-          await (this.client as any).session.abort({
+          debugLog('invoke.close_session', `Deleting session: ${toolSessionId}`);
+          await (this.client as any).session.delete({
             path: { id: toolSessionId },
           });
+          debugLog('invoke.close_session', 'session.delete succeeded');
         } catch (err) {
           this.onError('invoke.close_session', err);
           this.trySendError(msg.sessionId, err);
