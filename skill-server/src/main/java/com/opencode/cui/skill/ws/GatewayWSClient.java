@@ -99,8 +99,9 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget {
         }
 
         try {
-            URI uri = URI.create(gatewayWsUrl + "?token=" + internalToken);
+            URI uri = URI.create(gatewayWsUrl);
             wsClient = new InternalWebSocketClient(uri);
+            wsClient.addHeader("Authorization", "Bearer " + internalToken);
             wsClient.connectBlocking(10, TimeUnit.SECONDS);
         } catch (Exception e) {
             log.error("Failed to connect to gateway: {}", e.getMessage());

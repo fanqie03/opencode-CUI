@@ -31,6 +31,8 @@ class GatewayRelayServiceTest {
     @Mock
     private SkillSessionService sessionService;
     @Mock
+    private com.opencode.cui.skill.repository.SkillMessageRepository messageRepository;
+    @Mock
     private RedisMessageBroker redisMessageBroker;
     @Mock
     private SequenceTracker sequenceTracker;
@@ -52,6 +54,7 @@ class GatewayRelayServiceTest {
                 skillStreamHandler,
                 messageService,
                 sessionService,
+                messageRepository,
                 redisMessageBroker,
                 sequenceTracker,
                 translator,
@@ -113,7 +116,7 @@ class GatewayRelayServiceTest {
         session.setId(1L);
         when(sessionService.findByAk("99")).thenReturn(java.util.List.of(session));
 
-        String msg = "{\"type\":\"agent_online\",\"ak\":\"99\",\"toolType\":\"opencode\",\"toolVersion\":\"1.0\"}";
+        String msg = "{\"type\":\"agent_online\",\"ak\":\"99\",\"toolType\":\"channel\",\"toolVersion\":\"1.0\"}";
         service.handleGatewayMessage(msg);
 
         verify(redisMessageBroker).publishToSession(eq("1"), contains("agent.online"));

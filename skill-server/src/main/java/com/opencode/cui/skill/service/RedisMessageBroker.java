@@ -178,6 +178,17 @@ public class RedisMessageBroker {
     }
 
     /**
+     * Check if a session channel has an active subscription.
+     *
+     * @param sessionId the session ID to check
+     * @return true if the session channel is currently subscribed
+     */
+    public boolean isSessionSubscribed(String sessionId) {
+        String channel = "session:" + sessionId;
+        return activeListeners.containsKey(channel);
+    }
+
+    /**
      * Get the current sequence number for a session (for testing/monitoring).
      */
     public long getSessionSequence(String sessionId) {

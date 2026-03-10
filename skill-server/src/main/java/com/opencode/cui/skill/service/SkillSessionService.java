@@ -19,12 +19,20 @@ import java.util.stream.Collectors;
 public class SkillSessionService {
 
     private final SkillSessionRepository sessionRepository;
+    private volatile GatewayRelayService gatewayRelayService;
 
     @Value("${skill.session.idle-timeout-minutes:30}")
     private int idleTimeoutMinutes;
 
     public SkillSessionService(SkillSessionRepository sessionRepository) {
         this.sessionRepository = sessionRepository;
+    }
+
+    /**
+     * Set GatewayRelayService lazily to avoid circular dependency.
+     */
+    public void setGatewayRelayService(GatewayRelayService gatewayRelayService) {
+        this.gatewayRelayService = gatewayRelayService;
     }
 
     /**
@@ -105,6 +113,30 @@ public class SkillSessionService {
     }
 
     /**
+     * Activate an IDLE session (IDLE → ACTIVE).
+     * Called when a successful tool_event is received for an IDLE session.
+     */
+    @Transactional
+    public boolean activateSession(Long sessionId) {
+        int updated = sessionRepository.activateSession(sessionId);
+        if (updated > 0) {
+            log.info("Activated session: id={} (IDLE → ACTIVE)", sessionId);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Clear the toolSessionId for a session (when the tool session becomes
+     * invalid).
+     */
+    @Transactional
+    public void clearToolSessionId(Long sessionId) {
+        sessionRepository.clearToolSessionId(sessionId);
+        log.info("Cleared toolSessionId for session: id={}", sessionId);
+    }
+
+    /**
      * Update the last_active_at timestamp for a session.
      */
     @Transactional
@@ -149,15 +181,34 @@ public class SkillSessionService {
 
     /**
      * Scheduled cleanup: mark ACTIVE sessions as IDLE if they have been inactive
-     * beyond the configured idle timeout.
+     * beyond the configured idle timeout. Also unsubscribes Redis channels.
      */
     @Scheduled(fixedDelayString = "${skill.session.cleanup-interval-minutes:10}", timeUnit = TimeUnit.MINUTES)
     @Transactional
     public void cleanupIdleSessions() {
         LocalDateTime cutoff = LocalDateTime.now().minusMinutes(idleTimeoutMinutes);
+
+        // First, find which sessions will be marked idle
+        List<Long> idleSessionIds = sessionRepository.findIdleSessionIds(cutoff);
+
+        if (idleSessionIds.isEmpty()) {
+            return;
+        }
+
+        // Mark them as IDLE in DB
         int count = sessionRepository.markIdleSessions(SkillSession.Status.IDLE.name(), cutoff);
-        if (count > 0) {
-            log.info("Marked {} sessions as IDLE (inactive since before {})", count, cutoff);
+        log.info("Marked {} sessions as IDLE (inactive since before {})", count, cutoff);
+
+        // Unsubscribe Redis channels for idle sessions
+        if (gatewayRelayService != null) {
+            for (Long sessionId : idleSessionIds) {
+                try {
+                    gatewayRelayService.unsubscribeFromSession(sessionId.toString());
+                } catch (Exception e) {
+                    log.warn("Failed to unsubscribe Redis for idle session {}: {}",
+                            sessionId, e.getMessage());
+                }
+            }
         }
     }
 }

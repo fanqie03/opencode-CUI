@@ -49,7 +49,7 @@ public class AgentRegistryService {
     @Transactional
     public AgentConnection register(Long userId, String akId, String deviceName,
             String macAddress, String os, String toolType, String toolVersion) {
-        String effectiveToolType = toolType != null ? toolType : "OPENCODE";
+        String effectiveToolType = toolType != null ? toolType : "channel";
 
         // Look for existing record with same AK + toolType (any status)
         AgentConnection existing = repository.findByAkIdAndToolType(akId, effectiveToolType);

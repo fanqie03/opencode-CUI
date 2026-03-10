@@ -4,15 +4,17 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.repository.SkillMessageRepository;
 import com.opencode.cui.skill.ws.SkillStreamHandler;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Manages communication with AI-Gateway.
@@ -40,6 +42,7 @@ public class GatewayRelayService {
     private final SkillStreamHandler skillStreamHandler;
     private final SkillMessageService messageService;
     private final SkillSessionService sessionService;
+    private final SkillMessageRepository messageRepository;
     private final RedisMessageBroker redisMessageBroker;
     private final SequenceTracker sequenceTracker;
     private final OpenCodeEventTranslator translator;
@@ -47,10 +50,17 @@ public class GatewayRelayService {
     private final StreamBufferService bufferService;
     private volatile GatewayRelayTarget gatewayRelayTarget;
 
+    /**
+     * Stores pending message text to retry after toolSession rebuild. sessionId →
+     * text
+     */
+    private final ConcurrentHashMap<String, String> pendingRebuildMessages = new ConcurrentHashMap<>();
+
     public GatewayRelayService(ObjectMapper objectMapper,
             SkillStreamHandler skillStreamHandler,
             SkillMessageService messageService,
             SkillSessionService sessionService,
+            SkillMessageRepository messageRepository,
             RedisMessageBroker redisMessageBroker,
             SequenceTracker sequenceTracker,
             OpenCodeEventTranslator translator,
@@ -60,6 +70,7 @@ public class GatewayRelayService {
         this.skillStreamHandler = skillStreamHandler;
         this.messageService = messageService;
         this.sessionService = sessionService;
+        this.messageRepository = messageRepository;
         this.redisMessageBroker = redisMessageBroker;
         this.sequenceTracker = sequenceTracker;
         this.translator = translator;
@@ -74,21 +85,15 @@ public class GatewayRelayService {
     // ==================== Initialization ====================
 
     /**
-     * On startup, subscribe to Skill Redis channels for all ACTIVE sessions.
+     * On startup, wire circular dependency with SkillSessionService.
+     * Redis subscriptions are handled lazily via ensureSessionSubscribed().
      */
     @PostConstruct
     public void init() {
-        // Subscribe to Redis session channels for all active sessions
-        try {
-            List<SkillSession> activeSessions = sessionService.findByStatus(SkillSession.Status.ACTIVE);
-            for (SkillSession session : activeSessions) {
-                String sessionId = session.getId().toString();
-                subscribeToSessionBroadcast(sessionId);
-            }
-            log.info("Startup: subscribed to {} active session Redis channels", activeSessions.size());
-        } catch (Exception e) {
-            log.error("Failed to subscribe to active sessions on startup: {}", e.getMessage(), e);
-        }
+        // Wire circular dependency: SkillSessionService needs GatewayRelayService
+        // for Redis unsubscribe during IDLE cleanup
+        sessionService.setGatewayRelayService(this);
+        log.info("GatewayRelayService initialized (Redis subscriptions are lazy)");
     }
 
     // ==================== Redis Session Broadcast ====================
@@ -102,6 +107,19 @@ public class GatewayRelayService {
             handleSessionBroadcast(sessionId, message);
         });
         log.info("Subscribed to session broadcast channel: session:{}", sessionId);
+    }
+
+    /**
+     * Ensure that a session's Redis broadcast channel is subscribed.
+     * This provides lazy subscription for sessions that were not subscribed
+     * during init() (e.g., sessions with CLOSED status or sessions created
+     * by other instances).
+     */
+    public void ensureSessionSubscribed(String sessionId) {
+        if (!redisMessageBroker.isSessionSubscribed(sessionId)) {
+            log.info("Lazy-subscribing to session broadcast channel: session:{}", sessionId);
+            subscribeToSessionBroadcast(sessionId);
+        }
     }
 
     /**
@@ -277,6 +295,16 @@ public class GatewayRelayService {
             return;
         }
 
+        // Ensure Redis subscription is active for this session (lazy subscribe)
+        ensureSessionSubscribed(sessionId);
+
+        // Activate session if currently IDLE (IDLE → ACTIVE on first successful event)
+        try {
+            sessionService.activateSession(Long.parseLong(sessionId));
+        } catch (NumberFormatException e) {
+            // ignore non-numeric sessionId
+        }
+
         log.debug("handleToolEvent: sessionId={}, broadcasting to subscribers", sessionId);
 
         // Extract the OpenCode event
@@ -334,8 +362,17 @@ public class GatewayRelayService {
 
     private void handleToolError(String sessionId, JsonNode node) {
         String error = node.path("error").asText("Unknown error");
+        String reason = node.path("reason").asText("");
 
         if (sessionId != null) {
+            // Check if this is a session_not_found error → trigger toolSession rebuild
+            // Primary: explicit reason from PCAgent
+            // Fallback: error message pattern matching for known session-invalid indicators
+            if ("session_not_found".equals(reason) || isSessionInvalidError(error)) {
+                handleSessionNotFound(sessionId);
+                return;
+            }
+
             try {
                 messageService.saveSystemMessage(Long.valueOf(sessionId), "Error: " + error);
             } catch (Exception e) {
@@ -354,6 +391,79 @@ public class GatewayRelayService {
         }
 
         log.error("Tool error for session {}: {}", sessionId, error);
+    }
+
+    /**
+     * Check if an error message indicates the tool session is no longer valid.
+     * Fallback detection when PCAgent doesn't explicitly set
+     * reason=session_not_found.
+     */
+    private boolean isSessionInvalidError(String error) {
+        if (error == null)
+            return false;
+        String lower = error.toLowerCase();
+        return lower.contains("not found")
+                || lower.contains("session_not_found")
+                || lower.contains("json parse error")
+                || lower.contains("unexpected eof");
+    }
+
+    /**
+     * Handle session_not_found error: clear invalid toolSessionId,
+     * store pending message for retry, and auto-rebuild by sending
+     * create_session to Gateway.
+     */
+    private void handleSessionNotFound(String sessionId) {
+        log.warn("Tool session not found for welinkSession={}, initiating rebuild", sessionId);
+
+        try {
+            Long sessionIdLong = Long.valueOf(sessionId);
+            SkillSession session = sessionService.getSession(sessionIdLong);
+
+            // Clear invalid toolSessionId
+            sessionService.clearToolSessionId(sessionIdLong);
+
+            // Store the last user message text for retry after rebuild
+            SkillMessage lastUserMsg = messageRepository.findLastUserMessage(sessionIdLong);
+            if (lastUserMsg != null && lastUserMsg.getContent() != null) {
+                pendingRebuildMessages.put(sessionId, lastUserMsg.getContent());
+                log.info("Stored pending retry message for session {}: '{}'",
+                        sessionId,
+                        lastUserMsg.getContent().substring(0, Math.min(50, lastUserMsg.getContent().length())));
+            }
+
+            // Notify frontend that session is reconnecting
+            StreamMessage reconnecting = StreamMessage.builder()
+                    .type(StreamMessage.Types.SESSION_STATUS)
+                    .sessionStatus("reconnecting")
+                    .build();
+            broadcastStreamMessage(sessionId, reconnecting);
+
+            // Send create_session to Gateway to rebuild toolSession
+            if (session.getAk() != null) {
+                ObjectNode payload = objectMapper.createObjectNode();
+                payload.put("title", session.getTitle() != null ? session.getTitle() : "");
+                String payloadStr;
+                try {
+                    payloadStr = objectMapper.writeValueAsString(payload);
+                } catch (JsonProcessingException e) {
+                    payloadStr = "{}";
+                }
+                sendInvokeToGateway(session.getAk(), sessionId, "create_session", payloadStr);
+                log.info("Rebuild create_session sent for welinkSession={}, ak={}", sessionId, session.getAk());
+            } else {
+                log.error("Cannot rebuild session {}: no ak associated", sessionId);
+                pendingRebuildMessages.remove(sessionId);
+                StreamMessage errorMsg = StreamMessage.builder()
+                        .type(StreamMessage.Types.ERROR)
+                        .error("AI session expired and cannot be rebuilt")
+                        .build();
+                broadcastStreamMessage(sessionId, errorMsg);
+            }
+        } catch (Exception e) {
+            log.error("Failed to rebuild session {}: {}", sessionId, e.getMessage(), e);
+            pendingRebuildMessages.remove(sessionId);
+        }
     }
 
     private void handleAgentOnline(String ak, JsonNode node) {
@@ -398,8 +508,36 @@ public class GatewayRelayService {
         try {
             sessionService.updateToolSessionId(Long.valueOf(sessionId), toolSessionId);
             log.info("Tool session created: sessionId={}, toolSessionId={}", sessionId, toolSessionId);
+
+            // Check for pending message retry after rebuild
+            String pendingText = pendingRebuildMessages.remove(sessionId);
+            if (pendingText != null) {
+                log.info("Retrying pending message after rebuild: sessionId={}, text='{}'",
+                        sessionId, pendingText.substring(0, Math.min(50, pendingText.length())));
+
+                // Build chat payload with new toolSessionId and re-send
+                ObjectNode chatPayload = objectMapper.createObjectNode();
+                chatPayload.put("text", pendingText);
+                chatPayload.put("toolSessionId", toolSessionId);
+                String payloadStr;
+                try {
+                    payloadStr = objectMapper.writeValueAsString(chatPayload);
+                } catch (JsonProcessingException e) {
+                    payloadStr = "{}";
+                }
+                sendInvokeToGateway(ak, sessionId, "chat", payloadStr);
+                log.info("Pending message re-sent after rebuild: sessionId={}", sessionId);
+
+                // Notify frontend that session is active again
+                StreamMessage activeMsg = StreamMessage.builder()
+                        .type(StreamMessage.Types.SESSION_STATUS)
+                        .sessionStatus("active")
+                        .build();
+                broadcastStreamMessage(sessionId, activeMsg);
+            }
         } catch (Exception e) {
             log.error("Failed to update tool session ID: sessionId={}, error={}", sessionId, e.getMessage());
+            pendingRebuildMessages.remove(sessionId);
         }
     }
 
@@ -449,7 +587,8 @@ public class GatewayRelayService {
     }
 
     private void enrichStreamMessage(String sessionId, StreamMessage msg) {
-        // Frontend WS routing expects the skill session id here, not the OpenCode tool session id.
+        // Frontend WS routing expects the skill session id here, not the OpenCode tool
+        // session id.
         msg.setSessionId(sessionId);
         if (msg.getEmittedAt() == null || msg.getEmittedAt().isBlank()) {
             msg.setEmittedAt(Instant.now().toString());

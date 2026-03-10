@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -39,8 +40,39 @@ class SkillWebSocketHandlerTest {
     }
 
     @Test
-    @DisplayName("valid internal token registers skill session")
-    void validTokenRegistersSkillSession() throws Exception {
+    @DisplayName("valid Authorization header registers skill session")
+    void validAuthHeaderRegistersSkillSession() throws Exception {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "Bearer secret-token");
+        when(session.getHandshakeHeaders()).thenReturn(headers);
+
+        handler.onOpen(session);
+
+        verify(skillRelayService).registerSkillSession(session);
+        verify(session, never()).close(org.mockito.ArgumentMatchers.any(CloseStatus.class));
+    }
+
+    @Test
+    @DisplayName("invalid Authorization header falls back to query param and rejects")
+    void invalidAuthHeaderRejectsConnection() throws Exception {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "Bearer wrong-token");
+        when(session.getHandshakeHeaders()).thenReturn(headers);
+        when(session.getUri()).thenReturn(URI.create("ws://localhost/ws/skill"));
+
+        handler.onOpen(session);
+
+        verify(skillRelayService, never()).registerSkillSession(session);
+        verify(session).close(argThat(status -> status != null
+                && CloseStatus.NOT_ACCEPTABLE.getCode() == status.getCode()
+                && "Invalid internal token".equals(status.getReason())));
+    }
+
+    @Test
+    @DisplayName("valid query param token registers skill session (backward compatibility)")
+    void validQueryParamRegistersSkillSession() throws Exception {
+        HttpHeaders headers = new HttpHeaders();
+        when(session.getHandshakeHeaders()).thenReturn(headers);
         when(session.getUri()).thenReturn(URI.create("ws://localhost/ws/skill?token=secret-token"));
 
         handler.onOpen(session);
@@ -50,8 +82,10 @@ class SkillWebSocketHandlerTest {
     }
 
     @Test
-    @DisplayName("invalid internal token rejects connection")
-    void invalidTokenRejectsConnection() throws Exception {
+    @DisplayName("invalid query param token rejects connection")
+    void invalidQueryParamRejectsConnection() throws Exception {
+        HttpHeaders headers = new HttpHeaders();
+        when(session.getHandshakeHeaders()).thenReturn(headers);
         when(session.getUri()).thenReturn(URI.create("ws://localhost/ws/skill?token=wrong"));
 
         handler.onOpen(session);
@@ -65,7 +99,8 @@ class SkillWebSocketHandlerTest {
     @Test
     @DisplayName("invoke message delegates to skill relay service")
     void invokeDelegatesToSkillRelayService() throws Exception {
-        handler.handle(session, "{\"type\":\"invoke\",\"ak\":\"ak_test_001\",\"welinkSessionId\":\"42\",\"action\":\"chat\"}");
+        handler.handle(session,
+                "{\"type\":\"invoke\",\"ak\":\"ak_test_001\",\"welinkSessionId\":\"42\",\"action\":\"chat\"}");
 
         verify(skillRelayService).handleInvokeFromSkill(eq(session),
                 argThat(message -> "invoke".equals(message.getType())

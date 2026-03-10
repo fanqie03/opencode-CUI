@@ -57,5 +57,21 @@ public interface SkillSessionRepository {
 
         int updateAk(@Param("id") Long id, @Param("ak") String ak);
 
+        /**
+         * Activate a session (IDLE → ACTIVE). Only transitions IDLE sessions.
+         */
+        int activateSession(@Param("id") Long id);
+
+        /**
+         * Clear the tool_session_id for a session (when toolSession becomes invalid).
+         */
+        int clearToolSessionId(@Param("id") Long id);
+
+        /**
+         * Mark ACTIVE sessions as IDLE if inactive beyond cutoff.
+         * Returns the IDs of affected sessions for cleanup.
+         */
+        List<Long> findIdleSessionIds(@Param("cutoff") LocalDateTime cutoff);
+
         int markIdleSessions(@Param("status") String status, @Param("cutoff") LocalDateTime cutoff);
 }

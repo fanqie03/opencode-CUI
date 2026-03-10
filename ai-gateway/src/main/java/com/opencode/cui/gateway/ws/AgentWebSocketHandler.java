@@ -265,7 +265,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         String deviceName = message.getDeviceName();
         String macAddress = message.getMacAddress();
         String os = message.getOs();
-        String toolType = message.getToolType() != null ? message.getToolType() : "OPENCODE";
+        String toolType = message.getToolType() != null ? message.getToolType() : "channel";
         String toolVersion = message.getToolVersion();
 
         // Step 1: Validate device binding (3rd party, fail-open)

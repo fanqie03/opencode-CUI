@@ -66,6 +66,14 @@
             (#{messageId}, #{sessionId}, #{seq}, #{role}, #{content}, #{contentType}, NOW(), #{meta})
     </insert>
 
+    <select id="findLastUserMessage" resultMap="SkillMessageResultMap">
+        <include refid="selectAllColumns"/>
+        WHERE session_id = #{sessionId}
+          AND role = 'user'
+        ORDER BY seq DESC
+        LIMIT 1
+    </select>
+
     <update id="updateStats">
         UPDATE skill_message
         SET tokens_in  = COALESCE(#{tokensIn}, tokens_in),

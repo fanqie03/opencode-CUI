@@ -9,30 +9,32 @@ import java.util.List;
 @Mapper
 public interface SkillMessageRepository {
 
-    SkillMessage findById(@Param("id") Long id);
+        SkillMessage findById(@Param("id") Long id);
 
-    SkillMessage findBySessionIdAndMessageId(@Param("sessionId") Long sessionId,
-            @Param("messageId") String messageId);
+        SkillMessage findBySessionIdAndMessageId(@Param("sessionId") Long sessionId,
+                        @Param("messageId") String messageId);
 
-    List<SkillMessage> findBySessionId(@Param("sessionId") Long sessionId,
-            @Param("offset") int offset,
-            @Param("limit") int limit);
+        List<SkillMessage> findBySessionId(@Param("sessionId") Long sessionId,
+                        @Param("offset") int offset,
+                        @Param("limit") int limit);
 
-    List<SkillMessage> findAllBySessionId(@Param("sessionId") Long sessionId);
+        List<SkillMessage> findAllBySessionId(@Param("sessionId") Long sessionId);
 
-    long countBySessionId(@Param("sessionId") Long sessionId);
+        long countBySessionId(@Param("sessionId") Long sessionId);
 
-    int findMaxSeqBySessionId(@Param("sessionId") Long sessionId);
+        int findMaxSeqBySessionId(@Param("sessionId") Long sessionId);
 
-    int insert(SkillMessage message);
+        int insert(SkillMessage message);
 
-    int updateStats(@Param("id") Long id,
-            @Param("tokensIn") Integer tokensIn,
-            @Param("tokensOut") Integer tokensOut,
-            @Param("cost") Double cost);
+        SkillMessage findLastUserMessage(@Param("sessionId") Long sessionId);
 
-    int updateContent(@Param("id") Long id,
-            @Param("content") String content);
+        int updateStats(@Param("id") Long id,
+                        @Param("tokensIn") Integer tokensIn,
+                        @Param("tokensOut") Integer tokensOut,
+                        @Param("cost") Double cost);
 
-    int markFinished(@Param("id") Long id);
+        int updateContent(@Param("id") Long id,
+                        @Param("content") String content);
+
+        int markFinished(@Param("id") Long id);
 }

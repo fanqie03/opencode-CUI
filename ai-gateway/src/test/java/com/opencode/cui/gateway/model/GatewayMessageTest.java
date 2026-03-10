@@ -58,14 +58,14 @@ class GatewayMessageTest {
 
     @Test
     void testAgentOnlineSerialization() throws Exception {
-        GatewayMessage msg = GatewayMessage.agentOnline("ak_test_001", "OPENCODE", "1.0.0");
+        GatewayMessage msg = GatewayMessage.agentOnline("ak_test_001", "channel", "1.0.0");
 
         String json = objectMapper.writeValueAsString(msg);
         GatewayMessage deserialized = objectMapper.readValue(json, GatewayMessage.class);
 
         assertEquals("agent_online", deserialized.getType());
         assertEquals("ak_test_001", deserialized.getAk());
-        assertEquals("OPENCODE", deserialized.getToolType());
+        assertEquals("channel", deserialized.getToolType());
         assertEquals("1.0.0", deserialized.getToolVersion());
     }
 
@@ -141,13 +141,13 @@ class GatewayMessageTest {
 
     @Test
     void testRegisterFactoryMethod() {
-        GatewayMessage msg = GatewayMessage.register("MyPC", "AA:BB:CC:DD:EE:FF", "WINDOWS", "OPENCODE", "1.0.0");
+        GatewayMessage msg = GatewayMessage.register("MyPC", "AA:BB:CC:DD:EE:FF", "WINDOWS", "channel", "1.0.0");
 
         assertEquals("register", msg.getType());
         assertEquals("MyPC", msg.getDeviceName());
         assertEquals("AA:BB:CC:DD:EE:FF", msg.getMacAddress());
         assertEquals("WINDOWS", msg.getOs());
-        assertEquals("OPENCODE", msg.getToolType());
+        assertEquals("channel", msg.getToolType());
         assertEquals("1.0.0", msg.getToolVersion());
     }
 

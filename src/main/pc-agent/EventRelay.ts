@@ -376,7 +376,9 @@ export class EventRelay {
         } catch (err) {
           debugLog('invoke.chat', 'session.prompt ERROR:', err instanceof Error ? { message: err.message, stack: err.stack } : err);
           this.onError('invoke.chat', err);
-          this.trySendError(msg.welinkSessionId, toolSessionId, err);
+          // Detect session_not_found error for auto-rebuild on skill-server side
+          const reason = this.isSessionNotFoundError(err) ? 'session_not_found' : undefined;
+          this.trySendError(msg.welinkSessionId, toolSessionId, err, reason);
         } finally {
           this.pendingPromptSessions.delete(toolSessionId);
         }
@@ -584,21 +586,56 @@ export class EventRelay {
   }
 
   /**
+   * Check if an error indicates the OpenCode session is no longer valid.
+   * This triggers auto-rebuild on the skill-server side.
+   * 
+   * Covers multiple error patterns:
+   * - Clean "not found" / 404 errors from OpenCode API
+   * - JSON parse errors (broken response stream when session is gone)
+   * - EOF errors (connection cut when session doesn't exist)
+   * - NotFoundError type from OpenCode SDK
+   */
+  private isSessionNotFoundError(err: unknown): boolean {
+    if (err instanceof Error) {
+      const msg = err.message.toLowerCase();
+      const name = err.name.toLowerCase();
+      return (
+        msg.includes('not found') ||
+        msg.includes('404') ||
+        msg.includes('session_not_found') ||
+        msg.includes('unexpected eof') ||
+        msg.includes('json parse error') ||
+        name.includes('notfounderror')
+      );
+    }
+    if (typeof err === 'object' && err !== null && 'status' in err) {
+      return (err as { status: number }).status === 404;
+    }
+    return false;
+  }
+
+  /**
    * Best-effort: send a `tool_error` to the gateway when an SDK call fails.
+   * Optionally includes a `reason` for semantic error classification.
    */
   private trySendError(
     welinkSessionId: string | undefined,
     toolSessionId: string | undefined,
     err: unknown,
+    reason?: string,
   ): void {
     try {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      this.gateway.send({
+      const payload: Record<string, unknown> = {
         type: 'tool_error',
         welinkSessionId,
         toolSessionId,
         error: errorMsg,
-      });
+      };
+      if (reason) {
+        payload.reason = reason;
+      }
+      this.gateway.send(payload);
     } catch {
       // If the gateway is disconnected we cannot report the error upstream.
     }

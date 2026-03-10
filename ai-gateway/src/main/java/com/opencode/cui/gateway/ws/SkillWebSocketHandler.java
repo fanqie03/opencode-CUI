@@ -13,6 +13,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -82,6 +83,20 @@ public class SkillWebSocketHandler extends TextWebSocketHandler {
     }
 
     private boolean verifyToken(WebSocketSession session) {
+        // 1. Try Authorization header first (preferred, avoids token in URL)
+        List<String> authHeaders = session.getHandshakeHeaders().get("Authorization");
+        if (authHeaders != null) {
+            for (String header : authHeaders) {
+                if (header.startsWith("Bearer ")) {
+                    String headerToken = header.substring(7);
+                    if (internalToken.equals(headerToken)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 2. Fallback: query parameter (backward compatibility)
         URI uri = session.getUri();
         if (uri == null) {
             return false;

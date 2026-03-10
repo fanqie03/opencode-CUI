@@ -26,7 +26,7 @@ public class AgentConnection {
     private String os;
 
     @Builder.Default
-    private String toolType = "OPENCODE";
+    private String toolType = "channel";
 
     private String toolVersion;
 

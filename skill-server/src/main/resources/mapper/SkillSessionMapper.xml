@@ -150,6 +150,24 @@
         WHERE id = #{id}
     </update>
 
+    <update id="activateSession">
+        UPDATE skill_session
+        SET status = 'ACTIVE', last_active_at = NOW()
+        WHERE id = #{id} AND status = 'IDLE'
+    </update>
+
+    <update id="clearToolSessionId">
+        UPDATE skill_session
+        SET tool_session_id = NULL, last_active_at = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <select id="findIdleSessionIds" resultType="long">
+        SELECT id FROM skill_session
+        WHERE status = 'ACTIVE'
+          AND last_active_at &lt; #{cutoff}
+    </select>
+
     <update id="markIdleSessions">
         UPDATE skill_session
         SET status = #{status}

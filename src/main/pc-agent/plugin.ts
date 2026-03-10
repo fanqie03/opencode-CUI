@@ -128,7 +128,7 @@ function sendRegisterMessage(gateway: GatewayConnection): void {
             deviceName: os.hostname(),
             macAddress: getMacAddress(),
             os: detectOS(),
-            toolType: 'OPENCODE',
+            toolType: 'channel',
             toolVersion: '1.0.0',
         });
     } catch (err) {
