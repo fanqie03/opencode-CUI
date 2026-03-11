@@ -9,15 +9,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
-import org.springframework.web.socket.CloseStatus;
+import org.springframework.http.server.ServerHttpRequest;
+import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Base64;
 
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -31,6 +34,12 @@ class SkillWebSocketHandlerTest {
 
     @Mock
     private WebSocketSession session;
+    @Mock
+    private ServerHttpRequest request;
+    @Mock
+    private ServerHttpResponse response;
+    @Mock
+    private WebSocketHandler wsHandler;
 
     private TestSkillWebSocketHandler handler;
 
@@ -40,60 +49,51 @@ class SkillWebSocketHandlerTest {
     }
 
     @Test
-    @DisplayName("valid Authorization header registers skill session")
-    void validAuthHeaderRegistersSkillSession() throws Exception {
+    @DisplayName("valid auth subprotocol passes handshake and echoes selected protocol")
+    void validAuthSubprotocolPassesHandshake() {
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer secret-token");
-        when(session.getHandshakeHeaders()).thenReturn(headers);
+        String protocol = authProtocol("secret-token");
+        headers.set("Sec-WebSocket-Protocol", protocol);
+        when(request.getHeaders()).thenReturn(headers);
+        when(response.getHeaders()).thenReturn(new HttpHeaders());
 
+        boolean accepted = handler.beforeHandshake(request, response, wsHandler, new HashMap<>());
+
+        org.junit.jupiter.api.Assertions.assertTrue(accepted);
+        org.junit.jupiter.api.Assertions.assertEquals(protocol,
+                response.getHeaders().getFirst("Sec-WebSocket-Protocol"));
+    }
+
+    @Test
+    @DisplayName("invalid auth subprotocol rejects handshake")
+    void invalidAuthSubprotocolRejectsHandshake() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Sec-WebSocket-Protocol", authProtocol("wrong-token"));
+        when(request.getHeaders()).thenReturn(headers);
+
+        boolean accepted = handler.beforeHandshake(request, response, wsHandler, new HashMap<>());
+
+        org.junit.jupiter.api.Assertions.assertFalse(accepted);
+    }
+
+    @Test
+    @DisplayName("missing auth subprotocol rejects handshake")
+    void missingAuthSubprotocolRejectsHandshake() {
+        HttpHeaders headers = new HttpHeaders();
+        when(request.getHeaders()).thenReturn(headers);
+
+        boolean accepted = handler.beforeHandshake(request, response, wsHandler, new HashMap<>());
+
+        org.junit.jupiter.api.Assertions.assertFalse(accepted);
+    }
+
+    @Test
+    @DisplayName("connection established registers skill session")
+    void connectionEstablishedRegistersSkillSession() throws Exception {
         handler.onOpen(session);
 
         verify(skillRelayService).registerSkillSession(session);
-        verify(session, never()).close(org.mockito.ArgumentMatchers.any(CloseStatus.class));
-    }
-
-    @Test
-    @DisplayName("invalid Authorization header falls back to query param and rejects")
-    void invalidAuthHeaderRejectsConnection() throws Exception {
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer wrong-token");
-        when(session.getHandshakeHeaders()).thenReturn(headers);
-        when(session.getUri()).thenReturn(URI.create("ws://localhost/ws/skill"));
-
-        handler.onOpen(session);
-
-        verify(skillRelayService, never()).registerSkillSession(session);
-        verify(session).close(argThat(status -> status != null
-                && CloseStatus.NOT_ACCEPTABLE.getCode() == status.getCode()
-                && "Invalid internal token".equals(status.getReason())));
-    }
-
-    @Test
-    @DisplayName("valid query param token registers skill session (backward compatibility)")
-    void validQueryParamRegistersSkillSession() throws Exception {
-        HttpHeaders headers = new HttpHeaders();
-        when(session.getHandshakeHeaders()).thenReturn(headers);
-        when(session.getUri()).thenReturn(URI.create("ws://localhost/ws/skill?token=secret-token"));
-
-        handler.onOpen(session);
-
-        verify(skillRelayService).registerSkillSession(session);
-        verify(session, never()).close(org.mockito.ArgumentMatchers.any(CloseStatus.class));
-    }
-
-    @Test
-    @DisplayName("invalid query param token rejects connection")
-    void invalidQueryParamRejectsConnection() throws Exception {
-        HttpHeaders headers = new HttpHeaders();
-        when(session.getHandshakeHeaders()).thenReturn(headers);
-        when(session.getUri()).thenReturn(URI.create("ws://localhost/ws/skill?token=wrong"));
-
-        handler.onOpen(session);
-
-        verify(skillRelayService, never()).registerSkillSession(session);
-        verify(session).close(argThat(status -> status != null
-                && CloseStatus.NOT_ACCEPTABLE.getCode() == status.getCode()
-                && "Invalid internal token".equals(status.getReason())));
+        verify(session, never()).close(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -139,5 +139,11 @@ class SkillWebSocketHandlerTest {
         private void handle(WebSocketSession session, String payload) throws Exception {
             super.handleTextMessage(session, new TextMessage(payload));
         }
+    }
+
+    private static String authProtocol(String token) {
+        String json = "{\"token\":\"" + token + "\"}";
+        return "auth." + Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(json.getBytes(StandardCharsets.UTF_8));
     }
 }

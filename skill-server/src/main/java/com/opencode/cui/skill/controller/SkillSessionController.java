@@ -6,10 +6,11 @@ import com.opencode.cui.skill.model.ApiResponse;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.service.GatewayRelayService;
+import com.opencode.cui.skill.service.ProtocolException;
+import com.opencode.cui.skill.service.SessionAccessControlService;
 import com.opencode.cui.skill.service.SkillSessionService;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -31,13 +32,16 @@ public class SkillSessionController {
 
     private final SkillSessionService sessionService;
     private final GatewayRelayService gatewayRelayService;
+    private final SessionAccessControlService accessControlService;
     private final ObjectMapper objectMapper;
 
     public SkillSessionController(SkillSessionService sessionService,
             GatewayRelayService gatewayRelayService,
+            SessionAccessControlService accessControlService,
             ObjectMapper objectMapper) {
         this.sessionService = sessionService;
         this.gatewayRelayService = gatewayRelayService;
+        this.accessControlService = accessControlService;
         this.objectMapper = objectMapper;
     }
 
@@ -50,29 +54,29 @@ public class SkillSessionController {
     public ResponseEntity<ApiResponse<SkillSession>> createSession(
             @CookieValue(value = "userId", required = false) String userIdCookie,
             @RequestBody CreateSessionRequest request) {
-        String resolvedUserId = resolveUserId(userIdCookie);
-        if (resolvedUserId == null) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(400, "userId is required"));
-        }
+        try {
+            String resolvedUserId = accessControlService.requireUserId(userIdCookie);
 
-        SkillSession session = sessionService.createSession(
-                resolvedUserId,
-                request.getAk(),
-                request.getTitle(),
-                request.getImGroupId());
-
-        gatewayRelayService.subscribeToSessionBroadcast(session.getId().toString());
-
-        // Send create_session invoke to AI-Gateway if ak is provided
-        if (request.getAk() != null) {
-            gatewayRelayService.sendInvokeToGateway(
+            SkillSession session = sessionService.createSession(
+                    resolvedUserId,
                     request.getAk(),
-                    session.getId().toString(),
-                    "create_session",
-                    buildCreateSessionPayload(request.getTitle()));
-        }
+                    request.getTitle(),
+                    request.getImGroupId());
 
-        return ResponseEntity.ok(ApiResponse.ok(session));
+            gatewayRelayService.subscribeToSessionBroadcast(session.getId().toString());
+
+            if (request.getAk() != null) {
+                gatewayRelayService.sendInvokeToGateway(
+                        request.getAk(),
+                        session.getId().toString(),
+                        "create_session",
+                        buildCreateSessionPayload(request.getTitle()));
+            }
+
+            return ResponseEntity.ok(ApiResponse.ok(session));
+        } catch (ProtocolException e) {
+            return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
+        }
     }
 
     /**
@@ -88,14 +92,14 @@ public class SkillSessionController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        String resolvedUserId = resolveUserId(userIdCookie);
-        if (resolvedUserId == null) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(400, "userId is required"));
+        try {
+            String resolvedUserId = accessControlService.requireUserId(userIdCookie);
+            PageResult<SkillSession> sessions = sessionService.listSessions(
+                    resolvedUserId, ak, imGroupId, status, page, size);
+            return ResponseEntity.ok(ApiResponse.ok(sessions));
+        } catch (ProtocolException e) {
+            return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         }
-
-        PageResult<SkillSession> sessions = sessionService.listSessions(
-                resolvedUserId, ak, imGroupId, status, page, size);
-        return ResponseEntity.ok(ApiResponse.ok(sessions));
     }
 
     /**
@@ -103,12 +107,16 @@ public class SkillSessionController {
      * Get a single session by ID.
      */
     @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<SkillSession>> getSession(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<SkillSession>> getSession(
+            @CookieValue(value = "userId", required = false) String userIdCookie,
+            @PathVariable Long id) {
         try {
-            SkillSession session = sessionService.getSession(id);
+            SkillSession session = accessControlService.requireSessionAccess(id, userIdCookie);
             return ResponseEntity.ok(ApiResponse.ok(session));
+        } catch (ProtocolException e) {
+            return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(404, "Session not found"));
+            return ResponseEntity.ok(ApiResponse.error(404, "Session not found"));
         }
     }
 
@@ -118,11 +126,12 @@ public class SkillSessionController {
      * exists.
      */
     @DeleteMapping("/{id}")
-    public ResponseEntity<ApiResponse<Map<String, String>>> closeSession(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<Map<String, String>>> closeSession(
+            @CookieValue(value = "userId", required = false) String userIdCookie,
+            @PathVariable Long id) {
         try {
-            SkillSession session = sessionService.getSession(id);
+            SkillSession session = accessControlService.requireSessionAccess(id, userIdCookie);
 
-            // Send close_session to AI-Gateway if toolSessionId and agentId exist
             if (session.getAk() != null && session.getToolSessionId() != null) {
                 var node = objectMapper.createObjectNode();
                 node.put("toolSessionId", session.getToolSessionId());
@@ -141,8 +150,10 @@ public class SkillSessionController {
             sessionService.closeSession(id);
             gatewayRelayService.unsubscribeFromSession(id.toString());
             return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "closed", "welinkSessionId", id.toString())));
+        } catch (ProtocolException e) {
+            return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(404, "Session not found"));
+            return ResponseEntity.ok(ApiResponse.error(404, "Session not found"));
         }
     }
 
@@ -152,13 +163,14 @@ public class SkillSessionController {
      * operations while keeping the session reusable.
      */
     @PostMapping("/{id}/abort")
-    public ResponseEntity<ApiResponse<Map<String, String>>> abortSession(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<Map<String, String>>> abortSession(
+            @CookieValue(value = "userId", required = false) String userIdCookie,
+            @PathVariable Long id) {
         try {
-            SkillSession session = sessionService.getSession(id);
+            SkillSession session = accessControlService.requireSessionAccess(id, userIdCookie);
 
             if (session.getStatus() == SkillSession.Status.CLOSED) {
-                return ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body(ApiResponse.error(409, "Session is already closed"));
+                return ResponseEntity.ok(ApiResponse.error(409, "Session is already closed"));
             }
 
             // Send abort_session to AI-Gateway if toolSessionId and ak exist
@@ -179,16 +191,11 @@ public class SkillSessionController {
             }
 
             return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "aborted", "welinkSessionId", id.toString())));
+        } catch (ProtocolException e) {
+            return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(404, "Session not found"));
+            return ResponseEntity.ok(ApiResponse.error(404, "Session not found"));
         }
-    }
-
-    private String resolveUserId(String cookieValue) {
-        if (cookieValue != null && !cookieValue.isBlank()) {
-            return cookieValue.trim();
-        }
-        return null;
     }
 
     private String buildCreateSessionPayload(String title) {

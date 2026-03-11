@@ -1,6 +1,8 @@
 package com.opencode.cui.skill.controller;
 
 import com.opencode.cui.skill.service.GatewayApiClient;
+import com.opencode.cui.skill.service.ProtocolException;
+import com.opencode.cui.skill.service.SessionAccessControlService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,18 +24,21 @@ class AgentQueryControllerTest {
 
     @Mock
     private GatewayApiClient gatewayApiClient;
+    @Mock
+    private SessionAccessControlService accessControlService;
 
     private AgentQueryController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new AgentQueryController(gatewayApiClient);
+        controller = new AgentQueryController(gatewayApiClient, accessControlService);
     }
 
     @Test
     @DisplayName("getOnlineAgents returns 200 for cookie-authenticated user")
     void getOnlineAgentsWithCookie() {
         List<Map<String, Object>> agents = List.of(Map.of("ak", "ak-1"));
+        when(accessControlService.requireUserId("10001")).thenReturn("10001");
         when(gatewayApiClient.getOnlineAgentsByUserId("10001")).thenReturn(agents);
 
         var response = controller.getOnlineAgents("10001");
@@ -49,9 +54,11 @@ class AgentQueryControllerTest {
     @Test
     @DisplayName("getOnlineAgents returns 400 when userId cookie is missing")
     void getOnlineAgentsWithoutCookie() {
+        when(accessControlService.requireUserId(null)).thenThrow(new ProtocolException(400, "userId is required"));
+
         var response = controller.getOnlineAgents(null);
 
-        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals(HttpStatus.OK, response.getStatusCode());
         assertNotNull(response.getBody());
         assertEquals(400, response.getBody().getCode());
     }

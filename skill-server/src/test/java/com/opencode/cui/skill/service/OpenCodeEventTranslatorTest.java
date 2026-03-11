@@ -229,4 +229,39 @@ class OpenCodeEventTranslatorTest {
         assertEquals(java.util.List.of("A", "B"), translated.getOptions());
         assertNotNull(translated.getInput());
     }
+
+    @Test
+    @DisplayName("session.status values are normalized to protocol status domain")
+    void normalizesSessionStatusValues() throws Exception {
+        var reconnectingEvent = objectMapper.readTree("""
+                {
+                  "type": "session.status",
+                  "properties": {
+                    "sessionID": "sess-1",
+                    "status": {
+                      "type": "reconnecting"
+                    }
+                  }
+                }
+                """);
+        var activeEvent = objectMapper.readTree("""
+                {
+                  "type": "session.status",
+                  "properties": {
+                    "sessionID": "sess-1",
+                    "status": {
+                      "type": "active"
+                    }
+                  }
+                }
+                """);
+
+        StreamMessage reconnecting = translator.translate(reconnectingEvent);
+        StreamMessage active = translator.translate(activeEvent);
+
+        assertNotNull(reconnecting);
+        assertNotNull(active);
+        assertEquals("retry", reconnecting.getSessionStatus());
+        assertEquals("busy", active.getSessionStatus());
+    }
 }

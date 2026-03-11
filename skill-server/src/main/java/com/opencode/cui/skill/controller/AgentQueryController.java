@@ -2,6 +2,8 @@ package com.opencode.cui.skill.controller;
 
 import com.opencode.cui.skill.model.ApiResponse;
 import com.opencode.cui.skill.service.GatewayApiClient;
+import com.opencode.cui.skill.service.ProtocolException;
+import com.opencode.cui.skill.service.SessionAccessControlService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
@@ -23,9 +25,12 @@ import java.util.Map;
 public class AgentQueryController {
 
     private final GatewayApiClient gatewayApiClient;
+    private final SessionAccessControlService accessControlService;
 
-    public AgentQueryController(GatewayApiClient gatewayApiClient) {
+    public AgentQueryController(GatewayApiClient gatewayApiClient,
+            SessionAccessControlService accessControlService) {
         this.gatewayApiClient = gatewayApiClient;
+        this.accessControlService = accessControlService;
     }
 
     /**
@@ -35,13 +40,14 @@ public class AgentQueryController {
     @GetMapping
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getOnlineAgents(
             @CookieValue(value = "userId", required = false) String userIdCookie) {
-        if (userIdCookie == null || userIdCookie.isBlank()) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error(400, "userId is required"));
+        try {
+            String userId = accessControlService.requireUserId(userIdCookie);
+            log.debug("Querying online agents for userId={}", userId);
+            List<Map<String, Object>> agents = gatewayApiClient.getOnlineAgentsByUserId(userId);
+            return ResponseEntity.ok(ApiResponse.ok(agents.stream().map(this::normalizeAgent).toList()));
+        } catch (ProtocolException e) {
+            return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         }
-        log.debug("Querying online agents for userId={}", userIdCookie);
-        List<Map<String, Object>> agents = gatewayApiClient.getOnlineAgentsByUserId(userIdCookie);
-        return ResponseEntity.ok(ApiResponse.ok(agents.stream().map(this::normalizeAgent).toList()));
     }
 
     private Map<String, Object> normalizeAgent(Map<String, Object> agent) {

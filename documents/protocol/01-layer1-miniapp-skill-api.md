@@ -1132,3 +1132,139 @@ Gateway 连接异常等系统级错误。
 | `parts[].fileName`   | String   |   ❌   | 文件名                                                            |
 | `parts[].fileUrl`    | String   |   ❌   | 文件 URL                                                          |
 | `parts[].fileMime`   | String   |   ❌   | MIME 类型                                                         |
+---
+
+## 附录 A：2026-03-11 实现同步补充
+
+本附录用于覆盖本文档中与当前实现不一致的旧口径；若与正文冲突，以本附录为准。
+
+### A.1 REST 通用约定
+
+- 所有提供给 Miniapp 的 Layer1 REST 接口统一返回 HTTP `200 OK`。
+- 业务成功与失败统一通过响应体中的 `code` 和 `errormsg` 表达。
+- 所有 Layer1 接口都必须从 Cookie 解析 `userId` 并执行访问控制。
+- 对带 `welinkSessionId` 的接口，访问控制链路为：
+  1. 从 Cookie 解析 `userId`
+  2. 根据 `welinkSessionId` 加载本地 `SkillSession`
+  3. 先校验 `SkillSession.userId == Cookie.userId`
+  4. 再使用 `SkillSession.ak` 调用 Gateway 校验 `ak` 与 `userId` 的归属关系
+  5. 任一步失败都必须拒绝访问
+
+### A.2 `POST /api/skill/sessions`
+
+- `imGroupId` 为可选字段，不再要求必填。
+- `imGroupId` 未传时，表示该会话暂未绑定默认 IM 群。
+- 后续调用 `POST /api/skill/sessions/{welinkSessionId}/send-to-im` 时，若会话本身没有 `imGroupId`，则必须显式传入 `chatId`。
+
+### A.3 `POST /api/skill/sessions/{welinkSessionId}/messages`
+
+- 成功响应不再包含 `userId`。
+- 对外响应使用协议 DTO，不直接暴露内部 `SkillMessage` 模型。
+- 当前成功响应结构如下：
+
+```json
+{
+  "code": 0,
+  "errormsg": "",
+  "data": {
+    "id": 101,
+    "welinkSessionId": 42,
+    "role": "user",
+    "content": "帮我创建一个React项目",
+    "messageSeq": 3,
+    "createdAt": "2026-03-08T00:16:00"
+  }
+}
+```
+
+- `toolCallId` 仍用于表达“回答 question”：
+  - 未携带 `toolCallId` 时，Skill Server 发送 Layer2 `invoke.chat`
+  - 携带 `toolCallId` 时，Skill Server 发送 Layer2 `invoke.question_reply`
+- 若 `toolSessionId` 尚未就绪，请求失败时仍返回 HTTP `200`，并在响应体中通过非 `0` 的 `code` 与 `errormsg` 表达错误。
+
+### A.4 `POST /api/skill/sessions/{welinkSessionId}/permissions/{permId}`
+
+- 错误场景同样统一使用 HTTP `200 + code/errormsg`。
+- 协议需覆盖至少以下失败情况：
+  - `response` 缺失或非法
+  - `welinkSessionId` 不存在
+  - 会话已关闭
+  - 会话未关联可用 Agent
+  - 访问控制校验失败
+
+### A.5 `GET /api/skill/sessions/{welinkSessionId}/messages`
+
+- 历史消息响应不再包含 `userId`。
+- 对外字段统一使用 `welinkSessionId`，不暴露内部 `sessionId`。
+- `role`、`contentType` 使用协议化的小写值。
+- 历史消息中的 tool part 字段统一为 `status`、`input`、`output`，不再使用 `toolStatus`、`toolInput`、`toolOutput`。
+- `POST /messages`、`GET /messages` 与 WebSocket `snapshot.messages[]` 复用同一套协议 DTO。
+
+### A.6 `POST /api/skill/sessions/{welinkSessionId}/send-to-im`
+
+- 错误场景统一使用 HTTP `200 + code/errormsg`。
+- 协议需覆盖至少以下失败情况：
+  - `content` 为空
+  - `welinkSessionId` 不存在
+  - 会话没有 `imGroupId` 且请求未传 `chatId`
+  - 访问控制校验失败
+  - 下游 IM 发送失败
+
+### A.7 `GET /api/skill/agents`
+
+- `toolType` 使用小写协议值，例如 `opencode`。
+- 当前真实返回字段除 `ak`、`akId`、`toolType`、`toolVersion`、`deviceName`、`os` 外，还包括：
+  - `status`
+  - `connectedAt`
+
+### A.8 WebSocket `ws://host/ws/skill/stream`
+
+- 该连接除服务端推送外，客户端还允许发送：
+
+```json
+{
+  "action": "resume"
+}
+```
+
+- `resume` 的语义是请求服务端重放当前活跃会话的恢复态数据。
+- 重放顺序固定为：
+  1. `snapshot`
+  2. `streaming`
+
+### A.9 WebSocket 公共字段与状态
+
+- `snapshot` 也必须携带 `seq`。
+- 对外 `session.status.sessionStatus` 值域统一为：
+  - `busy`
+  - `idle`
+  - `retry`
+- `streaming.sessionStatus` 仅使用：
+  - `busy`
+  - `idle`
+
+### A.10 `snapshot`
+
+- `snapshot.messages[]` 复用历史消息协议 DTO。
+- 示例中的消息体应理解为：
+  - 顶层消息字段使用 `welinkSessionId`
+  - `role`、`contentType` 使用小写协议值
+  - `parts[]` 使用统一的协议 part 结构
+
+### A.11 `streaming`
+
+- `streaming.parts[]` 表示聚合后的恢复态 part 快照，不是原始事件列表。
+- `parts[].type` 统一使用以下协议值：
+  - `text`
+  - `thinking`
+  - `tool`
+  - `question`
+  - `permission`
+  - `file`
+- `streaming.parts[]` 只暴露恢复态所需字段，不直接透传 `text.delta`、`tool.update` 等事件级类型。
+
+### A.12 `question` 与 `question_reply` 的层级区分
+
+- Layer1 推给 Miniapp 的消息类型是 `question`。
+- Miniapp 回答 `question` 时，调用 `POST /api/skill/sessions/{welinkSessionId}/messages`，并通过 `toolCallId` 指向被回答的问题。
+- `question_reply` 是 Skill Server 发给 Gateway 的 Layer2 `invoke` 动作，不是 Layer1 对外 REST API 名称。

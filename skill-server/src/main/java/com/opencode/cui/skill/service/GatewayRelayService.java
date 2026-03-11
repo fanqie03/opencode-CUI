@@ -252,17 +252,11 @@ public class GatewayRelayService {
 
     /**
      * Resolve the welink session ID from a gateway message.
-     * Strategy:
-     * 1. If the message contains a "sessionId" field, use it directly (backward
-     * compatible)
-     * 2. Otherwise, extract "toolSessionId" and look up the DB to find the welink
-     * session
+     * Accepts protocol fields only: explicit welinkSessionId, otherwise
+     * resolve via toolSessionId -> DB lookup.
      */
     private String resolveSessionId(JsonNode node) {
         String sessionId = node.path("welinkSessionId").asText(null);
-        if (sessionId == null || sessionId.isBlank()) {
-            sessionId = node.path("sessionId").asText(null);
-        }
         if (sessionId != null) {
             return sessionId;
         }
@@ -305,7 +299,7 @@ public class GatewayRelayService {
                 // Notify frontend that session is now active
                 StreamMessage activeMsg = StreamMessage.builder()
                         .type(StreamMessage.Types.SESSION_STATUS)
-                        .sessionStatus("active")
+                        .sessionStatus("busy")
                         .build();
                 broadcastStreamMessage(sessionId, activeMsg);
             }
@@ -443,7 +437,7 @@ public class GatewayRelayService {
             // Notify frontend that session is reconnecting
             StreamMessage reconnecting = StreamMessage.builder()
                     .type(StreamMessage.Types.SESSION_STATUS)
-                    .sessionStatus("reconnecting")
+                    .sessionStatus("retry")
                     .build();
             broadcastStreamMessage(sessionId, reconnecting);
 
@@ -503,9 +497,6 @@ public class GatewayRelayService {
     private void handleSessionCreated(String ak, JsonNode node) {
         String toolSessionId = node.path("toolSessionId").asText(null);
         String sessionId = node.path("welinkSessionId").asText(null);
-        if (sessionId == null || sessionId.isBlank()) {
-            sessionId = node.path("sessionId").asText(null);
-        }
 
         if (sessionId == null || toolSessionId == null) {
             log.warn("session_created missing fields: sessionId={}, toolSessionId={}, ak={}, raw={}",
@@ -539,7 +530,7 @@ public class GatewayRelayService {
                 // Notify frontend that session is active again
                 StreamMessage activeMsg = StreamMessage.builder()
                         .type(StreamMessage.Types.SESSION_STATUS)
-                        .sessionStatus("active")
+                        .sessionStatus("busy")
                         .build();
                 broadcastStreamMessage(sessionId, activeMsg);
             }

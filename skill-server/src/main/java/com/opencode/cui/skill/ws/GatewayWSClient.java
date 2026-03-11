@@ -1,15 +1,21 @@
 package com.opencode.cui.skill.ws;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.java_websocket.client.WebSocketClient;
+import org.java_websocket.drafts.Draft_6455;
 import org.java_websocket.handshake.ServerHandshake;
+import org.java_websocket.protocols.Protocol;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -22,8 +28,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget {
 
     private static final String INVALID_INTERNAL_TOKEN_REASON = "invalid internal token";
+    private static final String AUTH_PROTOCOL_PREFIX = "auth.";
 
     private final GatewayRelayService gatewayRelayService;
+    private final ObjectMapper objectMapper;
 
     @Value("${skill.gateway.ws-url:ws://localhost:8081/ws/skill}")
     private String gatewayWsUrl;
@@ -46,8 +54,9 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicInteger reconnectAttempts = new AtomicInteger(0);
 
-    public GatewayWSClient(GatewayRelayService gatewayRelayService) {
+    public GatewayWSClient(GatewayRelayService gatewayRelayService, ObjectMapper objectMapper) {
         this.gatewayRelayService = gatewayRelayService;
+        this.objectMapper = objectMapper;
     }
 
     @PostConstruct
@@ -100,8 +109,7 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget {
 
         try {
             URI uri = URI.create(gatewayWsUrl);
-            wsClient = new InternalWebSocketClient(uri);
-            wsClient.addHeader("Authorization", "Bearer " + internalToken);
+            wsClient = new InternalWebSocketClient(uri, buildAuthProtocol());
             wsClient.connectBlocking(10, TimeUnit.SECONDS);
         } catch (Exception e) {
             log.error("Failed to connect to gateway: {}", e.getMessage());
@@ -132,10 +140,21 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget {
         gatewayRelayService.handleGatewayMessage(rawMessage);
     }
 
+    String buildAuthProtocol() {
+        try {
+            String json = objectMapper.writeValueAsString(java.util.Map.of("token", internalToken));
+            String encoded = Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(json.getBytes(StandardCharsets.UTF_8));
+            return AUTH_PROTOCOL_PREFIX + encoded;
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to encode gateway auth subprotocol", e);
+        }
+    }
+
     private class InternalWebSocketClient extends WebSocketClient {
 
-        private InternalWebSocketClient(URI serverUri) {
-            super(serverUri);
+        private InternalWebSocketClient(URI serverUri, String authProtocol) {
+            super(serverUri, new Draft_6455(List.of(), List.of(new Protocol(authProtocol))));
             this.setConnectionLostTimeout(30);
         }
 

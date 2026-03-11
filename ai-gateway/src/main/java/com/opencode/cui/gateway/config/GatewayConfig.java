@@ -33,6 +33,7 @@ public class GatewayConfig implements WebSocketConfigurer {
                 .setAllowedOrigins("*");
 
         registry.addHandler(skillWebSocketHandler, "/ws/skill")
+                .addInterceptors(skillWebSocketHandler)
                 .setAllowedOrigins("*");
     }
 

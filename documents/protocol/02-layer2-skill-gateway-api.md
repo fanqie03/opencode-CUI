@@ -469,3 +469,105 @@ Gateway 自身生成。
   }
 }
 ```
+---
+
+## 附录 A：2026-03-11 实现同步补充
+
+本附录用于覆盖本文档中与当前实现不一致的旧口径；若与正文冲突，以本附录为准。
+
+### A.1 WebSocket 建联与认证
+
+- Layer2 `Skill Server ↔ Gateway` 的 WebSocket 连接不再通过 URL 查询参数传递 `token`。
+- 连接 URL 仅保留端点，例如：
+
+```text
+ws://gateway-host/ws/skill
+```
+
+- 认证改为使用 `Sec-WebSocket-Protocol` 子协议。
+- 当前子协议格式为：
+
+```text
+auth.<base64url-encoded-json>
+```
+
+- 其中解码后的 JSON 载荷格式为：
+
+```json
+{
+  "token": "<internal-token>"
+}
+```
+
+- Gateway 在握手阶段负责校验该子协议，并在握手成功后回显相同子协议。
+- `Authorization: Bearer <internal-token>` 与 `?token=<internal-token>` 不再作为 Layer2 WebSocket 主路径。
+
+### A.2 ID 命名规范
+
+- Layer2 对外只保留两类会话标识：
+  - `welinkSessionId`
+  - `toolSessionId`
+- `sessionId` 不再作为并行命名保留。
+- 新实现与新文档都不应继续新增 `sessionId` 兼容口径。
+
+### A.3 下行 `invoke` 动作
+
+- `invoke.chat` 的 `payload.toolSessionId` 为必填。
+- `invoke.permission_reply` 的 `payload.toolSessionId` 为必填。
+- `invoke.question_reply` 的 `payload.toolSessionId` 为必填。
+- 当 `toolSessionId` 未就绪时，Skill Server 不得向 Gateway 发送半完整请求，应在 Layer1 先返回业务错误。
+
+### A.4 上行消息集合
+
+- Gateway → Skill Server 的消息集合除正文列出的 `session_created`、`tool_event`、`tool_done`、`tool_error`、`agent_online`、`agent_offline` 外，补充：
+  - `permission_request`
+
+#### `permission_request`
+
+Gateway 在 OpenCode 请求执行受限操作时，将权限请求透传给 Skill Server。
+
+```json
+{
+  "type": "permission_request",
+  "toolSessionId": "ses_abc",
+  "permissionId": "perm_1",
+  "permType": "bash",
+  "title": "Execute shell command",
+  "metadata": {
+    "command": "npx create-vite my-app"
+  }
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | :---: | --- |
+| `type` | String | ✅ | 固定 `"permission_request"` |
+| `toolSessionId` | String | ✅ | OpenCode 会话 ID |
+| `permissionId` | String | ✅ | 权限请求唯一 ID |
+| `permType` | String | ❌ | 权限类型 |
+| `title` | String | ❌ | 操作摘要 |
+| `metadata` | Object | ❌ | 附加元数据 |
+
+### A.5 `session_created`
+
+- `session_created` 只保留 `welinkSessionId` 与 `toolSessionId`。
+- 不再保留旧字段 `sessionId` 的协议兼容说明。
+
+### A.6 `tool_event` / `tool_done` / `tool_error`
+
+- 会话定位主路径为 `toolSessionId -> welinkSessionId`。
+- 协议文档不再保留基于旧字段 `sessionId` 的兼容解析说明。
+
+### A.7 `agent_online`
+
+- `toolType` 使用小写协议值，例如 `opencode`。
+
+### A.8 REST API
+
+- Layer2 REST API 仍使用：
+
+```text
+Authorization: Bearer <internal-token>
+```
+
+- 该约定仅适用于 Layer2 REST，不适用于 Layer2 WebSocket。

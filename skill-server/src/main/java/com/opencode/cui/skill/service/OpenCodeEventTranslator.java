@@ -71,7 +71,7 @@ public class OpenCodeEventTranslator {
      * Translate a raw gateway permission_request message into a StreamMessage.
      */
     public StreamMessage translatePermissionFromGateway(JsonNode node) {
-        String sessionId = node.path("sessionId").asText(null);
+        String sessionId = node.path("welinkSessionId").asText(null);
         return baseBuilder(StreamMessage.Types.PERMISSION_ASK, sessionId)
                 .role("assistant")
                 .permissionId(node.path("permissionId").asText(null))
@@ -285,7 +285,8 @@ public class OpenCodeEventTranslator {
     private StreamMessage translateSessionStatus(JsonNode event) {
         JsonNode props = event.path("properties");
         String sessionId = props.path("sessionID").asText(null);
-        String status = props.path("status").path("type").asText(props.path("status").asText(""));
+        String rawStatus = props.path("status").path("type").asText(props.path("status").asText(""));
+        String status = normalizeSessionStatus(rawStatus);
         if ("idle".equals(status)) {
             clearSessionCaches(sessionId);
         }
@@ -558,6 +559,18 @@ public class OpenCodeEventTranslator {
             return second;
         }
         return null;
+    }
+
+    private String normalizeSessionStatus(String rawStatus) {
+        if (rawStatus == null || rawStatus.isBlank()) {
+            return "busy";
+        }
+        return switch (rawStatus.toLowerCase()) {
+            case "idle", "completed" -> "idle";
+            case "reconnecting", "retry", "recovering" -> "retry";
+            case "active", "running", "busy" -> "busy";
+            default -> "busy";
+        };
     }
 
     @SuppressWarnings("unchecked")

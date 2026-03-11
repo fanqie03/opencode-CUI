@@ -4,20 +4,23 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.ApiResponse;
 import com.opencode.cui.skill.model.PageResult;
+import com.opencode.cui.skill.model.ProtocolMessageView;
 import com.opencode.cui.skill.model.SkillMessage;
-import com.opencode.cui.skill.model.SkillMessageView;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.repository.SkillMessagePartRepository;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
 import com.opencode.cui.skill.service.MessagePersistenceService;
+import com.opencode.cui.skill.service.ProtocolException;
+import com.opencode.cui.skill.service.ProtocolMessageMapper;
+import com.opencode.cui.skill.service.SessionAccessControlService;
 import com.opencode.cui.skill.service.SkillMessageService;
 import com.opencode.cui.skill.service.SkillSessionService;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,6 +29,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -43,6 +47,7 @@ public class SkillMessageController {
     private final ObjectMapper objectMapper;
     private final SkillMessagePartRepository partRepository;
     private final MessagePersistenceService messagePersistenceService;
+    private final SessionAccessControlService accessControlService;
 
     public SkillMessageController(SkillMessageService messageService,
             SkillSessionService sessionService,
@@ -50,7 +55,8 @@ public class SkillMessageController {
             ImMessageService imMessageService,
             ObjectMapper objectMapper,
             SkillMessagePartRepository partRepository,
-            MessagePersistenceService messagePersistenceService) {
+            MessagePersistenceService messagePersistenceService,
+            SessionAccessControlService accessControlService) {
         this.messageService = messageService;
         this.sessionService = sessionService;
         this.gatewayRelayService = gatewayRelayService;
@@ -58,6 +64,7 @@ public class SkillMessageController {
         this.objectMapper = objectMapper;
         this.partRepository = partRepository;
         this.messagePersistenceService = messagePersistenceService;
+        this.accessControlService = accessControlService;
     }
 
     /**
@@ -66,25 +73,26 @@ public class SkillMessageController {
      * AI-Gateway.
      */
     @PostMapping("/messages")
-    public ResponseEntity<ApiResponse<SkillMessage>> sendMessage(
+    public ResponseEntity<ApiResponse<ProtocolMessageView>> sendMessage(
+            @CookieValue(value = "userId", required = false) String userIdCookie,
             @PathVariable Long sessionId,
             @RequestBody SendMessageRequest request) {
 
         if (request.getContent() == null || request.getContent().isBlank()) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(400, "Content is required"));
+            return ResponseEntity.ok(ApiResponse.error(400, "Content is required"));
         }
 
-        // Verify session exists and is not closed
         SkillSession session;
         try {
-            session = sessionService.getSession(sessionId);
+            session = accessControlService.requireSessionAccess(sessionId, userIdCookie);
+        } catch (ProtocolException e) {
+            return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(404, "Session not found"));
+            return ResponseEntity.ok(ApiResponse.error(404, "Session not found"));
         }
 
         if (session.getStatus() == SkillSession.Status.CLOSED) {
-            return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(ApiResponse.error(409, "Session is closed"));
+            return ResponseEntity.ok(ApiResponse.error(409, "Session is closed"));
         }
 
         // Persist user message
@@ -95,8 +103,7 @@ public class SkillMessageController {
         if (session.getAk() != null) {
             if (session.getToolSessionId() == null) {
                 log.warn("Session {} has no toolSessionId, cannot invoke AI", sessionId);
-                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                        .body(ApiResponse.error(503, "No toolSessionId available"));
+                return ResponseEntity.ok(ApiResponse.error(500, "No toolSessionId available"));
             }
 
             // Route: toolCallId present → question_reply, otherwise → chat
@@ -120,7 +127,10 @@ public class SkillMessageController {
             log.warn("No agent associated with session {}, cannot invoke AI", sessionId);
         }
 
-        return ResponseEntity.ok(ApiResponse.ok(message));
+        return ResponseEntity.ok(ApiResponse.ok(ProtocolMessageMapper.toProtocolMessage(
+                message,
+                List.of(),
+                objectMapper)));
     }
 
     /**
@@ -128,23 +138,26 @@ public class SkillMessageController {
      * Get message history with pagination.
      */
     @GetMapping("/messages")
-    public ResponseEntity<ApiResponse<PageResult<SkillMessageView>>> getMessages(
+    public ResponseEntity<ApiResponse<PageResult<ProtocolMessageView>>> getMessages(
+            @CookieValue(value = "userId", required = false) String userIdCookie,
             @PathVariable Long sessionId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
 
-        // Verify session exists
         try {
-            sessionService.getSession(sessionId);
+            accessControlService.requireSessionAccess(sessionId, userIdCookie);
+        } catch (ProtocolException e) {
+            return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(404, "Session not found"));
+            return ResponseEntity.ok(ApiResponse.error(404, "Session not found"));
         }
 
         PageResult<SkillMessage> messages = messageService.getMessageHistory(sessionId, page, size);
         var content = messages.getContent().stream()
-                .map(message -> SkillMessageView.from(
+                .map(message -> ProtocolMessageMapper.toProtocolMessage(
                         message,
-                        partRepository.findByMessageId(message.getId())))
+                        partRepository.findByMessageId(message.getId()),
+                        objectMapper))
                 .toList();
         return ResponseEntity.ok(ApiResponse.ok(new PageResult<>(content,
                 messages.getTotalElements(),
@@ -158,28 +171,30 @@ public class SkillMessageController {
      */
     @PostMapping("/send-to-im")
     public ResponseEntity<ApiResponse<Map<String, Object>>> sendToIm(
+            @CookieValue(value = "userId", required = false) String userIdCookie,
             @PathVariable Long sessionId,
             @RequestBody SendToImRequest request) {
 
         if (request.getContent() == null || request.getContent().isBlank()) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error(400, "Content is required"));
+            return ResponseEntity.ok(ApiResponse.error(400, "Content is required"));
         }
 
-        // Determine the IM chatId: from request or from session
+        SkillSession session;
+        try {
+            session = accessControlService.requireSessionAccess(sessionId, userIdCookie);
+        } catch (ProtocolException e) {
+            return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.ok(ApiResponse.error(404, "Session not found"));
+        }
+
         String chatId = request.getChatId();
         if (chatId == null || chatId.isBlank()) {
-            try {
-                SkillSession session = sessionService.getSession(sessionId);
-                chatId = session.getImGroupId();
-            } catch (IllegalArgumentException e) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(404, "Session not found"));
-            }
+            chatId = session.getImGroupId();
         }
 
         if (chatId == null || chatId.isBlank()) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error(400, "No IM chat ID associated with this session"));
+            return ResponseEntity.ok(ApiResponse.error(400, "No IM chat ID associated with this session"));
         }
 
         boolean success = imMessageService.sendMessage(chatId, request.getContent());
@@ -190,8 +205,7 @@ public class SkillMessageController {
             return ResponseEntity.ok(ApiResponse.ok(Map.of("success", true)));
         } else {
             log.error("Failed to send content to IM: sessionId={}, chatId={}", sessionId, chatId);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(ApiResponse.error(500, "Failed to send message to IM"));
+            return ResponseEntity.ok(ApiResponse.error(500, "Failed to send message to IM"));
         }
     }
 
@@ -203,39 +217,40 @@ public class SkillMessageController {
      */
     @PostMapping("/permissions/{permId}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> replyPermission(
+            @CookieValue(value = "userId", required = false) String userIdCookie,
             @PathVariable Long sessionId,
             @PathVariable String permId,
             @RequestBody PermissionReplyRequest request) {
 
-        // Validate response field
         if (request.getResponse() == null || request.getResponse().isBlank()) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error(400, "Field 'response' is required"));
+            return ResponseEntity.ok(ApiResponse.error(400, "Field 'response' is required"));
         }
         if (!VALID_PERMISSION_RESPONSES.contains(request.getResponse())) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error(400, "Invalid response value. Must be one of: once, always, reject"));
+            return ResponseEntity.ok(
+                    ApiResponse.error(400, "Invalid response value. Must be one of: once, always, reject"));
         }
 
-        // Verify session exists and is not closed
         SkillSession session;
         try {
-            session = sessionService.getSession(sessionId);
+            session = accessControlService.requireSessionAccess(sessionId, userIdCookie);
+        } catch (ProtocolException e) {
+            return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(404, "Session not found"));
+            return ResponseEntity.ok(ApiResponse.error(404, "Session not found"));
         }
 
         if (session.getStatus() == SkillSession.Status.CLOSED) {
-            return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(ApiResponse.error(409, "Session is closed"));
+            return ResponseEntity.ok(ApiResponse.error(409, "Session is closed"));
         }
 
         if (session.getAk() == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error(400, "No agent associated with this session"));
+            return ResponseEntity.ok(ApiResponse.error(400, "No agent associated with this session"));
         }
 
-        // Build permission_reply payload
+        if (session.getToolSessionId() == null || session.getToolSessionId().isBlank()) {
+            return ResponseEntity.ok(ApiResponse.error(500, "No toolSessionId available"));
+        }
+
         String payload = buildPermissionReplyPayload(permId, request.getResponse(),
                 session.getToolSessionId());
 

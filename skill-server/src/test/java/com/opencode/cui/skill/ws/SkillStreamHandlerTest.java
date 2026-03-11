@@ -3,6 +3,7 @@ package com.opencode.cui.skill.ws;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillMessagePart;
+import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.repository.SkillMessagePartRepository;
 import com.opencode.cui.skill.service.SkillMessageService;
 import com.opencode.cui.skill.model.SkillSession;
@@ -80,6 +81,7 @@ class SkillStreamHandlerTest {
         activeSession.setUserId("10001");
         SkillMessage message = SkillMessage.builder()
                 .id(10L)
+                .sessionId(42L)
                 .messageId("msg_42_1")
                 .messageSeq(1)
                 .role(SkillMessage.Role.ASSISTANT)
@@ -114,8 +116,10 @@ class SkillStreamHandlerTest {
         String payload = captor.getAllValues().get(0).getPayload();
         var json = new ObjectMapper().readTree(payload);
         Assertions.assertEquals("snapshot", json.path("type").asText());
+        Assertions.assertTrue(json.path("seq").asLong() > 0);
         Assertions.assertEquals("42", json.path("welinkSessionId").asText());
         Assertions.assertEquals("msg_42_1", json.path("messages").get(0).path("id").asText());
+        Assertions.assertEquals("42", json.path("messages").get(0).path("welinkSessionId").asText());
         Assertions.assertEquals("tool", json.path("messages").get(0).path("parts").get(0).path("type").asText());
         Assertions.assertEquals("completed", json.path("messages").get(0).path("parts").get(0).path("status").asText());
         Assertions.assertEquals("pwd",
@@ -131,6 +135,7 @@ class SkillStreamHandlerTest {
         activeSession.setUserId("10001");
         SkillMessage message = SkillMessage.builder()
                 .id(11L)
+                .sessionId(42L)
                 .messageId("msg_42_2")
                 .messageSeq(2)
                 .role(SkillMessage.Role.ASSISTANT)
@@ -193,6 +198,90 @@ class SkillStreamHandlerTest {
         handler.handleMessage(session, new TextMessage("{\"action\":\"resume\"}"));
 
         verify(session, times(2)).sendMessage(any(TextMessage.class));
+
+        ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+        verify(session, times(2)).sendMessage(captor.capture());
+        var objectMapper = new ObjectMapper();
+        var first = objectMapper.readTree(captor.getAllValues().get(0).getPayload());
+        var second = objectMapper.readTree(captor.getAllValues().get(1).getPayload());
+        Assertions.assertEquals("snapshot", first.path("type").asText());
+        Assertions.assertEquals("streaming", second.path("type").asText());
+    }
+
+    @Test
+    @DisplayName("streaming payload exposes aggregated protocol parts instead of raw event types")
+    void streamingPayloadUsesAggregatedProtocolParts() throws Exception {
+        WebSocketSession session = mockSession("/ws/skill/stream", "userId=10001");
+        SkillSession activeSession = new SkillSession();
+        activeSession.setId(42L);
+        activeSession.setUserId("10001");
+        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(activeSession));
+        when(messageService.getAllMessages(42L)).thenReturn(List.of());
+        when(bufferService.isSessionStreaming("42")).thenReturn(true);
+        when(bufferService.getStreamingParts("42")).thenReturn(List.of(
+                StreamMessage.builder()
+                        .type(StreamMessage.Types.TEXT_DELTA)
+                        .sessionId("42")
+                        .messageId("msg-stream")
+                        .messageSeq(5)
+                        .role("assistant")
+                        .partId("part-text-1")
+                        .partSeq(1)
+                        .content("hello")
+                        .build(),
+                StreamMessage.builder()
+                        .type(StreamMessage.Types.TOOL_UPDATE)
+                        .sessionId("42")
+                        .messageId("msg-stream")
+                        .messageSeq(5)
+                        .role("assistant")
+                        .partId("part-tool-1")
+                        .partSeq(2)
+                        .toolName("bash")
+                        .toolCallId("call-1")
+                        .status("running")
+                        .input(new ObjectMapper().readTree("{\"command\":\"pwd\"}"))
+                        .output("")
+                        .build()));
+
+        handler.afterConnectionEstablished(session);
+
+        ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+        verify(session, atLeastOnce()).sendMessage(captor.capture());
+
+        String payload = captor.getAllValues().get(1).getPayload();
+        var json = new ObjectMapper().readTree(payload);
+        Assertions.assertEquals("streaming", json.path("type").asText());
+        Assertions.assertEquals("busy", json.path("sessionStatus").asText());
+        Assertions.assertEquals("text", json.path("parts").get(0).path("type").asText());
+        Assertions.assertEquals("hello", json.path("parts").get(0).path("content").asText());
+        Assertions.assertEquals("tool", json.path("parts").get(1).path("type").asText());
+        Assertions.assertEquals("bash", json.path("parts").get(1).path("toolName").asText());
+        Assertions.assertEquals("pwd", json.path("parts").get(1).path("input").path("command").asText());
+        Assertions.assertTrue(json.path("parts").get(0).path("type").asText().indexOf('.') < 0);
+    }
+
+    @Test
+    @DisplayName("streaming sessionStatus stays within busy idle domain")
+    void streamingSessionStatusStaysWithinBusyIdleDomain() throws Exception {
+        WebSocketSession session = mockSession("/ws/skill/stream", "userId=10001");
+        SkillSession activeSession = new SkillSession();
+        activeSession.setId(42L);
+        activeSession.setUserId("10001");
+        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(activeSession));
+        when(messageService.getAllMessages(42L)).thenReturn(List.of());
+        when(bufferService.isSessionStreaming("42")).thenReturn(false);
+        when(bufferService.getStreamingParts("42")).thenReturn(List.of());
+
+        handler.afterConnectionEstablished(session);
+
+        ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+        verify(session, atLeastOnce()).sendMessage(captor.capture());
+        String payload = captor.getAllValues().get(1).getPayload();
+        var json = new ObjectMapper().readTree(payload);
+        Assertions.assertEquals("streaming", json.path("type").asText());
+        Assertions.assertEquals("idle", json.path("sessionStatus").asText());
+        Assertions.assertNotEquals("retry", json.path("sessionStatus").asText());
     }
 
     @Test

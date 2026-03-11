@@ -78,6 +78,18 @@ public class GatewayApiClient {
         }
     }
 
+    public boolean isAkOwnedByUser(String ak, String userId) {
+        if (ak == null || ak.isBlank() || userId == null || userId.isBlank()) {
+            return false;
+        }
+
+        return getOnlineAgentsByUserId(userId).stream()
+                .map(item -> item.get("ak"))
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .anyMatch(ak::equals);
+    }
+
     private HttpHeaders buildHeaders() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(internalToken);

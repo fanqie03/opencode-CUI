@@ -13,6 +13,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -98,6 +99,42 @@ class GatewayRelayServiceTest {
     }
 
     @Test
+    @DisplayName("tool event activation broadcasts busy status")
+    void toolEventActivationBroadcastsBusyStatus() {
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.TEXT_DELTA)
+                .partId("part-1")
+                .content("hello")
+                .build());
+        when(sessionService.activateSession(123L)).thenReturn(true);
+
+        service.handleGatewayMessage("{\"type\":\"tool_event\",\"welinkSessionId\":\"123\",\"event\":{\"data\":\"hello\"}}");
+
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisMessageBroker, org.mockito.Mockito.atLeast(2)).publishToSession(eq("123"), payloadCaptor.capture());
+        assertTrue(payloadCaptor.getAllValues().stream().anyMatch(payload -> payload.contains("\"sessionStatus\":\"busy\"")));
+    }
+
+    @Test
+    @DisplayName("session rebuild broadcasts retry status")
+    void sessionRebuildBroadcastsRetryStatus() {
+        SkillSession session = new SkillSession();
+        session.setId(42L);
+        session.setAk("agent-1");
+        session.setTitle("demo");
+        when(sessionService.getSession(42L)).thenReturn(session);
+        when(messageRepository.findLastUserMessage(42L)).thenReturn(null);
+        when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+        when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
+
+        service.handleGatewayMessage("{\"type\":\"tool_error\",\"welinkSessionId\":\"42\",\"error\":\"session_not_found\"}");
+
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisMessageBroker).publishToSession(eq("42"), payloadCaptor.capture());
+        assertTrue(payloadCaptor.getValue().contains("\"sessionStatus\":\"retry\""));
+    }
+
+    @Test
     @DisplayName("tool_error persists and broadcasts via Skill Redis")
     void toolErrorPersistsAndBroadcasts() {
         String msg = "{\"type\":\"tool_error\",\"welinkSessionId\":\"42\",\"error\":\"timeout\"}";
@@ -153,7 +190,7 @@ class GatewayRelayServiceTest {
                 .permissionId("p-1")
                 .build());
 
-        String msg = "{\"type\":\"permission_request\",\"sessionId\":\"42\",\"permissionId\":\"p-1\",\"command\":\"rm -rf /\",\"workingDirectory\":\"/tmp\"}";
+        String msg = "{\"type\":\"permission_request\",\"welinkSessionId\":\"42\",\"permissionId\":\"p-1\",\"command\":\"rm -rf /\",\"workingDirectory\":\"/tmp\"}";
         service.handleGatewayMessage(msg);
 
         verify(redisMessageBroker).publishToSession(eq("42"), contains("permission.ask"));
