@@ -171,7 +171,11 @@ public class GatewayRelayService {
         message.put("type", "invoke");
         message.put("ak", ak);
         if ("create_session".equals(action) && sessionId != null && !sessionId.isBlank()) {
-            message.put("welinkSessionId", sessionId);
+            try {
+                message.put("welinkSessionId", Long.parseLong(sessionId));
+            } catch (NumberFormatException e) {
+                message.put("welinkSessionId", sessionId);
+            }
         }
         message.put("action", action);
 

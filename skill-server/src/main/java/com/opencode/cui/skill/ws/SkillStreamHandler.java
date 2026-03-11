@@ -356,7 +356,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("type", type);
         node.put("seq", seq);
-        node.put("welinkSessionId", sessionId);
+        putWelinkSessionId(node, sessionId);
 
         if (content != null) {
             try {
@@ -371,6 +371,18 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         } catch (JsonProcessingException e) {
             log.error("Failed to serialize stream message: type={}", type, e);
             return null;
+        }
+    }
+
+    private void putWelinkSessionId(ObjectNode node, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            node.putNull("welinkSessionId");
+            return;
+        }
+        try {
+            node.put("welinkSessionId", Long.parseLong(sessionId));
+        } catch (NumberFormatException e) {
+            node.put("welinkSessionId", sessionId);
         }
     }
 

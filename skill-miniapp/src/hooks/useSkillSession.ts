@@ -9,9 +9,9 @@ export interface UseSkillSessionReturn {
   error: string | null;
   createSession: (params: api.CreateSessionParams) => Promise<Session | null>;
   loadSessions: () => Promise<void>;
-  switchSession: (sessionId: string) => void;
-  closeSession: (sessionId: string) => Promise<void>;
-  updateSessionStatus: (sessionId: string, status: Session['status']) => void;
+  switchSession: (sessionId: number) => void;
+  closeSession: (sessionId: number) => Promise<void>;
+  updateSessionStatus: (sessionId: number, status: Session['status']) => void;
 }
 
 export function useSkillSession(): UseSkillSessionReturn {
@@ -59,7 +59,7 @@ export function useSkillSession(): UseSkillSessionReturn {
   );
 
   const switchSession = useCallback(
-    (sessionId: string) => {
+    (sessionId: number) => {
       const target = sessions.find((s) => s.id === sessionId) ?? null;
       setCurrentSession(target);
     },
@@ -67,7 +67,7 @@ export function useSkillSession(): UseSkillSessionReturn {
   );
 
   const closeSessionFn = useCallback(
-    async (sessionId: string) => {
+    async (sessionId: number) => {
       setError(null);
       try {
         await api.closeSession(sessionId);
@@ -85,7 +85,7 @@ export function useSkillSession(): UseSkillSessionReturn {
   );
 
   const updateSessionStatus = useCallback(
-    (sessionId: string, status: Session['status']) => {
+    (sessionId: number, status: Session['status']) => {
       setSessions((prev) =>
         prev.map((s) => (s.id === sessionId ? { ...s, status } : s)),
       );

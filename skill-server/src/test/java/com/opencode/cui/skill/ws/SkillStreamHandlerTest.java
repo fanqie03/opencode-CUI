@@ -117,9 +117,11 @@ class SkillStreamHandlerTest {
         var json = new ObjectMapper().readTree(payload);
         Assertions.assertEquals("snapshot", json.path("type").asText());
         Assertions.assertTrue(json.path("seq").asLong() > 0);
-        Assertions.assertEquals("42", json.path("welinkSessionId").asText());
+        Assertions.assertTrue(json.path("welinkSessionId").isIntegralNumber());
+        Assertions.assertEquals(42L, json.path("welinkSessionId").asLong());
         Assertions.assertEquals("msg_42_1", json.path("messages").get(0).path("id").asText());
-        Assertions.assertEquals("42", json.path("messages").get(0).path("welinkSessionId").asText());
+        Assertions.assertTrue(json.path("messages").get(0).path("welinkSessionId").isIntegralNumber());
+        Assertions.assertEquals(42L, json.path("messages").get(0).path("welinkSessionId").asLong());
         Assertions.assertEquals("tool", json.path("messages").get(0).path("parts").get(0).path("type").asText());
         Assertions.assertEquals("completed", json.path("messages").get(0).path("parts").get(0).path("status").asText());
         Assertions.assertEquals("pwd",

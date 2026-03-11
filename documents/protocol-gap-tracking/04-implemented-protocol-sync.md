@@ -46,6 +46,19 @@
 - `agent_online.toolType` 统一为小写协议值
 - Layer2 REST 继续使用 `Authorization: Bearer <internal-token>`
 
+## 已同步的 ID 类型基线
+
+- `welinkSessionId`
+  - `skill-server` Layer1 对外协议 DTO 已收敛为 `Long`
+  - Layer1 WebSocket 对外 JSON 已收敛为数字型 `welinkSessionId`
+  - `ai-gateway` Layer2 `GatewayMessage.welinkSessionId` 已收敛为 `Long`
+  - `skill-miniapp` 前端类型已收敛为 `number`
+- `toolSessionId`
+  - 后端与前端继续统一为 `String/string`
+- `userId`
+  - 后端与前端继续统一为 `String/string`
+  - 数据库最终字段继续统一为 `VARCHAR(128)`
+
 ## 尚未在正文逐段改写的原因
 
 - 原协议正文存在编码异常

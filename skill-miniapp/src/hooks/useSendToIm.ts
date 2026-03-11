@@ -8,7 +8,7 @@ export interface UseSendToImReturn {
   error: string | null;
 }
 
-export function useSendToIm(sessionId: string | null): UseSendToImReturn {
+export function useSendToIm(sessionId: number | null): UseSendToImReturn {
   const [sending, setSending] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);

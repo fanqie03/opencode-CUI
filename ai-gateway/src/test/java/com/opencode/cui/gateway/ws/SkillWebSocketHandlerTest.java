@@ -105,7 +105,7 @@ class SkillWebSocketHandlerTest {
         verify(skillRelayService).handleInvokeFromSkill(eq(session),
                 argThat(message -> "invoke".equals(message.getType())
                         && "ak_test_001".equals(message.getAk())
-                        && "42".equals(message.getWelinkSessionId())));
+                        && Long.valueOf(42L).equals(message.getWelinkSessionId())));
     }
 
     @Test

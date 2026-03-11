@@ -104,6 +104,7 @@ class SkillSessionControllerTest {
 
         var response = controller.closeSession("1", 42L);
         assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(42L, response.getBody().getData().get("welinkSessionId"));
         verify(sessionService).closeSession(42L);
         verify(gatewayRelayService).unsubscribeFromSession("42");
     }
@@ -134,6 +135,7 @@ class SkillSessionControllerTest {
         var response = controller.abortSession("1", 42L);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("aborted", response.getBody().getData().get("status"));
+        assertEquals(42L, response.getBody().getData().get("welinkSessionId"));
         verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("42"), eq("abort_session"), any());
         verify(sessionService, never()).closeSession(anyLong());
         verify(gatewayRelayService, never()).unsubscribeFromSession(anyString());

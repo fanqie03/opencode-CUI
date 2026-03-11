@@ -60,6 +60,19 @@ function normalizeTimestamp(value: string | number | null | undefined): number {
   return Date.now();
 }
 
+function normalizeWelinkSessionId(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
 function contentTypeForRole(role: MessageRole): Message['contentType'] {
   switch (role) {
     case 'assistant':
@@ -166,7 +179,7 @@ function normalizeStreamingPart(raw: Record<string, unknown>): StreamMessage | n
   }
 
   const base: Partial<StreamMessage> = {
-    welinkSessionId: typeof raw.welinkSessionId === 'string' ? raw.welinkSessionId : undefined,
+    welinkSessionId: normalizeWelinkSessionId(raw.welinkSessionId),
     emittedAt: typeof raw.emittedAt === 'string' ? raw.emittedAt : undefined,
     messageId: typeof raw.messageId === 'string' ? raw.messageId : undefined,
     messageSeq: typeof raw.messageSeq === 'number' ? raw.messageSeq : undefined,
@@ -236,7 +249,7 @@ function normalizeStreamingPart(raw: Record<string, unknown>): StreamMessage | n
 }
 
 function normalizeIncomingStreamMessage(raw: Record<string, unknown>): StreamMessage {
-  const welinkSessionId = typeof raw.welinkSessionId === 'string' ? raw.welinkSessionId : undefined;
+  const welinkSessionId = normalizeWelinkSessionId(raw.welinkSessionId);
 
   return {
     ...(raw as unknown as StreamMessage),
@@ -244,7 +257,7 @@ function normalizeIncomingStreamMessage(raw: Record<string, unknown>): StreamMes
   };
 }
 
-export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
+export function useSkillStream(sessionId: number | null): UseSkillStreamReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>('unknown');
@@ -258,7 +271,7 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
   const assemblersRef = useRef(new Map<string, StreamAssembler>());
   const activeMessageIdsRef = useRef(new Set<string>());
   const knownUserMessageIdsRef = useRef(new Set<string>());
-  const sessionIdRef = useRef<string | null>(sessionId);
+  const sessionIdRef = useRef<number | null>(sessionId);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;

@@ -79,7 +79,7 @@ class GatewayRelayServiceTest {
 
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(redisMessageBroker).publishToSession(eq("123"), payloadCaptor.capture());
-        assertTrue(payloadCaptor.getValue().contains("\"welinkSessionId\":\"123\""));
+        assertTrue(payloadCaptor.getValue().contains("\"welinkSessionId\":123"));
         verify(bufferService).accumulate(eq("123"), any(StreamMessage.class));
         verify(persistenceService).persistIfFinal(eq(123L), any(StreamMessage.class));
         verifyNoInteractions(skillStreamHandler);
@@ -255,6 +255,17 @@ class GatewayRelayServiceTest {
 
         verify(gatewayRelayTarget).sendToGateway(contains("invoke"));
         verify(redisMessageBroker, never()).publishToSession(any(), any());
+    }
+
+    @Test
+    @DisplayName("sendInvokeToGateway serializes numeric welinkSessionId for create_session")
+    void sendInvokeSerializesNumericWelinkSessionId() {
+        when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+        when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
+
+        service.sendInvokeToGateway("agent-1", "42", "create_session", "{\"title\":\"demo\"}");
+
+        verify(gatewayRelayTarget).sendToGateway(contains("\"welinkSessionId\":42"));
     }
 
     @Test

@@ -1268,3 +1268,11 @@ Gateway 连接异常等系统级错误。
 - Layer1 推给 Miniapp 的消息类型是 `question`。
 - Miniapp 回答 `question` 时，调用 `POST /api/skill/sessions/{welinkSessionId}/messages`，并通过 `toolCallId` 指向被回答的问题。
 - `question_reply` 是 Skill Server 发给 Gateway 的 Layer2 `invoke` 动作，不是 Layer1 对外 REST API 名称。
+
+### A.13 ID 类型基线
+
+- `welinkSessionId` 为 `Long`
+  - Layer1 REST 响应中的 `welinkSessionId` 使用数字类型
+  - Layer1 WebSocket 消息中的 `welinkSessionId` 也使用数字类型
+- `toolSessionId` 为 `String`
+- `userId` 为 `String`

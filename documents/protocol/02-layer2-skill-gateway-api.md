@@ -571,3 +571,11 @@ Authorization: Bearer <internal-token>
 ```
 
 - 该约定仅适用于 Layer2 REST，不适用于 Layer2 WebSocket。
+
+### A.9 ID 类型基线
+
+- `welinkSessionId` 为 `Long`
+  - Layer2 `invoke.create_session`
+  - Layer2 `session_created`
+- `toolSessionId` 为 `String`
+- `userId` 为 `String`

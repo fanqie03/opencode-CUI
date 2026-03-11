@@ -126,7 +126,7 @@ public class SkillSessionController {
      * exists.
      */
     @DeleteMapping("/{id}")
-    public ResponseEntity<ApiResponse<Map<String, String>>> closeSession(
+    public ResponseEntity<ApiResponse<Map<String, Object>>> closeSession(
             @CookieValue(value = "userId", required = false) String userIdCookie,
             @PathVariable Long id) {
         try {
@@ -149,7 +149,7 @@ public class SkillSessionController {
             }
             sessionService.closeSession(id);
             gatewayRelayService.unsubscribeFromSession(id.toString());
-            return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "closed", "welinkSessionId", id.toString())));
+            return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "closed", "welinkSessionId", id)));
         } catch (ProtocolException e) {
             return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {
@@ -163,7 +163,7 @@ public class SkillSessionController {
      * operations while keeping the session reusable.
      */
     @PostMapping("/{id}/abort")
-    public ResponseEntity<ApiResponse<Map<String, String>>> abortSession(
+    public ResponseEntity<ApiResponse<Map<String, Object>>> abortSession(
             @CookieValue(value = "userId", required = false) String userIdCookie,
             @PathVariable Long id) {
         try {
@@ -190,7 +190,7 @@ public class SkillSessionController {
                         payload);
             }
 
-            return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "aborted", "welinkSessionId", id.toString())));
+            return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "aborted", "welinkSessionId", id)));
         } catch (ProtocolException e) {
             return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {

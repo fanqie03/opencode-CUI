@@ -91,7 +91,7 @@ class EventRelayServiceTest {
     @DisplayName("relayToSkillServer attaches ak and routes to skill relay service")
     void relayToSkillServerAttachesAkAndRoutes() {
         when(skillRelayService.relayToSkill(any())).thenReturn(true);
-        GatewayMessage msg = GatewayMessage.builder().type("tool_event").welinkSessionId("42").build();
+        GatewayMessage msg = GatewayMessage.builder().type("tool_event").welinkSessionId(42L).build();
 
         service.relayToSkillServer("ak_test_001", msg);
 

@@ -33,7 +33,7 @@ public class GatewayMessage {
     private String ak;
 
     /** Skill session identifier from Layer2/3 protocol */
-    private String welinkSessionId;
+    private Long welinkSessionId;
 
     /** Action for invoke messages: chat, create_session, close_session, ... */
     private String action;
@@ -125,7 +125,7 @@ public class GatewayMessage {
                 .build();
     }
 
-    public static GatewayMessage sessionCreated(String welinkSessionId, String toolSessionId) {
+    public static GatewayMessage sessionCreated(Long welinkSessionId, String toolSessionId) {
         return GatewayMessage.builder()
                 .type("session_created")
                 .welinkSessionId(welinkSessionId)
@@ -149,7 +149,7 @@ public class GatewayMessage {
                 .build();
     }
 
-    public static GatewayMessage invoke(String ak, String welinkSessionId,
+    public static GatewayMessage invoke(String ak, Long welinkSessionId,
             String action, JsonNode payload) {
         return GatewayMessage.builder()
                 .type("invoke")
