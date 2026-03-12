@@ -78,7 +78,7 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.SendMessageRequest();
         request.setContent("Hello");
 
-        ResponseEntity<?> response = controller.sendMessage("1", 1L, request);
+        ResponseEntity<?> response = controller.sendMessage("1", "1", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         var body = (com.opencode.cui.skill.model.ApiResponse<ProtocolMessageView>) response.getBody();
         assertNotNull(body);
@@ -107,7 +107,7 @@ class SkillMessageControllerTest {
         request.setContent("yes");
         request.setToolCallId("tc-001");
 
-        ResponseEntity<?> response = controller.sendMessage("1", 1L, request);
+        ResponseEntity<?> response = controller.sendMessage("1", "1", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("1"), eq("question_reply"), any());
     }
@@ -118,7 +118,7 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.SendMessageRequest();
         request.setContent("");
 
-        ResponseEntity<?> response = controller.sendMessage("1", 1L, request);
+        ResponseEntity<?> response = controller.sendMessage("1", "1", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(400, ((com.opencode.cui.skill.model.ApiResponse<?>) response.getBody()).getCode());
     }
@@ -134,7 +134,7 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.SendMessageRequest();
         request.setContent("Hello");
 
-        ResponseEntity<?> response = controller.sendMessage("1", 1L, request);
+        ResponseEntity<?> response = controller.sendMessage("1", "1", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(409, ((com.opencode.cui.skill.model.ApiResponse<?>) response.getBody()).getCode());
     }
@@ -168,7 +168,7 @@ class SkillMessageControllerTest {
                         .toolOutput("/tmp")
                         .build()));
 
-        var response = controller.getMessages("1", 1L, 0, 50);
+        var response = controller.getMessages("1", "1", 0, 50);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertNotNull(response.getBody());
         assertEquals("1", response.getBody().getData().getContent().get(0).getWelinkSessionId());
@@ -191,7 +191,7 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.PermissionReplyRequest();
         request.setResponse("once");
 
-        var response = controller.replyPermission("1", 1L, "p-abc", request);
+        var response = controller.replyPermission("1", "1", "p-abc", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("1", response.getBody().getData().get("welinkSessionId"));
         assertEquals("p-abc", response.getBody().getData().get("permissionId"));
@@ -206,7 +206,7 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.PermissionReplyRequest();
         // response is null
 
-        var response = controller.replyPermission("1", 1L, "p-abc", request);
+        var response = controller.replyPermission("1", "1", "p-abc", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(400, response.getBody().getCode());
     }
@@ -217,7 +217,7 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.PermissionReplyRequest();
         request.setResponse("invalid");
 
-        var response = controller.replyPermission("1", 1L, "p-abc", request);
+        var response = controller.replyPermission("1", "1", "p-abc", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(400, response.getBody().getCode());
     }
@@ -233,7 +233,7 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.PermissionReplyRequest();
         request.setResponse("once");
 
-        var response = controller.replyPermission("1", 1L, "p-abc", request);
+        var response = controller.replyPermission("1", "1", "p-abc", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(409, response.getBody().getCode());
     }
@@ -250,7 +250,7 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.SendToImRequest();
         request.setContent("Hello IM");
 
-        var response = controller.sendToIm("1", 1L, request);
+        var response = controller.sendToIm("1", "1", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(true, response.getBody().getData().get("success"));
     }

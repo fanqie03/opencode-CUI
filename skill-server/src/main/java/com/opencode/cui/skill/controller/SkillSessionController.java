@@ -108,12 +108,15 @@ public class SkillSessionController {
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<SkillSession>> getSession(
             @CookieValue(value = "userId", required = false) String userIdCookie,
-            @PathVariable Long id) {
+            @PathVariable String id) {
         try {
-            SkillSession session = accessControlService.requireSessionAccess(id, userIdCookie);
+            Long sessionId = Long.parseLong(id);
+            SkillSession session = accessControlService.requireSessionAccess(sessionId, userIdCookie);
             return ResponseEntity.ok(ApiResponse.ok(session));
         } catch (ProtocolException e) {
             return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
+        } catch (NumberFormatException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.ok(ApiResponse.error(404, "Session not found"));
         }
@@ -127,9 +130,10 @@ public class SkillSessionController {
     @DeleteMapping("/{id}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> closeSession(
             @CookieValue(value = "userId", required = false) String userIdCookie,
-            @PathVariable Long id) {
+            @PathVariable String id) {
         try {
-            SkillSession session = accessControlService.requireSessionAccess(id, userIdCookie);
+            Long sessionId = Long.parseLong(id);
+            SkillSession session = accessControlService.requireSessionAccess(sessionId, userIdCookie);
 
             if (session.getAk() != null && session.getToolSessionId() != null) {
                 var node = objectMapper.createObjectNode();
@@ -147,10 +151,12 @@ public class SkillSessionController {
                         "close_session",
                         payload);
             }
-            sessionService.closeSession(id);
+            sessionService.closeSession(sessionId);
             return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "closed", "welinkSessionId", id)));
         } catch (ProtocolException e) {
             return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
+        } catch (NumberFormatException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.ok(ApiResponse.error(404, "Session not found"));
         }
@@ -164,9 +170,10 @@ public class SkillSessionController {
     @PostMapping("/{id}/abort")
     public ResponseEntity<ApiResponse<Map<String, Object>>> abortSession(
             @CookieValue(value = "userId", required = false) String userIdCookie,
-            @PathVariable Long id) {
+            @PathVariable String id) {
         try {
-            SkillSession session = accessControlService.requireSessionAccess(id, userIdCookie);
+            Long sessionId = Long.parseLong(id);
+            SkillSession session = accessControlService.requireSessionAccess(sessionId, userIdCookie);
 
             if (session.getStatus() == SkillSession.Status.CLOSED) {
                 return ResponseEntity.ok(ApiResponse.error(409, "Session is already closed"));
@@ -193,6 +200,8 @@ public class SkillSessionController {
             return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "aborted", "welinkSessionId", id)));
         } catch (ProtocolException e) {
             return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
+        } catch (NumberFormatException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.ok(ApiResponse.error(404, "Session not found"));
         }

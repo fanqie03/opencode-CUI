@@ -167,7 +167,7 @@ export const SkillMain: React.FC<SkillMainProps> = ({
   const handleNewSession = useCallback(async () => {
     if (!selectedAgent) return;
     await createSession({
-      ak: selectedAgent.akId,
+      ak: selectedAgent.ak,
       title: `Session ${new Date().toLocaleString()}`,
       imGroupId: imChatId,
     });
@@ -190,7 +190,7 @@ export const SkillMain: React.FC<SkillMainProps> = ({
       if (!activeSessionId) {
         pendingInitialMessageRef.current = text;
         const session = await createSession({
-          ak: selectedAgent.akId,
+          ak: selectedAgent.ak,
           title: text.slice(0, 50),
           imGroupId: imChatId,
         });

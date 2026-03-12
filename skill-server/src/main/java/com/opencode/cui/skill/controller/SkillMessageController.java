@@ -75,16 +75,23 @@ public class SkillMessageController {
     @PostMapping("/messages")
     public ResponseEntity<ApiResponse<ProtocolMessageView>> sendMessage(
             @CookieValue(value = "userId", required = false) String userIdCookie,
-            @PathVariable Long sessionId,
+            @PathVariable String sessionId,
             @RequestBody SendMessageRequest request) {
 
         if (request.getContent() == null || request.getContent().isBlank()) {
             return ResponseEntity.ok(ApiResponse.error(400, "Content is required"));
         }
 
+        Long numericSessionId;
+        try {
+            numericSessionId = Long.parseLong(sessionId);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
+        }
+
         SkillSession session;
         try {
-            session = accessControlService.requireSessionAccess(sessionId, userIdCookie);
+            session = accessControlService.requireSessionAccess(numericSessionId, userIdCookie);
         } catch (ProtocolException e) {
             return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {
@@ -96,15 +103,15 @@ public class SkillMessageController {
         }
 
         // Persist user message
-        messagePersistenceService.finalizeActiveAssistantTurn(sessionId);
-        SkillMessage message = messageService.saveUserMessage(sessionId, request.getContent());
+        messagePersistenceService.finalizeActiveAssistantTurn(numericSessionId);
+        SkillMessage message = messageService.saveUserMessage(numericSessionId, request.getContent());
 
         // Send invoke to AI-Gateway to trigger OpenCode processing
         if (session.getAk() != null) {
             if (session.getToolSessionId() == null) {
                 log.info("Session {} has no toolSessionId, triggering create_session rebuild", sessionId);
                 gatewayRelayService.rebuildToolSession(
-                        sessionId.toString(), session, request.getContent());
+                        sessionId, session, request.getContent());
                 return ResponseEntity.ok(ApiResponse.ok(ProtocolMessageMapper.toProtocolMessage(
                         message, List.of(), objectMapper)));
             }
@@ -124,7 +131,7 @@ public class SkillMessageController {
             gatewayRelayService.sendInvokeToGateway(
                     session.getAk(),
                     session.getUserId(),
-                    sessionId.toString(),
+                    sessionId,
                     action,
                     payload);
         } else {
@@ -144,19 +151,26 @@ public class SkillMessageController {
     @GetMapping("/messages")
     public ResponseEntity<ApiResponse<PageResult<ProtocolMessageView>>> getMessages(
             @CookieValue(value = "userId", required = false) String userIdCookie,
-            @PathVariable Long sessionId,
+            @PathVariable String sessionId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
 
+        Long numericSessionId;
         try {
-            accessControlService.requireSessionAccess(sessionId, userIdCookie);
+            numericSessionId = Long.parseLong(sessionId);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
+        }
+
+        try {
+            accessControlService.requireSessionAccess(numericSessionId, userIdCookie);
         } catch (ProtocolException e) {
             return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.ok(ApiResponse.error(404, "Session not found"));
         }
 
-        PageResult<SkillMessage> messages = messageService.getMessageHistory(sessionId, page, size);
+        PageResult<SkillMessage> messages = messageService.getMessageHistory(numericSessionId, page, size);
         var content = messages.getContent().stream()
                 .map(message -> ProtocolMessageMapper.toProtocolMessage(
                         message,
@@ -176,16 +190,23 @@ public class SkillMessageController {
     @PostMapping("/send-to-im")
     public ResponseEntity<ApiResponse<Map<String, Object>>> sendToIm(
             @CookieValue(value = "userId", required = false) String userIdCookie,
-            @PathVariable Long sessionId,
+            @PathVariable String sessionId,
             @RequestBody SendToImRequest request) {
 
         if (request.getContent() == null || request.getContent().isBlank()) {
             return ResponseEntity.ok(ApiResponse.error(400, "Content is required"));
         }
 
+        Long numericSessionId;
+        try {
+            numericSessionId = Long.parseLong(sessionId);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
+        }
+
         SkillSession session;
         try {
-            session = accessControlService.requireSessionAccess(sessionId, userIdCookie);
+            session = accessControlService.requireSessionAccess(numericSessionId, userIdCookie);
         } catch (ProtocolException e) {
             return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {
@@ -222,7 +243,7 @@ public class SkillMessageController {
     @PostMapping("/permissions/{permId}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> replyPermission(
             @CookieValue(value = "userId", required = false) String userIdCookie,
-            @PathVariable Long sessionId,
+            @PathVariable String sessionId,
             @PathVariable String permId,
             @RequestBody PermissionReplyRequest request) {
 
@@ -234,9 +255,16 @@ public class SkillMessageController {
                     ApiResponse.error(400, "Invalid response value. Must be one of: once, always, reject"));
         }
 
+        Long numericSessionId;
+        try {
+            numericSessionId = Long.parseLong(sessionId);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
+        }
+
         SkillSession session;
         try {
-            session = accessControlService.requireSessionAccess(sessionId, userIdCookie);
+            session = accessControlService.requireSessionAccess(numericSessionId, userIdCookie);
         } catch (ProtocolException e) {
             return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
         } catch (IllegalArgumentException e) {

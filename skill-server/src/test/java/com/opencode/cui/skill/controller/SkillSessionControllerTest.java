@@ -78,7 +78,7 @@ class SkillSessionControllerTest {
         session.setId(42L);
         when(accessControlService.requireSessionAccess(42L, "1")).thenReturn(session);
 
-        var response = controller.getSession("1", 42L);
+        var response = controller.getSession("1", "42");
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(42L, response.getBody().getData().getId());
     }
@@ -88,7 +88,7 @@ class SkillSessionControllerTest {
     void getSession404() {
         when(accessControlService.requireSessionAccess(999L, "1")).thenThrow(new IllegalArgumentException("Not found"));
 
-        var response = controller.getSession("1", 999L);
+        var response = controller.getSession("1", "999");
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(404, response.getBody().getCode());
     }
@@ -101,9 +101,9 @@ class SkillSessionControllerTest {
         session.setStatus(SkillSession.Status.ACTIVE);
         when(accessControlService.requireSessionAccess(42L, "1")).thenReturn(session);
 
-        var response = controller.closeSession("1", 42L);
+        var response = controller.closeSession("1", "42");
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(42L, response.getBody().getData().get("welinkSessionId"));
+        assertEquals("42", response.getBody().getData().get("welinkSessionId"));
         verify(sessionService).closeSession(42L);
         verify(gatewayRelayService, never()).publishProtocolMessage(anyString(), any());
     }
@@ -118,7 +118,7 @@ class SkillSessionControllerTest {
         session.setToolSessionId("ts-abc");
         when(accessControlService.requireSessionAccess(42L, "1")).thenReturn(session);
 
-        controller.closeSession("1", 42L);
+        controller.closeSession("1", "42");
         verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("42"), eq("close_session"), any());
     }
 
@@ -133,10 +133,10 @@ class SkillSessionControllerTest {
         session.setStatus(SkillSession.Status.ACTIVE);
         when(accessControlService.requireSessionAccess(42L, "1")).thenReturn(session);
 
-        var response = controller.abortSession("1", 42L);
+        var response = controller.abortSession("1", "42");
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("aborted", response.getBody().getData().get("status"));
-        assertEquals(42L, response.getBody().getData().get("welinkSessionId"));
+        assertEquals("42", response.getBody().getData().get("welinkSessionId"));
         verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("42"), eq("abort_session"), any());
         verify(sessionService, never()).closeSession(anyLong());
         verify(gatewayRelayService, never()).publishProtocolMessage(anyString(), any());
@@ -147,7 +147,7 @@ class SkillSessionControllerTest {
     void abortSession404() {
         when(accessControlService.requireSessionAccess(999L, "1")).thenThrow(new IllegalArgumentException("Not found"));
 
-        var response = controller.abortSession("1", 999L);
+        var response = controller.abortSession("1", "999");
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(404, response.getBody().getCode());
     }

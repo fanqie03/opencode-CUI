@@ -120,7 +120,7 @@ export function getDefinitions(): Promise<SkillDefinition[]> {
 export interface AgentInfo {
   id: string;
   userId?: string;
-  akId: string;
+  ak: string;
   deviceName: string;
   os: string;
   toolType: string;
@@ -141,8 +141,8 @@ interface RawAgentInfo {
 }
 
 function normalizeAgent(raw: RawAgentInfo): AgentInfo | null {
-  const akId = raw.akId?.trim() || raw.ak?.trim() || '';
-  if (!akId) {
+  const ak = raw.ak?.trim() || raw.akId?.trim() || '';
+  if (!ak) {
     return null;
   }
 
@@ -152,10 +152,10 @@ function normalizeAgent(raw: RawAgentInfo): AgentInfo | null {
       : String(raw.userId);
 
   return {
-    id: raw.id != null ? String(raw.id) : akId,
+    id: raw.id != null ? String(raw.id) : ak,
     userId: normalizedUserId,
-    akId,
-    deviceName: raw.deviceName?.trim() || akId,
+    ak,
+    deviceName: raw.deviceName?.trim() || ak,
     os: raw.os?.trim() || 'UNKNOWN',
     toolType: raw.toolType?.trim() || 'UNKNOWN',
     toolVersion: raw.toolVersion?.trim() || '',

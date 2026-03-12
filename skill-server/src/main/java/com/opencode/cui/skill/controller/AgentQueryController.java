@@ -51,11 +51,7 @@ public class AgentQueryController {
     }
 
     private Map<String, Object> normalizeAgent(Map<String, Object> agent) {
-        Map<String, Object> normalized = new LinkedHashMap<>(agent);
-        Object ak = normalized.get("ak");
-        if (!normalized.containsKey("akId") && ak instanceof String akValue && !akValue.isBlank()) {
-            normalized.put("akId", akValue);
-        }
-        return normalized;
+        // 不再补充 akId，统一使用 ak 字段
+        return new LinkedHashMap<>(agent);
     }
 }

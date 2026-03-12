@@ -58,7 +58,7 @@ const App: React.FC = () => {
   const handleNewSession = useCallback(async () => {
     if (!selectedAgent) return;
     await createSession({
-      ak: selectedAgent.akId,
+      ak: selectedAgent.ak,
       title: `Session ${new Date().toLocaleString()}`,
     });
   }, [createSession, selectedAgent]);
@@ -80,7 +80,7 @@ const App: React.FC = () => {
       if (!activeSessionId) {
         pendingInitialMessageRef.current = text;
         const session = await createSession({
-          ak: selectedAgent.akId,
+          ak: selectedAgent.ak,
           title: text.slice(0, 50),
         });
         if (!session) {
