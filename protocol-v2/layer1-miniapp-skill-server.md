@@ -93,7 +93,7 @@ GET /api/skill/sessions?page=0&size=20&status=ACTIVE&ak=xxx&imGroupId=yyy
 }
 ```
 
-**代码**：[SkillSessionController.java L81-119](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillSessionController.java#L81-L119)
+**代码**：[SkillSessionController.java L81-123](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillSessionController.java#L81-L123)
 
 ---
 
@@ -125,9 +125,9 @@ DELETE /api/skill/sessions/{id}
 
 **副作用**：
 1. 状态改为 `CLOSED`
-2. 若有 `ak` + `toolSessionId`，发送 `close_session` invoke 到 Gateway
+2. 若 `ak != null && toolSessionId != null`，发送 `close_session` invoke 到 Gateway
 
-**代码**：[SkillSessionController.java L127-157](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillSessionController.java#L127-L157)
+**代码**：[SkillSessionController.java L125-163](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillSessionController.java#L125-L163)
 
 ---
 
@@ -145,9 +145,9 @@ POST /api/skill/sessions/{id}/abort
 
 **错误**：`409` — 会话已关闭
 
-**副作用**：发送 `abort_session` invoke 到 Gateway（不改变 session 状态）。
+**副作用**：若 `ak != null && toolSessionId != null`，发送 `abort_session` invoke 到 Gateway（不改变 session 状态）。
 
-**代码**：[SkillSessionController.java L164-199](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillSessionController.java#L164-L199)
+**代码**：[SkillSessionController.java L165-208](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillSessionController.java#L165-L208)
 
 ---
 
@@ -173,7 +173,7 @@ POST /api/skill/sessions/{sessionId}/messages
 
 **错误**：`400` content 为空 / `409` 会话已关闭
 
-**代码**：[SkillMessageController.java L75-138](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillMessageController.java#L75-L138)
+**代码**：[SkillMessageController.java L75-145](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillMessageController.java#L75-L145)
 
 ---
 
@@ -222,7 +222,7 @@ GET /api/skill/sessions/{sessionId}/messages?page=0&size=50
 
 > 使用 `@JsonInclude(NON_NULL)`，null 字段不输出。
 
-**代码**：[SkillMessageController.java L144-170](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillMessageController.java#L144-L170)
+**代码**：[SkillMessageController.java L147-184](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillMessageController.java#L147-L184)
 
 ---
 
@@ -239,7 +239,7 @@ POST /api/skill/sessions/{sessionId}/send-to-im
 
 **响应 `data`**：`{ "success": true }`
 
-**代码**：[SkillMessageController.java L176-214](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillMessageController.java#L176-L214)
+**代码**：[SkillMessageController.java L186-235](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillMessageController.java#L186-L235)
 
 ---
 
@@ -265,7 +265,7 @@ POST /api/skill/sessions/{sessionId}/permissions/{permId}
 1. 发送 `permission_reply` invoke 到 Gateway
 2. 推送 `permission.reply` StreamMessage 到 WS
 
-**代码**：[SkillMessageController.java L222-283](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillMessageController.java#L222-L283)
+**代码**：[SkillMessageController.java L237-312](file:///D:/02_Lab/Projects/sandbox/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/controller/SkillMessageController.java#L237-L312)
 
 ---
 
@@ -602,8 +602,9 @@ ws://{host}/ws/skill/stream
 { "type": "agent.offline", "seq": 53, "welinkSessionId": "123..." }
 ```
 
+- 构造时仅设 `type`，`seq` 和 `welinkSessionId` 由广播路径动态注入
 - 无 `emittedAt`、`role` 等字段
-- 广播给该 `ak` 关联的所有 session
+- 广播给该 `ak` 关联的所有 session（通过 `sessionService.findByAk(ak)` 查询）
 
 ---
 
