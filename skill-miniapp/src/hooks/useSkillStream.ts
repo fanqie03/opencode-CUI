@@ -60,9 +60,12 @@ function normalizeTimestamp(value: string | number | null | undefined): number {
   return Date.now();
 }
 
-function normalizeWelinkSessionId(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) {
+function normalizeWelinkSessionId(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.length > 0) {
     return value;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
   }
   return undefined;
 }
@@ -251,7 +254,7 @@ function normalizeIncomingStreamMessage(raw: Record<string, unknown>): StreamMes
   };
 }
 
-export function useSkillStream(sessionId: number | null): UseSkillStreamReturn {
+export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>('unknown');
@@ -265,7 +268,21 @@ export function useSkillStream(sessionId: number | null): UseSkillStreamReturn {
   const assemblersRef = useRef(new Map<string, StreamAssembler>());
   const activeMessageIdsRef = useRef(new Set<string>());
   const knownUserMessageIdsRef = useRef(new Set<string>());
-  const sessionIdRef = useRef<number | null>(sessionId);
+  const sessionIdRef = useRef<string | null>(sessionId);
+
+  const requestResume = useCallback(() => {
+    const ws = wsRef.current;
+    const currentSessionId = sessionIdRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !currentSessionId) {
+      return;
+    }
+
+    try {
+      ws.send(JSON.stringify({ action: 'resume' }));
+    } catch {
+      // Best-effort recovery only.
+    }
+  }, []);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -423,7 +440,7 @@ export function useSkillStream(sessionId: number | null): UseSkillStreamReturn {
 
   const handleStreamMessage = useCallback((msg: StreamMessage) => {
     const currentSessionId = sessionIdRef.current;
-    if (msg.welinkSessionId && (!currentSessionId || msg.welinkSessionId !== currentSessionId)) {
+    if (msg.welinkSessionId && (!currentSessionId || String(msg.welinkSessionId) !== String(currentSessionId))) {
       return;
     }
 
@@ -533,16 +550,20 @@ export function useSkillStream(sessionId: number | null): UseSkillStreamReturn {
         if (!cancelled && historyRequestRef.current === requestId) {
           const normalized = normalizeHistoryMessages(response.content as unknown as Array<Record<string, unknown>>);
           setMessages((prev) => mergeHistoryMessages(prev, normalized));
+          requestResume();
         }
       } catch {
         // History loading failure is non-fatal.
+        if (!cancelled && historyRequestRef.current === requestId) {
+          requestResume();
+        }
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [resetStreamingState, sessionId]);
+  }, [requestResume, resetStreamingState, sessionId]);
 
   const connect = useCallback(() => {
     ensureDevUserIdCookie();
@@ -555,6 +576,7 @@ export function useSkillStream(sessionId: number | null): UseSkillStreamReturn {
       reconnectAttemptRef.current = 0;
       setError(null);
       setSocketReady(true);
+      requestResume();
     };
 
     ws.onmessage = (event) => {
@@ -577,7 +599,7 @@ export function useSkillStream(sessionId: number | null): UseSkillStreamReturn {
       setSocketReady(false);
       scheduleReconnect();
     };
-  }, [handleStreamMessage]);
+  }, [handleStreamMessage, requestResume]);
 
   const scheduleReconnect = useCallback(() => {
     if (reconnectTimerRef.current) {

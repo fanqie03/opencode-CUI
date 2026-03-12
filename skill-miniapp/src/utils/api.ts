@@ -191,7 +191,7 @@ interface PaginatedResponse<T> {
 }
 
 interface BackendSession {
-  welinkSessionId?: number | null;
+  welinkSessionId?: string | number | null;
   userId?: string | null;
   ak?: string | null;
   title?: string | null;
@@ -216,7 +216,7 @@ function normalizeSessionStatus(status: string | null | undefined): Session['sta
 function normalizeSession(raw: BackendSession): Session {
   const createdAt = raw.createdAt ?? new Date().toISOString();
   return {
-    id: raw.welinkSessionId ?? 0,
+    id: raw.welinkSessionId != null ? String(raw.welinkSessionId) : '0',
     userId: raw.userId ?? undefined,
     ak: raw.ak ?? undefined,
     title: raw.title ?? '',
@@ -250,12 +250,12 @@ export function getSessions(
 }
 
 /** GET /api/skill/sessions/{id} */
-export function getSession(id: number): Promise<Session> {
+export function getSession(id: string | number): Promise<Session> {
   return request<BackendSession>(`/api/skill/sessions/${id}`).then(normalizeSession);
 }
 
 /** DELETE /api/skill/sessions/{id} */
-export function closeSession(id: number): Promise<void> {
+export function closeSession(id: string | number): Promise<void> {
   return request<void>(`/api/skill/sessions/${id}`, { method: 'DELETE' });
 }
 
@@ -265,7 +265,7 @@ export function closeSession(id: number): Promise<void> {
 
 /** POST /api/skill/sessions/{id}/messages */
 export function sendMessage(
-  sessionId: number,
+  sessionId: string | number,
   content: string,
   toolCallId?: string,
 ): Promise<Message> {
@@ -277,7 +277,7 @@ export function sendMessage(
 
 /** GET /api/skill/sessions/{id}/messages */
 export function getMessages(
-  sessionId: number,
+  sessionId: string | number,
   page = 0,
   size = 50,
 ): Promise<PaginatedResponse<Message>> {
@@ -288,11 +288,11 @@ export function getMessages(
 
 /** POST /api/skill/sessions/{id}/permissions/{permId} */
 export function replyPermission(
-  sessionId: number,
+  sessionId: string | number,
   permissionId: string,
   response: 'once' | 'always' | 'reject',
-): Promise<{ welinkSessionId: number; permissionId: string; response: string }> {
-  return request<{ welinkSessionId: number; permissionId: string; response: string }>(
+): Promise<{ welinkSessionId: string; permissionId: string; response: string }> {
+  return request<{ welinkSessionId: string; permissionId: string; response: string }>(
     `/api/skill/sessions/${sessionId}/permissions/${permissionId}`,
     {
       method: 'POST',
@@ -307,7 +307,7 @@ export function replyPermission(
 
 /** POST /api/skill/sessions/{id}/send-to-im */
 export function sendToIm(
-  sessionId: number,
+  sessionId: string | number,
   content: string,
   chatId: string,
 ): Promise<void> {

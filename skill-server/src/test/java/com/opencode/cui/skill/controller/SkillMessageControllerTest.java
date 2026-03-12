@@ -82,7 +82,7 @@ class SkillMessageControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         var body = (com.opencode.cui.skill.model.ApiResponse<ProtocolMessageView>) response.getBody();
         assertNotNull(body);
-        assertEquals(1L, body.getData().getWelinkSessionId());
+        assertEquals("1", body.getData().getWelinkSessionId());
         assertEquals("user", body.getData().getRole());
         verify(messagePersistenceService).finalizeActiveAssistantTurn(1L);
         verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("1"), eq("chat"), any());
@@ -171,7 +171,7 @@ class SkillMessageControllerTest {
         var response = controller.getMessages("1", 1L, 0, 50);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertNotNull(response.getBody());
-        assertEquals(1L, response.getBody().getData().getContent().get(0).getWelinkSessionId());
+        assertEquals("1", response.getBody().getData().getContent().get(0).getWelinkSessionId());
         assertEquals("assistant", response.getBody().getData().getContent().get(0).getRole());
         assertEquals("markdown", response.getBody().getData().getContent().get(0).getContentType());
         assertEquals("tool", response.getBody().getData().getContent().get(0).getParts().get(0).getType());
@@ -193,7 +193,7 @@ class SkillMessageControllerTest {
 
         var response = controller.replyPermission("1", 1L, "p-abc", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(1L, response.getBody().getData().get("welinkSessionId"));
+        assertEquals("1", response.getBody().getData().get("welinkSessionId"));
         assertEquals("p-abc", response.getBody().getData().get("permissionId"));
         assertEquals("once", response.getBody().getData().get("response"));
         verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("1"), eq("permission_reply"), any());

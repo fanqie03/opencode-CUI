@@ -1,5 +1,6 @@
 package com.opencode.cui.skill.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
@@ -24,6 +25,8 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class GatewayRelayServiceTest {
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Mock
     private SkillStreamHandler skillStreamHandler;
@@ -79,7 +82,9 @@ class GatewayRelayServiceTest {
 
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(redisMessageBroker).publishToUser(eq("user-1"), payloadCaptor.capture());
-        assertTrue(payloadCaptor.getValue().contains("\"welinkSessionId\":123"));
+        JsonNode published = readPublishedMessage(payloadCaptor.getValue());
+        assertEquals("123", published.path("sessionId").asText());
+        assertEquals(123L, published.path("message").path("welinkSessionId").asLong());
         verify(bufferService).accumulate(eq("123"), any(StreamMessage.class));
         verify(persistenceService).persistIfFinal(eq(123L), any(StreamMessage.class));
         verifyNoInteractions(skillStreamHandler);
@@ -132,7 +137,9 @@ class GatewayRelayServiceTest {
 
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(redisMessageBroker).publishToUser(eq("user-42"), payloadCaptor.capture());
-        assertTrue(payloadCaptor.getValue().contains("\"sessionStatus\":\"retry\""));
+        JsonNode published = readPublishedMessage(payloadCaptor.getValue());
+        assertEquals("retry", published.path("message").path("sessionStatus").asText());
+        assertEquals(42L, published.path("message").path("welinkSessionId").asLong());
     }
 
     @Test
@@ -196,7 +203,11 @@ class GatewayRelayServiceTest {
         String msg = "{\"type\":\"permission_request\",\"userId\":\"user-42\",\"welinkSessionId\":42,\"permissionId\":\"p-1\",\"command\":\"rm -rf /\",\"workingDirectory\":\"/tmp\"}";
         service.handleGatewayMessage(msg);
 
-        verify(redisMessageBroker).publishToUser(eq("user-42"), contains("permission.ask"));
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisMessageBroker).publishToUser(eq("user-42"), payloadCaptor.capture());
+        JsonNode published = readPublishedMessage(payloadCaptor.getValue());
+        assertEquals("permission.ask", published.path("message").path("type").asText());
+        assertEquals(42L, published.path("message").path("welinkSessionId").asLong());
     }
 
     @Test
@@ -218,7 +229,11 @@ class GatewayRelayServiceTest {
         service.handleGatewayMessage(msg);
 
         verify(sessionService).findByToolSessionId("ts-abc");
-        verify(redisMessageBroker).publishToUser(eq("user-42"), contains("text.delta"));
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisMessageBroker).publishToUser(eq("user-42"), payloadCaptor.capture());
+        JsonNode published = readPublishedMessage(payloadCaptor.getValue());
+        assertEquals("42", published.path("sessionId").asText());
+        assertEquals(42L, published.path("message").path("welinkSessionId").asLong());
     }
 
     @Test
@@ -263,14 +278,15 @@ class GatewayRelayServiceTest {
     }
 
     @Test
-    @DisplayName("sendInvokeToGateway serializes numeric welinkSessionId for create_session")
+    @DisplayName("sendInvokeToGateway serializes string welinkSessionId for create_session")
     void sendInvokeSerializesNumericWelinkSessionId() {
         when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
         when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
 
         service.sendInvokeToGateway("agent-1", "user-1", "42", "create_session", "{\"title\":\"demo\"}");
 
-        verify(gatewayRelayTarget).sendToGateway(contains("\"welinkSessionId\":42"));
+        // welinkSessionId 应作为字符串序列化，防止 JavaScript IEEE 754 大数精度丢失
+        verify(gatewayRelayTarget).sendToGateway(contains("\"welinkSessionId\":\"42\""));
     }
 
     @Test
@@ -312,5 +328,68 @@ class GatewayRelayServiceTest {
         service.handleGatewayMessage("{\"type\":\"tool_event\",\"welinkSessionId\":123,\"event\":{\"data\":\"hello\"}}");
 
         verify(redisMessageBroker).publishToUser(eq("user-123"), contains("text.delta"));
+    }
+
+    @Test
+    @DisplayName("tool_done with toolSessionId resolves via DB lookup and publishes welinkSessionId")
+    void toolDoneUsesRecoveredSessionAffinity() {
+        SkillSession session = new SkillSession();
+        session.setId(42L);
+        session.setUserId("user-42");
+        when(sessionService.findByToolSessionId("ts-abc")).thenReturn(session);
+        when(sessionService.getSession(42L)).thenReturn(session);
+
+        service.handleGatewayMessage("{\"type\":\"tool_done\",\"toolSessionId\":\"ts-abc\"}");
+
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisMessageBroker).publishToUser(eq("user-42"), payloadCaptor.capture());
+        JsonNode published = readPublishedMessage(payloadCaptor.getValue());
+        assertEquals("42", published.path("sessionId").asText());
+        assertEquals(42L, published.path("message").path("welinkSessionId").asLong());
+        assertEquals("idle", published.path("message").path("sessionStatus").asText());
+    }
+
+    @Test
+    @DisplayName("tool_error with unresolved toolSessionId is dropped without side effects")
+    void toolErrorWithoutResolvedSessionIsDropped() {
+        when(sessionService.findByToolSessionId("missing")).thenReturn(null);
+
+        service.handleGatewayMessage("{\"type\":\"tool_error\",\"toolSessionId\":\"missing\",\"error\":\"timeout\"}");
+
+        verify(redisMessageBroker, never()).publishToUser(any(), any());
+        verify(messageService, never()).saveSystemMessage(any(), any());
+        verify(persistenceService, never()).finalizeActiveAssistantTurn(any());
+    }
+
+    @Test
+    @DisplayName("tool_event publishes only to the user owning the resolved session")
+    void toolEventPublishesOnlyToResolvedSessionOwner() {
+        SkillSession session = new SkillSession();
+        session.setId(42L);
+        session.setUserId("user-a");
+        when(sessionService.findByToolSessionId("ts-a")).thenReturn(session);
+        when(sessionService.getSession(42L)).thenReturn(session);
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.TEXT_DELTA)
+                .sessionId("999")
+                .partId("part-1")
+                .content("hello")
+                .build());
+
+        service.handleGatewayMessage("{\"type\":\"tool_event\",\"toolSessionId\":\"ts-a\",\"event\":{\"data\":\"hello\"}}");
+
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisMessageBroker).publishToUser(eq("user-a"), payloadCaptor.capture());
+        JsonNode published = readPublishedMessage(payloadCaptor.getValue());
+        assertEquals("42", published.path("sessionId").asText());
+        assertEquals(42L, published.path("message").path("welinkSessionId").asLong());
+    }
+
+    private JsonNode readPublishedMessage(String payload) {
+        try {
+            return objectMapper.readTree(payload);
+        } catch (Exception e) {
+            throw new AssertionError("Failed to parse published payload", e);
+        }
     }
 }

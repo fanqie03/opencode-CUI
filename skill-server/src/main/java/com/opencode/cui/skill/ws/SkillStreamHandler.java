@@ -269,6 +269,13 @@ public class SkillStreamHandler extends TextWebSocketHandler {
             JsonNode node = objectMapper.readTree(rawMessage);
             if (node.has("message")) {
                 StreamMessage msg = objectMapper.treeToValue(node.get("message"), StreamMessage.class);
+                String sessionId = node.path("sessionId").asText(null);
+                if (sessionId != null && !sessionId.isBlank()) {
+                    msg.setSessionId(sessionId);
+                    if (msg.getWelinkSessionId() == null) {
+                        msg.setWelinkSessionId(sessionId);
+                    }
+                }
                 pushStreamMessageToUser(userId, msg);
                 return;
             }
@@ -476,12 +483,8 @@ public class SkillStreamHandler extends TextWebSocketHandler {
             node.putNull("welinkSessionId");
             return;
         }
-        try {
-            node.put("welinkSessionId", Long.parseLong(sessionId));
-        } catch (NumberFormatException e) {
-            log.warn("Skipping non-numeric welinkSessionId in stream payload: sessionId={}", sessionId);
-            node.putNull("welinkSessionId");
-        }
+        // 以字符串传输，防止 JavaScript IEEE 754 大数精度丢失
+        node.put("welinkSessionId", sessionId);
     }
 
     private long nextTransportSeq(String sessionId) {

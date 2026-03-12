@@ -40,7 +40,7 @@ function estimatePayloadBytes(payload: unknown): number | undefined {
 /** Shape of a downstream invoke message received from the gateway. */
 interface InvokeMessage {
   type: 'invoke';
-  welinkSessionId?: number;
+  welinkSessionId?: string | number;
   action: string;
   payload: Record<string, unknown>;
 }
@@ -619,7 +619,7 @@ export class EventRelay {
    * Optionally includes a `reason` for semantic error classification.
    */
   private trySendError(
-    welinkSessionId: number | undefined,
+    welinkSessionId: string | number | undefined,
     toolSessionId: string | undefined,
     err: unknown,
     reason?: string,

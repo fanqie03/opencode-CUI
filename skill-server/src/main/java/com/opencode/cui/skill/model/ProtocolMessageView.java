@@ -16,7 +16,7 @@ import java.util.List;
 public class ProtocolMessageView {
 
     private String id;
-    private Long welinkSessionId;
+    private String welinkSessionId;
     private Integer seq;
     private Integer messageSeq;
     private String role;

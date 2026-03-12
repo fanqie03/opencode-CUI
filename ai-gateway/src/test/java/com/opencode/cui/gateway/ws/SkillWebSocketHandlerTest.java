@@ -109,7 +109,7 @@ class SkillWebSocketHandlerTest {
                 argThat(message -> "invoke".equals(message.getType())
                         && "skill-server".equals(message.getSource())
                         && "ak_test_001".equals(message.getAk())
-                        && Long.valueOf(42L).equals(message.getWelinkSessionId())));
+                        && "42".equals(message.getWelinkSessionId())));
     }
 
     @Test

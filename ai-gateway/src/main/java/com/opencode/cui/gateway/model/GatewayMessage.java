@@ -32,8 +32,8 @@ public class GatewayMessage {
     /** Agent AK identifier used for routing */
     private String ak;
 
-    /** Skill session identifier from Layer2/3 protocol */
-    private Long welinkSessionId;
+    /** Skill session identifier from Layer2/3 protocol (String to prevent JS precision loss) */
+    private String welinkSessionId;
 
     /** User identifier trusted by server-side routing */
     private String userId;
@@ -134,7 +134,7 @@ public class GatewayMessage {
                 .build();
     }
 
-    public static GatewayMessage sessionCreated(Long welinkSessionId, String toolSessionId) {
+    public static GatewayMessage sessionCreated(String welinkSessionId, String toolSessionId) {
         return GatewayMessage.builder()
                 .type("session_created")
                 .welinkSessionId(welinkSessionId)
@@ -158,7 +158,7 @@ public class GatewayMessage {
                 .build();
     }
 
-    public static GatewayMessage invoke(String ak, Long welinkSessionId,
+    public static GatewayMessage invoke(String ak, String welinkSessionId,
             String action, JsonNode payload) {
         return GatewayMessage.builder()
                 .type("invoke")

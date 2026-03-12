@@ -23,6 +23,7 @@ import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
+import java.util.function.Consumer;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -123,11 +124,11 @@ class SkillStreamHandlerTest {
         var json = new ObjectMapper().readTree(payload);
         Assertions.assertEquals("snapshot", json.path("type").asText());
         Assertions.assertTrue(json.path("seq").asLong() > 0);
-        Assertions.assertTrue(json.path("welinkSessionId").isIntegralNumber());
-        Assertions.assertEquals(42L, json.path("welinkSessionId").asLong());
+        Assertions.assertTrue(json.path("welinkSessionId").isTextual());
+        Assertions.assertEquals("42", json.path("welinkSessionId").asText());
         Assertions.assertEquals("msg_42_1", json.path("messages").get(0).path("id").asText());
-        Assertions.assertTrue(json.path("messages").get(0).path("welinkSessionId").isIntegralNumber());
-        Assertions.assertEquals(42L, json.path("messages").get(0).path("welinkSessionId").asLong());
+        Assertions.assertTrue(json.path("messages").get(0).path("welinkSessionId").isTextual());
+        Assertions.assertEquals("42", json.path("messages").get(0).path("welinkSessionId").asText());
         Assertions.assertEquals("tool", json.path("messages").get(0).path("parts").get(0).path("type").asText());
         Assertions.assertEquals("completed", json.path("messages").get(0).path("parts").get(0).path("status").asText());
         Assertions.assertEquals("pwd",
@@ -350,6 +351,39 @@ class SkillStreamHandlerTest {
         verify(redisMessageBroker, times(1)).subscribeToUser(eq("10001"), any());
         verify(redisMessageBroker, never()).unsubscribeFromUser("10001");
         verify(second, atLeastOnce()).sendMessage(any(TextMessage.class));
+    }
+
+    @Test
+    @DisplayName("redis user broadcast preserves welinkSessionId when relaying to websocket clients")
+    @SuppressWarnings("unchecked")
+    void redisBroadcastPreservesWelinkSessionId() throws Exception {
+        WebSocketSession session = mockSession("/ws/skill/stream", "userId=10001");
+        SkillSession activeSession = new SkillSession();
+        activeSession.setId(42L);
+        activeSession.setUserId("10001");
+        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(activeSession));
+        when(messageService.getAllMessages(42L)).thenReturn(List.of());
+        when(bufferService.isSessionStreaming("42")).thenReturn(false);
+        when(bufferService.getStreamingParts("42")).thenReturn(List.of());
+
+        ArgumentCaptor<Consumer<String>> consumerCaptor = ArgumentCaptor.forClass((Class<Consumer<String>>) (Class<?>) Consumer.class);
+
+        handler.afterConnectionEstablished(session);
+        verify(redisMessageBroker).subscribeToUser(eq("10001"), consumerCaptor.capture());
+
+        reset(session);
+        when(session.isOpen()).thenReturn(true);
+
+        consumerCaptor.getValue().accept("""
+                {"sessionId":"42","userId":"10001","message":{"type":"text.delta","content":"hello","welinkSessionId":42}}
+                """);
+
+        ArgumentCaptor<TextMessage> textCaptor = ArgumentCaptor.forClass(TextMessage.class);
+        verify(session).sendMessage(textCaptor.capture());
+        var json = new ObjectMapper().readTree(textCaptor.getValue().getPayload());
+        Assertions.assertEquals("text.delta", json.path("type").asText());
+        Assertions.assertEquals("42", json.path("welinkSessionId").asText());
+        Assertions.assertTrue(json.path("seq").asLong() > 0);
     }
 
     private WebSocketSession mockSession(String uri, String cookieHeader) throws Exception {

@@ -3,8 +3,8 @@ import type { Session } from '../protocol/types';
 
 interface SessionSidebarProps {
   sessions: Session[];
-  activeSessionId: number | null;
-  onSelect: (sessionId: number) => void;
+  activeSessionId: string | null;
+  onSelect: (sessionId: string) => void;
   onNewSession: () => void;
 }
 

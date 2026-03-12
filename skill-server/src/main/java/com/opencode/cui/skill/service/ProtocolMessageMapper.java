@@ -21,7 +21,7 @@ public final class ProtocolMessageMapper {
             ObjectMapper objectMapper) {
         return ProtocolMessageView.builder()
                 .id(resolveMessageId(message))
-                .welinkSessionId(message.getSessionId())
+                .welinkSessionId(message.getSessionId() != null ? message.getSessionId().toString() : null)
                 .seq(message.getSeq())
                 .messageSeq(message.getMessageSeq() != null ? message.getMessageSeq() : message.getSeq())
                 .role(message.getRole() != null ? message.getRole().name().toLowerCase() : null)

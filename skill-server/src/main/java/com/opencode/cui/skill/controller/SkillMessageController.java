@@ -275,7 +275,7 @@ public class SkillMessageController {
                 sessionId, permId, request.getResponse());
 
         return ResponseEntity.ok(ApiResponse.ok(Map.of(
-                "welinkSessionId", sessionId,
+                "welinkSessionId", sessionId.toString(),
                 "permissionId", permId,
                 "response", request.getResponse())));
     }

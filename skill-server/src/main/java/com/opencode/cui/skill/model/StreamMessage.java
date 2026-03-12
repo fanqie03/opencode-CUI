@@ -26,6 +26,7 @@ public class StreamMessage {
 
     @JsonIgnore
     private String sessionId;
+    private String welinkSessionId;
     private String emittedAt;
     private Object raw;
 
@@ -98,14 +99,10 @@ public class StreamMessage {
     }
 
     @JsonProperty("welinkSessionId")
-    public Long getWelinkSessionId() {
-        if (sessionId == null || sessionId.isBlank()) {
-            return null;
+    public String getWelinkSessionId() {
+        if (welinkSessionId != null) {
+            return welinkSessionId;
         }
-        try {
-            return Long.valueOf(sessionId);
-        } catch (NumberFormatException e) {
-            return null;
-        }
+        return (sessionId != null && !sessionId.isBlank()) ? sessionId : null;
     }
 }

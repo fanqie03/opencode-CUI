@@ -12,7 +12,7 @@ import { useAgentSelector } from '../hooks/useAgentSelector';
 interface SkillMainProps {
   onCollapse: () => void;
   /** Pre-selected session ID (e.g. from the initial SKILL trigger flow). */
-  initialSessionId?: number | null;
+  initialSessionId?: string | null;
   /** IM chat ID for the "send to IM" feature. */
   imChatId?: string;
 }

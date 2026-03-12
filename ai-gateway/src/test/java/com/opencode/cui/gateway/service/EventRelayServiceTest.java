@@ -96,7 +96,7 @@ class EventRelayServiceTest {
         when(skillRelayService.relayToSkill(any())).thenReturn(true);
         when(redisMessageBroker.getAgentUser("ak_test_001")).thenReturn("user-1");
         when(redisMessageBroker.getAgentSource("ak_test_001")).thenReturn("skill-server");
-        GatewayMessage msg = GatewayMessage.builder().type("tool_event").welinkSessionId(42L).build();
+        GatewayMessage msg = GatewayMessage.builder().type("tool_event").welinkSessionId("42").build();
 
         service.relayToSkillServer("ak_test_001", msg);
 

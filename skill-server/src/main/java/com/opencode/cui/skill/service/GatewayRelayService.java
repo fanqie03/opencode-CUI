@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.Iterator;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -116,12 +117,8 @@ public class GatewayRelayService {
             message.put("userId", userId);
         }
         if ("create_session".equals(action) && sessionId != null && !sessionId.isBlank()) {
-            try {
-                message.put("welinkSessionId", Long.parseLong(sessionId));
-            } catch (NumberFormatException e) {
-                log.warn("Skipping non-numeric welinkSessionId in invoke payload: action={}, sessionId={}",
-                        action, sessionId);
-            }
+            // 使用字符串传输 welinkSessionId，防止 JavaScript IEEE 754 大数精度丢失
+            message.put("welinkSessionId", sessionId);
         }
         message.put("action", action);
 
@@ -184,7 +181,7 @@ public class GatewayRelayService {
 
         // Resolve welinkSessionId: prefer explicit sessionId, fallback to toolSessionId
         // DB lookup
-        String sessionId = resolveSessionId(node);
+        String sessionId = requiresSessionAffinity(type) ? resolveSessionId(type, node) : null;
 
         // Trace: log key fields for full-chain debugging
         log.debug("Gateway message dispatch: type={}, sessionId={}, ak={}, userId={}",
@@ -207,7 +204,7 @@ public class GatewayRelayService {
      * Accepts protocol fields only: explicit welinkSessionId, otherwise
      * resolve via toolSessionId -> DB lookup.
      */
-    private String resolveSessionId(JsonNode node) {
+    private String resolveSessionId(String messageType, JsonNode node) {
         String sessionId = node.path("welinkSessionId").asText(null);
         if (sessionId != null) {
             return sessionId;
@@ -219,17 +216,30 @@ public class GatewayRelayService {
             try {
                 SkillSession session = sessionService.findByToolSessionId(toolSessionId);
                 if (session != null) {
-                    log.debug("Resolved toolSessionId={} → welinkSessionId={}", toolSessionId, session.getId());
+                    log.debug("Resolved session affinity: type={}, toolSessionId={} -> welinkSessionId={}",
+                            messageType, toolSessionId, session.getId());
                     return session.getId().toString();
                 } else {
-                    log.warn("No session found for toolSessionId={}", toolSessionId);
+                    log.warn("Dropping upstream message: type={}, toolSessionId={}, reason=session_not_found",
+                            messageType, toolSessionId);
                 }
             } catch (Exception e) {
-                log.error("Failed to resolve toolSessionId={}: {}", toolSessionId, e.getMessage());
+                log.error("Failed to resolve upstream session affinity: type={}, toolSessionId={}, reason={}",
+                        messageType, toolSessionId, e.getMessage());
             }
+        } else {
+            log.warn("Dropping upstream message: type={}, toolSessionId=<missing>, reason=no_session_identifier, keys={}",
+                    messageType, fieldNames(node));
         }
 
         return null;
+    }
+
+    private boolean requiresSessionAffinity(String messageType) {
+        return switch (messageType) {
+            case "tool_event", "tool_done", "tool_error", "permission_request" -> true;
+            default -> false;
+        };
     }
 
     // ==================== Message Handlers ====================
@@ -564,6 +574,7 @@ public class GatewayRelayService {
         // Frontend WS routing expects the skill session id here, not the OpenCode tool
         // session id.
         msg.setSessionId(sessionId);
+        msg.setWelinkSessionId(sessionId);
         if (msg.getEmittedAt() == null || msg.getEmittedAt().isBlank()) {
             msg.setEmittedAt(Instant.now().toString());
         }
@@ -603,5 +614,20 @@ public class GatewayRelayService {
         } catch (Exception e) {
             log.error("Failed to request recovery for session {}: {}", sessionId, e.getMessage());
         }
+    }
+
+
+
+
+    private String fieldNames(JsonNode node) {
+        StringBuilder names = new StringBuilder();
+        Iterator<String> iterator = node.fieldNames();
+        while (iterator.hasNext()) {
+            if (!names.isEmpty()) {
+                names.append(',');
+            }
+            names.append(iterator.next());
+        }
+        return names.toString();
     }
 }
