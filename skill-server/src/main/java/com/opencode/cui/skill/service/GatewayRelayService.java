@@ -251,6 +251,32 @@ public class GatewayRelayService {
             return;
         }
 
+        // User 消息去重：区分 miniapp echo 和 opencode CLI 来源
+        if ("user".equals(msg.getRole())) {
+            try {
+                Long numericSessionId = Long.parseLong(sessionId);
+                if (persistenceService.consumePendingUserMessage(numericSessionId)) {
+                    log.debug("Skipping miniapp user message echo for session {}", sessionId);
+                    return;
+                }
+                // opencode CLI 发出的 user 消息 → 持久化 + 广播
+                String content = msg.getContent() != null ? msg.getContent() : "";
+                if (!content.isBlank()) {
+                    messageService.saveUserMessage(numericSessionId, content);
+                    log.info("Persisted user message from opencode CLI: sessionId={}, len={}",
+                            sessionId, content.length());
+                }
+            } catch (NumberFormatException e) {
+                log.warn("Cannot process user message: sessionId is not a valid Long: {}", sessionId);
+            } catch (Exception e) {
+                log.error("Failed to persist CLI user message for session {}: {}",
+                        sessionId, e.getMessage(), e);
+            }
+            // 广播到 miniapp（无论是否持久化成功）
+            broadcastStreamMessage(sessionId, userId, msg);
+            return;
+        }
+
         // Broadcast to all subscribers via Skill Redis
         broadcastStreamMessage(sessionId, userId, msg);
 

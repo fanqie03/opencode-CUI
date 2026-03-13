@@ -2,6 +2,8 @@ package com.opencode.cui.skill.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillMessagePart;
 import com.opencode.cui.skill.model.StreamMessage;
@@ -10,8 +12,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-
+import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Persists streamed assistant output and maintains stable message identity.
@@ -26,6 +29,15 @@ public class MessagePersistenceService {
     private final SnowflakeIdGenerator snowflakeIdGenerator;
 
     private final ConcurrentHashMap<Long, ActiveMessageRef> activeMessages = new ConcurrentHashMap<>();
+
+    /**
+     * 去重缓存：miniapp 发消息后标记 pending，收到 OpenCode 回传的 user message echo 时消费。
+     * 未被消费的标记 5 分钟后过期，防止内存泄漏。
+     */
+    private final Cache<Long, AtomicInteger> pendingUserMessages = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofMinutes(5))
+            .maximumSize(10_000)
+            .build();
 
     public MessagePersistenceService(SkillMessageService messageService,
             SkillMessagePartRepository partRepository,
@@ -77,6 +89,31 @@ public class MessagePersistenceService {
      */
     public void clearSession(Long sessionId) {
         activeMessages.remove(sessionId);
+    }
+
+    /**
+     * 标记 miniapp 发出的 user message，供后续去重。
+     * 当 OpenCode 回传 user message echo 时，可通过 consumePendingUserMessage 判断是否为 echo。
+     */
+    public void markPendingUserMessage(Long sessionId) {
+        pendingUserMessages.asMap()
+                .computeIfAbsent(sessionId, k -> new AtomicInteger(0))
+                .incrementAndGet();
+        log.debug("Marked pending user message for session {}", sessionId);
+    }
+
+    /**
+     * 消费一个 pending user message 标记。
+     * @return true 表示当前消息是 miniapp echo（应跳过），false 表示来自 opencode CLI（应处理）
+     */
+    public boolean consumePendingUserMessage(Long sessionId) {
+        AtomicInteger count = pendingUserMessages.getIfPresent(sessionId);
+        if (count != null && count.get() > 0) {
+            count.decrementAndGet();
+            log.debug("Consumed pending user message for session {} (echo from miniapp)", sessionId);
+            return true;
+        }
+        return false;
     }
 
     /**

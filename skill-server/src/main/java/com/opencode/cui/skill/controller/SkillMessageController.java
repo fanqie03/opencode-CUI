@@ -99,6 +99,8 @@ public class SkillMessageController {
         // Persist user message
         messagePersistenceService.finalizeActiveAssistantTurn(numericSessionId);
         SkillMessage message = messageService.saveUserMessage(numericSessionId, request.getContent());
+        // 标记待去重，防止 OpenCode 回传的 user message echo 重复入库
+        messagePersistenceService.markPendingUserMessage(numericSessionId);
 
         // Send invoke to AI-Gateway to trigger OpenCode processing
         if (session.getAk() != null) {

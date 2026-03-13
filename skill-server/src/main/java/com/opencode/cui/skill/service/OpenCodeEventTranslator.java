@@ -551,7 +551,8 @@ public class OpenCodeEventTranslator {
     }
 
     private boolean shouldIgnoreMessage(String role) {
-        return "user".equals(ProtocolUtils.normalizeRole(role));
+        // 不再在 translator 层过滤 user 消息，去重由 GatewayRelayService 负责
+        return false;
     }
 
 
