@@ -32,6 +32,9 @@ public class OpenCodeEventTranslator {
             .expireAfterAccess(Duration.ofHours(2)).maximumSize(10_000).build();
     private final Cache<String, String> messageRoles = Caffeine.newBuilder()
             .expireAfterAccess(Duration.ofHours(2)).maximumSize(10_000).build();
+    // 缓存每个 messageId 的最终文本内容，用于当 message.updated(role=user) 到达时回溯获取用户文本
+    private final Cache<String, String> messageTexts = Caffeine.newBuilder()
+            .expireAfterAccess(Duration.ofMinutes(10)).maximumSize(10_000).build();
 
     public OpenCodeEventTranslator(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
@@ -165,6 +168,10 @@ public class OpenCodeEventTranslator {
             Integer partSeq, JsonNode part, String delta, String role) {
         String type = delta != null ? StreamMessage.Types.TEXT_DELTA : StreamMessage.Types.TEXT_DONE;
         String content = delta != null ? delta : part.path("text").asText("");
+        // TEXT_DONE 时缓存文本，供 translateMessageUpdated(role=user) 回溯使用
+        if (delta == null && sessionId != null && messageId != null && !content.isBlank()) {
+            messageTexts.put(messageCacheKey(sessionId, messageId), content);
+        }
         return partBuilder(type, sessionId, messageId, partId, partSeq, role)
                 .content(content)
                 .build();
@@ -337,7 +344,24 @@ public class OpenCodeEventTranslator {
         String role = ProtocolUtils.normalizeRole(info.path("role").asText(null));
         rememberMessageRole(sessionId, messageId, role);
 
-        if (!info.has("finish") || shouldIgnoreMessage(role)) {
+        // 当 role=user 时，尝试从缓存中获取该消息的文本内容并作为 TEXT_DONE 发射
+        // 这解决了 message.part.updated 先到但 role 未知的时序问题
+        if ("user".equals(role)) {
+            String cachedText = messageTexts.getIfPresent(messageCacheKey(sessionId, messageId));
+            if (cachedText != null) {
+                messageTexts.invalidate(messageCacheKey(sessionId, messageId));
+                log.info("Emitting user TEXT_DONE from cache: sessionId={}, messageId={}, len={}",
+                        sessionId, messageId, cachedText.length());
+                return messageBuilder(StreamMessage.Types.TEXT_DONE, sessionId, messageId, role)
+                        .content(cachedText)
+                        .build();
+            }
+            // 文本还没到（message.updated 先于 message.part.updated 到达），
+            // role 已缓存，后续 part 事件会正常走 translatePartUpdated 处理
+            return null;
+        }
+
+        if (!info.has("finish")) {
             return null;
         }
 
@@ -551,8 +575,7 @@ public class OpenCodeEventTranslator {
     }
 
     private boolean shouldIgnoreMessage(String role) {
-        // 不再在 translator 层过滤 user 消息，去重由 GatewayRelayService 负责
-        return false;
+        return "user".equals(ProtocolUtils.normalizeRole(role));
     }
 
 

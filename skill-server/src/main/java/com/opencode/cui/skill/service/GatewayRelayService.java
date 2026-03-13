@@ -251,28 +251,37 @@ public class GatewayRelayService {
             return;
         }
 
-        // User 消息去重：区分 miniapp echo 和 opencode CLI 来源
+        // User 消息处理：只关注 TEXT_DONE（包含最终文本内容）
+        // 跳过 TEXT_DELTA / STEP_DONE / THINKING_DONE 等中间态或元数据事件，
+        // 避免产生空白气泡或干扰前端状态机
         if ("user".equals(msg.getRole())) {
+            if (!StreamMessage.Types.TEXT_DONE.equals(msg.getType())) {
+                log.debug("Skipping non-text user event for session {}: type={}", sessionId, msg.getType());
+                return;
+            }
+            String content = msg.getContent() != null ? msg.getContent() : "";
+            if (content.isBlank()) {
+                log.debug("Skipping blank user TEXT_DONE for session {}", sessionId);
+                return;
+            }
+            // 去重：miniapp echo vs opencode CLI
             try {
                 Long numericSessionId = Long.parseLong(sessionId);
                 if (persistenceService.consumePendingUserMessage(numericSessionId)) {
                     log.debug("Skipping miniapp user message echo for session {}", sessionId);
                     return;
                 }
-                // opencode CLI 发出的 user 消息 → 持久化 + 广播
-                String content = msg.getContent() != null ? msg.getContent() : "";
-                if (!content.isBlank()) {
-                    messageService.saveUserMessage(numericSessionId, content);
-                    log.info("Persisted user message from opencode CLI: sessionId={}, len={}",
-                            sessionId, content.length());
-                }
+                // opencode CLI 发出的 user 消息 → 持久化
+                messageService.saveUserMessage(numericSessionId, content);
+                log.info("Persisted user message from opencode CLI: sessionId={}, len={}",
+                        sessionId, content.length());
             } catch (NumberFormatException e) {
                 log.warn("Cannot process user message: sessionId is not a valid Long: {}", sessionId);
             } catch (Exception e) {
                 log.error("Failed to persist CLI user message for session {}: {}",
                         sessionId, e.getMessage(), e);
             }
-            // 广播到 miniapp（无论是否持久化成功）
+            // 广播到 miniapp
             broadcastStreamMessage(sessionId, userId, msg);
             return;
         }
