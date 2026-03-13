@@ -150,16 +150,18 @@ public class SkillStreamHandler extends TextWebSocketHandler {
 
         TextMessage textMessage = new TextMessage(messageText);
         for (WebSocketSession ws : recipients) {
-            if (ws.isOpen()) {
-                try {
-                    ws.sendMessage(textMessage);
-                } catch (IOException e) {
-                    log.error("Failed to push StreamMessage to subscriber: sessionId={}, wsId={}, error={}",
-                            sessionId, ws.getId(), e.getMessage());
+            synchronized (ws) {
+                if (ws.isOpen()) {
+                    try {
+                        ws.sendMessage(textMessage);
+                    } catch (IOException e) {
+                        log.error("Failed to push StreamMessage to subscriber: sessionId={}, wsId={}, error={}",
+                                sessionId, ws.getId(), e.getMessage());
+                        unregisterSubscriber(ws);
+                    }
+                } else {
                     unregisterSubscriber(ws);
                 }
-            } else {
-                unregisterSubscriber(ws);
             }
         }
     }
@@ -185,16 +187,18 @@ public class SkillStreamHandler extends TextWebSocketHandler {
 
         TextMessage textMessage = new TextMessage(message);
         for (WebSocketSession ws : recipients) {
-            if (ws.isOpen()) {
-                try {
-                    ws.sendMessage(textMessage);
-                } catch (IOException e) {
-                    log.error("Failed to push message to subscriber: sessionId={}, wsId={}, error={}",
-                            sessionId, ws.getId(), e.getMessage());
+            synchronized (ws) {
+                if (ws.isOpen()) {
+                    try {
+                        ws.sendMessage(textMessage);
+                    } catch (IOException e) {
+                        log.error("Failed to push message to subscriber: sessionId={}, wsId={}, error={}",
+                                sessionId, ws.getId(), e.getMessage());
+                        unregisterSubscriber(ws);
+                    }
+                } else {
                     unregisterSubscriber(ws);
                 }
-            } else {
-                unregisterSubscriber(ws);
             }
         }
     }
@@ -308,16 +312,18 @@ public class SkillStreamHandler extends TextWebSocketHandler {
 
         TextMessage textMessage = new TextMessage(messageText);
         for (WebSocketSession ws : recipients) {
-            if (ws.isOpen()) {
-                try {
-                    ws.sendMessage(textMessage);
-                } catch (IOException e) {
-                    log.error("Failed to push user stream message: userId={}, wsId={}, error={}",
-                            userId, ws.getId(), e.getMessage());
+            synchronized (ws) {
+                if (ws.isOpen()) {
+                    try {
+                        ws.sendMessage(textMessage);
+                    } catch (IOException e) {
+                        log.error("Failed to push user stream message: userId={}, wsId={}, error={}",
+                                userId, ws.getId(), e.getMessage());
+                        unregisterSubscriber(ws);
+                    }
+                } else {
                     unregisterSubscriber(ws);
                 }
-            } else {
-                unregisterSubscriber(ws);
             }
         }
     }
@@ -333,30 +339,34 @@ public class SkillStreamHandler extends TextWebSocketHandler {
     }
 
     private void sendSnapshot(WebSocketSession session, String sessionId) {
-        if (!session.isOpen()) {
-            return;
-        }
-        try {
-            StreamMessage snapshotMsg = snapshotService.buildSnapshot(sessionId, nextTransportSeq(sessionId));
-            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(snapshotMsg)));
-            log.info("Snapshot sent: sessionId={}, messages={}",
-                    sessionId, snapshotMsg.getMessages() != null ? snapshotMsg.getMessages().size() : 0);
-        } catch (Exception e) {
-            log.error("Failed to send snapshot for session {}: {}", sessionId, e.getMessage(), e);
+        synchronized (session) {
+            if (!session.isOpen()) {
+                return;
+            }
+            try {
+                StreamMessage snapshotMsg = snapshotService.buildSnapshot(sessionId, nextTransportSeq(sessionId));
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(snapshotMsg)));
+                log.info("Snapshot sent: sessionId={}, messages={}",
+                        sessionId, snapshotMsg.getMessages() != null ? snapshotMsg.getMessages().size() : 0);
+            } catch (Exception e) {
+                log.error("Failed to send snapshot for session {}: {}", sessionId, e.getMessage(), e);
+            }
         }
     }
 
     private void sendStreamingState(WebSocketSession session, String sessionId) {
-        if (!session.isOpen()) {
-            return;
-        }
-        try {
-            StreamMessage streamingMsg = snapshotService.buildStreamingState(sessionId, nextTransportSeq(sessionId));
-            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(streamingMsg)));
-            log.info("Streaming state sent: sessionId={}, status={}",
-                    sessionId, streamingMsg.getSessionStatus());
-        } catch (Exception e) {
-            log.error("Failed to send streaming state for session {}: {}", sessionId, e.getMessage(), e);
+        synchronized (session) {
+            if (!session.isOpen()) {
+                return;
+            }
+            try {
+                StreamMessage streamingMsg = snapshotService.buildStreamingState(sessionId, nextTransportSeq(sessionId));
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(streamingMsg)));
+                log.info("Streaming state sent: sessionId={}, status={}",
+                        sessionId, streamingMsg.getSessionStatus());
+            } catch (Exception e) {
+                log.error("Failed to send streaming state for session {}: {}", sessionId, e.getMessage(), e);
+            }
         }
     }
 

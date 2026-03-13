@@ -1,15 +1,11 @@
 package com.opencode.cui.skill.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.opencode.cui.skill.model.SkillMessage;
-import com.opencode.cui.skill.model.SkillMessagePart;
 import com.opencode.cui.skill.model.StreamMessage;
-import com.opencode.cui.skill.repository.SkillMessagePartRepository;
-import com.opencode.cui.skill.service.SkillMessageService;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.service.RedisMessageBroker;
 import com.opencode.cui.skill.service.SkillSessionService;
-import com.opencode.cui.skill.service.StreamBufferService;
+import com.opencode.cui.skill.service.SnapshotService;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,7 +16,6 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.net.URI;
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.function.Consumer;
@@ -38,25 +33,20 @@ import static org.mockito.Mockito.when;
 class SkillStreamHandlerTest {
 
     private SkillStreamHandler handler;
-    private StreamBufferService bufferService;
+    private SnapshotService snapshotService;
     private SkillSessionService sessionService;
-    private SkillMessageService messageService;
-    private SkillMessagePartRepository partRepository;
     private RedisMessageBroker redisMessageBroker;
+    private ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
-        bufferService = mock(StreamBufferService.class);
+        snapshotService = mock(SnapshotService.class);
         sessionService = mock(SkillSessionService.class);
-        messageService = mock(SkillMessageService.class);
-        partRepository = mock(SkillMessagePartRepository.class);
         redisMessageBroker = mock(RedisMessageBroker.class);
         handler = new SkillStreamHandler(
-                new ObjectMapper(),
-                bufferService,
+                objectMapper,
                 sessionService,
-                messageService,
-                partRepository,
+                snapshotService,
                 redisMessageBroker);
     }
 
@@ -67,10 +57,13 @@ class SkillStreamHandlerTest {
         SkillSession activeSession = new SkillSession();
         activeSession.setId(42L);
         activeSession.setUserId("10001");
-        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(activeSession));
-        when(messageService.getAllMessages(42L)).thenReturn(List.of());
-        when(bufferService.isSessionStreaming("42")).thenReturn(false);
-        when(bufferService.getStreamingParts("42")).thenReturn(List.of());
+        when(snapshotService.getActiveSessionsForUser("10001")).thenReturn(List.of(activeSession));
+        when(snapshotService.buildSnapshot(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.SNAPSHOT).seq(1L)
+                        .sessionId("42").messages(List.of()).build());
+        when(snapshotService.buildStreamingState(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.STREAMING).seq(2L)
+                        .sessionId("42").sessionStatus("idle").build());
 
         handler.afterConnectionEstablished(session);
         handler.pushToSession("42", "delta", "hello");
@@ -86,34 +79,25 @@ class SkillStreamHandlerTest {
         SkillSession activeSession = new SkillSession();
         activeSession.setId(42L);
         activeSession.setUserId("10001");
-        SkillMessage message = SkillMessage.builder()
-                .id(10L)
-                .sessionId(42L)
-                .messageId("msg_42_1")
-                .messageSeq(1)
-                .role(SkillMessage.Role.ASSISTANT)
-                .content("Done")
-                .contentType(SkillMessage.ContentType.MARKDOWN)
-                .createdAt(LocalDateTime.of(2026, 3, 8, 12, 0))
-                .build();
-        SkillMessagePart part = SkillMessagePart.builder()
-                .messageId(10L)
-                .partId("part-1")
-                .seq(1)
-                .partType("tool")
-                .toolName("bash")
-                .toolCallId("call-1")
-                .toolStatus("completed")
-                .toolInput("{\"command\":\"pwd\"}")
-                .toolOutput("D:/work")
-                .toolTitle("Run pwd")
-                .build();
 
-        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(activeSession));
-        when(messageService.getAllMessages(42L)).thenReturn(List.of(message));
-        when(partRepository.findByMessageId(10L)).thenReturn(List.of(part));
-        when(bufferService.isSessionStreaming("42")).thenReturn(false);
-        when(bufferService.getStreamingParts("42")).thenReturn(List.of());
+        // 构建 snapshot 中的 protocol 消息结构
+        var msgNode = objectMapper.createObjectNode();
+        msgNode.put("id", "msg_42_1");
+        msgNode.put("welinkSessionId", "42");
+        msgNode.put("role", "assistant");
+        var partsArray = msgNode.putArray("parts");
+        var partNode = partsArray.addObject();
+        partNode.put("type", "tool");
+        partNode.put("status", "completed");
+        partNode.set("input", objectMapper.readTree("{\"command\":\"pwd\"}"));
+
+        when(snapshotService.getActiveSessionsForUser("10001")).thenReturn(List.of(activeSession));
+        when(snapshotService.buildSnapshot(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.SNAPSHOT).seq(1L)
+                        .sessionId("42").messages(List.of(msgNode)).build());
+        when(snapshotService.buildStreamingState(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.STREAMING).seq(2L)
+                        .sessionId("42").sessionStatus("idle").build());
 
         handler.afterConnectionEstablished(session);
 
@@ -121,7 +105,7 @@ class SkillStreamHandlerTest {
         verify(session, atLeastOnce()).sendMessage(captor.capture());
 
         String payload = captor.getAllValues().get(0).getPayload();
-        var json = new ObjectMapper().readTree(payload);
+        var json = objectMapper.readTree(payload);
         Assertions.assertEquals("snapshot", json.path("type").asText());
         Assertions.assertTrue(json.path("seq").asLong() > 0);
         Assertions.assertTrue(json.path("welinkSessionId").isTextual());
@@ -142,35 +126,27 @@ class SkillStreamHandlerTest {
         SkillSession activeSession = new SkillSession();
         activeSession.setId(42L);
         activeSession.setUserId("10001");
-        SkillMessage message = SkillMessage.builder()
-                .id(11L)
-                .sessionId(42L)
-                .messageId("msg_42_2")
-                .messageSeq(2)
-                .role(SkillMessage.Role.ASSISTANT)
-                .content("")
-                .contentType(SkillMessage.ContentType.MARKDOWN)
-                .createdAt(LocalDateTime.of(2026, 3, 8, 12, 1))
-                .build();
-        SkillMessagePart part = SkillMessagePart.builder()
-                .messageId(11L)
-                .partId("part-question-1")
-                .seq(1)
-                .partType("tool")
-                .toolName("question")
-                .toolCallId("call-question-1")
-                .toolStatus("running")
-                .toolInput(
-                        """
-                                {"questions":[{"header":"实现方案","question":"选 A 还是 B？","options":[{"label":"A","description":"只改最小范围"},{"label":"B","description":"做完整重构"}]}]}
-                                """)
-                .build();
 
-        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(activeSession));
-        when(messageService.getAllMessages(42L)).thenReturn(List.of(message));
-        when(partRepository.findByMessageId(11L)).thenReturn(List.of(part));
-        when(bufferService.isSessionStreaming("42")).thenReturn(false);
-        when(bufferService.getStreamingParts("42")).thenReturn(List.of());
+        // 构建包含 question 类型的 part
+        var msgNode = objectMapper.createObjectNode();
+        msgNode.put("id", "msg_42_2");
+        msgNode.put("welinkSessionId", "42");
+        var partsArray = msgNode.putArray("parts");
+        var partNode = partsArray.addObject();
+        partNode.put("type", "question");
+        partNode.put("header", "实现方案");
+        partNode.put("question", "选 A 还是 B？");
+        var optionsArray = partNode.putArray("options");
+        optionsArray.add("A");
+        optionsArray.add("B");
+
+        when(snapshotService.getActiveSessionsForUser("10001")).thenReturn(List.of(activeSession));
+        when(snapshotService.buildSnapshot(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.SNAPSHOT).seq(1L)
+                        .sessionId("42").messages(List.of(msgNode)).build());
+        when(snapshotService.buildStreamingState(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.STREAMING).seq(2L)
+                        .sessionId("42").sessionStatus("idle").build());
 
         handler.afterConnectionEstablished(session);
 
@@ -178,7 +154,7 @@ class SkillStreamHandlerTest {
         verify(session, atLeastOnce()).sendMessage(captor.capture());
 
         String payload = captor.getAllValues().get(0).getPayload();
-        var json = new ObjectMapper().readTree(payload);
+        var json = objectMapper.readTree(payload);
         var partJson = json.path("messages").get(0).path("parts").get(0);
         Assertions.assertEquals("question", partJson.path("type").asText());
         Assertions.assertEquals("实现方案", partJson.path("header").asText());
@@ -194,10 +170,13 @@ class SkillStreamHandlerTest {
         SkillSession activeSession = new SkillSession();
         activeSession.setId(42L);
         activeSession.setUserId("10001");
-        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(activeSession));
-        when(messageService.getAllMessages(42L)).thenReturn(List.of());
-        when(bufferService.isSessionStreaming("42")).thenReturn(false);
-        when(bufferService.getStreamingParts("42")).thenReturn(List.of());
+        when(snapshotService.getActiveSessionsForUser("10001")).thenReturn(List.of(activeSession));
+        when(snapshotService.buildSnapshot(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.SNAPSHOT).seq(1L)
+                        .sessionId("42").messages(List.of()).build());
+        when(snapshotService.buildStreamingState(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.STREAMING).seq(2L)
+                        .sessionId("42").sessionStatus("idle").build());
 
         handler.afterConnectionEstablished(session);
         reset(session);
@@ -210,7 +189,6 @@ class SkillStreamHandlerTest {
 
         ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
         verify(session, times(2)).sendMessage(captor.capture());
-        var objectMapper = new ObjectMapper();
         var first = objectMapper.readTree(captor.getAllValues().get(0).getPayload());
         var second = objectMapper.readTree(captor.getAllValues().get(1).getPayload());
         Assertions.assertEquals("snapshot", first.path("type").asText());
@@ -224,34 +202,24 @@ class SkillStreamHandlerTest {
         SkillSession activeSession = new SkillSession();
         activeSession.setId(42L);
         activeSession.setUserId("10001");
-        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(activeSession));
-        when(messageService.getAllMessages(42L)).thenReturn(List.of());
-        when(bufferService.isSessionStreaming("42")).thenReturn(true);
-        when(bufferService.getStreamingParts("42")).thenReturn(List.of(
-                StreamMessage.builder()
-                        .type(StreamMessage.Types.TEXT_DELTA)
-                        .sessionId("42")
-                        .messageId("msg-stream")
-                        .messageSeq(5)
-                        .role("assistant")
-                        .partId("part-text-1")
-                        .partSeq(1)
-                        .content("hello")
-                        .build(),
-                StreamMessage.builder()
-                        .type(StreamMessage.Types.TOOL_UPDATE)
-                        .sessionId("42")
-                        .messageId("msg-stream")
-                        .messageSeq(5)
-                        .role("assistant")
-                        .partId("part-tool-1")
-                        .partSeq(2)
-                        .toolName("bash")
-                        .toolCallId("call-1")
-                        .status("running")
-                        .input(new ObjectMapper().readTree("{\"command\":\"pwd\"}"))
-                        .output("")
-                        .build()));
+
+        // 构建 streaming 状态中的 protocol parts
+        var textPart = objectMapper.createObjectNode();
+        textPart.put("type", "text");
+        textPart.put("content", "hello");
+        var toolPart = objectMapper.createObjectNode();
+        toolPart.put("type", "tool");
+        toolPart.put("toolName", "bash");
+        toolPart.set("input", objectMapper.readTree("{\"command\":\"pwd\"}"));
+
+        when(snapshotService.getActiveSessionsForUser("10001")).thenReturn(List.of(activeSession));
+        when(snapshotService.buildSnapshot(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.SNAPSHOT).seq(1L)
+                        .sessionId("42").messages(List.of()).build());
+        when(snapshotService.buildStreamingState(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.STREAMING).seq(2L)
+                        .sessionId("42").sessionStatus("busy")
+                        .parts(List.of(textPart, toolPart)).build());
 
         handler.afterConnectionEstablished(session);
 
@@ -259,7 +227,7 @@ class SkillStreamHandlerTest {
         verify(session, atLeastOnce()).sendMessage(captor.capture());
 
         String payload = captor.getAllValues().get(1).getPayload();
-        var json = new ObjectMapper().readTree(payload);
+        var json = objectMapper.readTree(payload);
         Assertions.assertEquals("streaming", json.path("type").asText());
         Assertions.assertEquals("busy", json.path("sessionStatus").asText());
         Assertions.assertEquals("text", json.path("parts").get(0).path("type").asText());
@@ -277,17 +245,20 @@ class SkillStreamHandlerTest {
         SkillSession activeSession = new SkillSession();
         activeSession.setId(42L);
         activeSession.setUserId("10001");
-        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(activeSession));
-        when(messageService.getAllMessages(42L)).thenReturn(List.of());
-        when(bufferService.isSessionStreaming("42")).thenReturn(false);
-        when(bufferService.getStreamingParts("42")).thenReturn(List.of());
+        when(snapshotService.getActiveSessionsForUser("10001")).thenReturn(List.of(activeSession));
+        when(snapshotService.buildSnapshot(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.SNAPSHOT).seq(1L)
+                        .sessionId("42").messages(List.of()).build());
+        when(snapshotService.buildStreamingState(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.STREAMING).seq(2L)
+                        .sessionId("42").sessionStatus("idle").build());
 
         handler.afterConnectionEstablished(session);
 
         ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
         verify(session, atLeastOnce()).sendMessage(captor.capture());
         String payload = captor.getAllValues().get(1).getPayload();
-        var json = new ObjectMapper().readTree(payload);
+        var json = objectMapper.readTree(payload);
         Assertions.assertEquals("streaming", json.path("type").asText());
         Assertions.assertEquals("idle", json.path("sessionStatus").asText());
         Assertions.assertNotEquals("retry", json.path("sessionStatus").asText());
@@ -310,10 +281,13 @@ class SkillStreamHandlerTest {
         SkillSession skillSession = new SkillSession();
         skillSession.setId(42L);
         skillSession.setUserId("10001");
-        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(skillSession));
-        when(messageService.getAllMessages(42L)).thenReturn(List.of());
-        when(bufferService.isSessionStreaming("42")).thenReturn(false);
-        when(bufferService.getStreamingParts("42")).thenReturn(List.of());
+        when(snapshotService.getActiveSessionsForUser("10001")).thenReturn(List.of(skillSession));
+        when(snapshotService.buildSnapshot(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.SNAPSHOT).seq(1L)
+                        .sessionId("42").messages(List.of()).build());
+        when(snapshotService.buildStreamingState(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.STREAMING).seq(2L)
+                        .sessionId("42").sessionStatus("idle").build());
         when(session.isOpen()).thenReturn(false);
 
         handler.afterConnectionEstablished(session);
@@ -330,10 +304,13 @@ class SkillStreamHandlerTest {
         SkillSession activeSession = new SkillSession();
         activeSession.setId(42L);
         activeSession.setUserId("10001");
-        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(activeSession));
-        when(messageService.getAllMessages(42L)).thenReturn(List.of());
-        when(bufferService.isSessionStreaming("42")).thenReturn(false);
-        when(bufferService.getStreamingParts("42")).thenReturn(List.of());
+        when(snapshotService.getActiveSessionsForUser("10001")).thenReturn(List.of(activeSession));
+        when(snapshotService.buildSnapshot(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.SNAPSHOT).seq(1L)
+                        .sessionId("42").messages(List.of()).build());
+        when(snapshotService.buildStreamingState(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.STREAMING).seq(2L)
+                        .sessionId("42").sessionStatus("idle").build());
 
         handler.afterConnectionEstablished(first);
         handler.afterConnectionEstablished(second);
@@ -361,10 +338,13 @@ class SkillStreamHandlerTest {
         SkillSession activeSession = new SkillSession();
         activeSession.setId(42L);
         activeSession.setUserId("10001");
-        when(sessionService.findActiveByUserId("10001")).thenReturn(List.of(activeSession));
-        when(messageService.getAllMessages(42L)).thenReturn(List.of());
-        when(bufferService.isSessionStreaming("42")).thenReturn(false);
-        when(bufferService.getStreamingParts("42")).thenReturn(List.of());
+        when(snapshotService.getActiveSessionsForUser("10001")).thenReturn(List.of(activeSession));
+        when(snapshotService.buildSnapshot(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.SNAPSHOT).seq(1L)
+                        .sessionId("42").messages(List.of()).build());
+        when(snapshotService.buildStreamingState(eq("42"), any(Long.class))).thenReturn(
+                StreamMessage.builder().type(StreamMessage.Types.STREAMING).seq(2L)
+                        .sessionId("42").sessionStatus("idle").build());
 
         ArgumentCaptor<Consumer<String>> consumerCaptor = ArgumentCaptor.forClass((Class<Consumer<String>>) (Class<?>) Consumer.class);
 
@@ -380,7 +360,7 @@ class SkillStreamHandlerTest {
 
         ArgumentCaptor<TextMessage> textCaptor = ArgumentCaptor.forClass(TextMessage.class);
         verify(session).sendMessage(textCaptor.capture());
-        var json = new ObjectMapper().readTree(textCaptor.getValue().getPayload());
+        var json = objectMapper.readTree(textCaptor.getValue().getPayload());
         Assertions.assertEquals("text.delta", json.path("type").asText());
         Assertions.assertEquals("42", json.path("welinkSessionId").asText());
         Assertions.assertTrue(json.path("seq").asLong() > 0);

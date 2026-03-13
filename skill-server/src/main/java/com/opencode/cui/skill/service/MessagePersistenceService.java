@@ -256,7 +256,7 @@ public class MessagePersistenceService {
                 .id(snowflakeIdGenerator.nextId())
                 .messageId(active.dbId())
                 .sessionId(sessionId)
-                .partId(msg.getPartId() != null ? msg.getPartId() : "step-done-" + partSeq)
+                .partId(msg.getPartId() != null ? msg.getPartId() : "step-done-" + active.dbId() + "-" + partSeq)
                 .seq(partSeq)
                 .partType("step-finish")
                 .tokensIn(tokensIn)
@@ -265,7 +265,7 @@ public class MessagePersistenceService {
                 .finishReason(msg.getReason())
                 .build();
 
-        partRepository.insert(part);
+        partRepository.upsert(part);
         messageService.updateMessageStats(active.dbId(), tokensIn, tokensOut, msg.getCost());
         log.debug("Persisted step.done: sessionId={}, protocolId={}, tokensIn={}, tokensOut={}, cost={}",
                 sessionId, active.protocolMessageId(), tokensIn, tokensOut, msg.getCost());

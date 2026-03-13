@@ -35,17 +35,15 @@ class GatewayRelayServiceTest {
     @Mock
     private SkillSessionService sessionService;
     @Mock
-    private com.opencode.cui.skill.repository.SkillMessageRepository messageRepository;
-    @Mock
     private RedisMessageBroker redisMessageBroker;
-    @Mock
-    private SequenceTracker sequenceTracker;
     @Mock
     private OpenCodeEventTranslator translator;
     @Mock
     private MessagePersistenceService persistenceService;
     @Mock
     private StreamBufferService bufferService;
+    @Mock
+    private SessionRebuildService rebuildService;
     @Mock
     private GatewayRelayService.GatewayRelayTarget gatewayRelayTarget;
 
@@ -58,12 +56,11 @@ class GatewayRelayServiceTest {
                 skillStreamHandler,
                 messageService,
                 sessionService,
-                messageRepository,
                 redisMessageBroker,
-                sequenceTracker,
                 translator,
                 persistenceService,
-                bufferService);
+                bufferService,
+                rebuildService);
         service.setGatewayRelayTarget(gatewayRelayTarget);
     }
 
@@ -123,23 +120,9 @@ class GatewayRelayServiceTest {
     @Test
     @DisplayName("session rebuild broadcasts retry status")
     void sessionRebuildBroadcastsRetryStatus() {
-        SkillSession session = new SkillSession();
-        session.setId(42L);
-        session.setAk("agent-1");
-        session.setUserId("user-42");
-        session.setTitle("demo");
-        when(sessionService.getSession(42L)).thenReturn(session);
-        when(messageRepository.findLastUserMessage(42L)).thenReturn(null);
-        when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-        when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
-
         service.handleGatewayMessage("{\"type\":\"tool_error\",\"welinkSessionId\":42,\"error\":\"session_not_found\"}");
 
-        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
-        verify(redisMessageBroker).publishToUser(eq("user-42"), payloadCaptor.capture());
-        JsonNode published = readPublishedMessage(payloadCaptor.getValue());
-        assertEquals("retry", published.path("message").path("sessionStatus").asText());
-        assertEquals(42L, published.path("message").path("welinkSessionId").asLong());
+        verify(rebuildService).handleSessionNotFound(eq("42"), any(), any());
     }
 
     @Test
