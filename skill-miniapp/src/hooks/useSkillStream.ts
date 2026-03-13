@@ -345,7 +345,8 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
   const applyStreamedMessage = useCallback((msg: StreamMessage) => {
     const messageId = msg.messageId ?? msg.sourceMessageId ?? genId('stream');
     const role = normalizeRole(msg.role);
-    if (role === 'user' || knownUserMessageIdsRef.current.has(messageId)) {
+    // 只跳过已知的用户消息（miniapp 发送的），允许 OpenCode CLI 发出的 user 消息通过
+    if (knownUserMessageIdsRef.current.has(messageId)) {
       return;
     }
 
@@ -494,7 +495,9 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
 
       case 'session.error':
         finalizeAllStreamingMessages();
-        setError(msg.error ?? 'Session error');
+        if (msg.error) {
+          setError(msg.error);
+        }
         break;
 
       case 'session.title':

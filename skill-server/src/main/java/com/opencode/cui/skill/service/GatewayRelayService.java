@@ -556,10 +556,14 @@ public class GatewayRelayService {
                 && (msg.getEmittedAt() == null || msg.getEmittedAt().isBlank())) {
             msg.setEmittedAt(Instant.now().toString());
         }
-        try {
-            persistenceService.prepareMessageContext(Long.valueOf(sessionId), msg);
-        } catch (NumberFormatException e) {
-            log.warn("Cannot prepare stream message context: invalid sessionId={}", sessionId);
+        // User 消息已通过 saveUserMessage 独立持久化，
+        // 不应走 streaming 持久化管道，否则 resolveActiveMessage 会创建一条空内容的重复记录
+        if (!"user".equals(ProtocolUtils.normalizeRole(msg.getRole()))) {
+            try {
+                persistenceService.prepareMessageContext(Long.valueOf(sessionId), msg);
+            } catch (NumberFormatException e) {
+                log.warn("Cannot prepare stream message context: invalid sessionId={}", sessionId);
+            }
         }
     }
 

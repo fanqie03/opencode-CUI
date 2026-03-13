@@ -267,5 +267,8 @@ export function normalizeHistoryMessage(raw: BackendMessage): Message {
 }
 
 export function normalizeHistoryMessages(rawMessages: BackendMessage[]): Message[] {
-  return rawMessages.map(normalizeHistoryMessage);
+  return rawMessages
+    .map(normalizeHistoryMessage)
+    // 过滤掉空白的用户消息（服务端 bug 产生的残留记录）
+    .filter((msg) => !(msg.role === 'user' && !msg.content && (!msg.parts || msg.parts.length === 0)));
 }
