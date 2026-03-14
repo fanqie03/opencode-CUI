@@ -4,12 +4,15 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.ws.SkillStreamHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Iterator;
 
@@ -48,6 +51,15 @@ public class GatewayRelayService {
     private final SessionRebuildService rebuildService;
     private volatile GatewayRelayTarget gatewayRelayTarget;
 
+    /**
+     * 记录已完成（tool_done）的 sessionId，用于抑制 tool_done 后到达的乱序 tool_event。
+     * TTL 5 秒后自动过期，不影响同一 session 的后续正常对话。
+     */
+    private final Cache<String, Instant> completedSessions = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofSeconds(5))
+            .maximumSize(1_000)
+            .build();
+
     public GatewayRelayService(ObjectMapper objectMapper,
             SkillStreamHandler skillStreamHandler,
             SkillMessageService messageService,
@@ -83,6 +95,10 @@ public class GatewayRelayService {
      * @param payload   the action payload as a JSON string
      */
     public void sendInvokeToGateway(String ak, String userId, String sessionId, String action, String payload) {
+        // 发送新消息时清除已完成标记，防止新一轮对话的 tool_event 被误拦截
+        if ("chat".equals(action) && sessionId != null) {
+            completedSessions.invalidate(sessionId);
+        }
         ObjectNode message = objectMapper.createObjectNode();
         message.put("type", "invoke");
         message.put("ak", ak);
@@ -225,6 +241,13 @@ public class GatewayRelayService {
             return;
         }
 
+        // 抑制 tool_done 后到达的乱序 tool_event，
+        // 防止前端 isStreaming 在被 idle 重置后又被设回 true
+        if (completedSessions.getIfPresent(sessionId) != null) {
+            log.debug("Suppressing stale tool_event after tool_done: sessionId={}", sessionId);
+            return;
+        }
+
         // Ensure Redis subscription is active for this session (lazy subscribe)
 
         // Activate session if currently IDLE (IDLE → ACTIVE on first successful event)
@@ -307,6 +330,9 @@ public class GatewayRelayService {
             log.warn("tool_done missing sessionId, agentId={}", node.path("agentId").asText(null));
             return;
         }
+
+        // 标记 session 已完成，抑制后续乱序到达的 tool_event
+        completedSessions.put(sessionId, Instant.now());
 
         StreamMessage msg = StreamMessage.sessionStatus("idle");
         broadcastStreamMessage(sessionId, userId, msg);

@@ -222,12 +222,13 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         String akId = (String) session.getAttributes().get(ATTR_AK_ID);
 
         switch (type) {
-            case "register" -> handleRegister(session, message, userId, akId);
-            case "heartbeat" -> handleHeartbeat(session);
-            case "tool_event", "tool_done", "tool_error", "session_created",
-                    "permission_request" ->
+            case GatewayMessage.Type.REGISTER -> handleRegister(session, message, userId, akId);
+            case GatewayMessage.Type.HEARTBEAT -> handleHeartbeat(session);
+            case GatewayMessage.Type.TOOL_EVENT, GatewayMessage.Type.TOOL_DONE,
+                    GatewayMessage.Type.TOOL_ERROR, GatewayMessage.Type.SESSION_CREATED,
+                    GatewayMessage.Type.PERMISSION_REQUEST ->
                 handleRelayToSkillServer(session, message);
-            case "status_response" -> handleStatusResponse(session, message);
+            case GatewayMessage.Type.STATUS_RESPONSE -> handleStatusResponse(session, message);
             default -> log.warn("Unknown message type from PCAgent: type={}, sessionId={}",
                     type, session.getId());
         }

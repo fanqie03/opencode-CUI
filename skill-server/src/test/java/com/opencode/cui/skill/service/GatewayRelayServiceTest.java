@@ -368,6 +368,51 @@ class GatewayRelayServiceTest {
         assertEquals(42L, published.path("message").path("welinkSessionId").asLong());
     }
 
+    @Test
+    @DisplayName("tool_event after tool_done is suppressed")
+    void toolEventAfterToolDoneIsSuppressed() {
+        // Step 1: tool_done arrives → broadcasts idle
+        service.handleGatewayMessage("{\"type\":\"tool_done\",\"userId\":\"user-1\",\"welinkSessionId\":42}");
+        verify(redisMessageBroker).publishToUser(eq("user-1"), contains("session.status"));
+
+        // Step 2: stale tool_event arrives after tool_done → should be suppressed
+        service.handleGatewayMessage("{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"data\":\"stale\"}}");
+
+        // Translator should never be called for the suppressed event
+        verifyNoInteractions(translator);
+
+        // Redis should only have been called once (for tool_done idle), NOT for the stale tool_event
+        verify(redisMessageBroker, org.mockito.Mockito.times(1)).publishToUser(any(), any());
+    }
+
+    @Test
+    @DisplayName("new chat invoke after tool_done clears suppression")
+    void newChatInvokeAfterToolDoneClearsSuppression() {
+        // Step 1: tool_done arrives → session marked as completed
+        service.handleGatewayMessage("{\"type\":\"tool_done\",\"userId\":\"user-1\",\"welinkSessionId\":42}");
+
+        // Step 2: user sends a new message → sendInvokeToGateway("chat") clears the mark
+        when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+        when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
+        service.sendInvokeToGateway("test-ak", "user-1", "42", "chat", "{\"text\":\"hello\"}");
+
+        // Step 3: new tool_event arrives → should NOT be suppressed
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.TEXT_DELTA)
+                .partId("part-1")
+                .content("new response")
+                .build());
+
+        service.handleGatewayMessage("{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"data\":\"new\"}}");
+
+        // Redis should have been called 3 times: idle (tool_done) + busy (activate) + text.delta
+        // Note: activateSession defaults to false in mock, so no "busy" broadcast from activation
+        // But text.delta event should be broadcast
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisMessageBroker, org.mockito.Mockito.atLeast(2)).publishToUser(eq("user-1"), payloadCaptor.capture());
+        assertTrue(payloadCaptor.getAllValues().stream().anyMatch(p -> p.contains("text.delta")));
+    }
+
     private JsonNode readPublishedMessage(String payload) {
         try {
             return objectMapper.readTree(payload);

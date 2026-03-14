@@ -8,7 +8,6 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
-import java.util.UUID;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -22,6 +21,9 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Service
 public class EventRelayService {
+
+    /** 状态查询等待超时（毫秒） */
+    private static final long STATUS_QUERY_TIMEOUT_MS = 1500L;
 
     /** Map of ak → WebSocket session for connected agents */
     private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMap<>();
@@ -83,7 +85,7 @@ public class EventRelayService {
     }
 
     public void relayToSkillServer(String ak, GatewayMessage message) {
-        GatewayMessage tracedMessage = ensureTraceId(message);
+        GatewayMessage tracedMessage = message.ensureTraceId();
         String userId = redisMessageBroker.getAgentUser(ak);
         String source = tracedMessage.getSource();
         if (source == null || source.isBlank()) {
@@ -109,12 +111,7 @@ public class EventRelayService {
         }
     }
 
-    private GatewayMessage ensureTraceId(GatewayMessage message) {
-        if (message.getTraceId() != null && !message.getTraceId().isBlank()) {
-            return message;
-        }
-        return message.withTraceId(UUID.randomUUID().toString());
-    }
+
 
     public void relayToAgent(String ak, GatewayMessage message) {
         redisMessageBroker.publishToAgent(ak, message.withoutRoutingContext());
@@ -148,9 +145,7 @@ public class EventRelayService {
      * info.
      */
     public void sendStatusQuery(String ak) {
-        GatewayMessage query = GatewayMessage.builder()
-                .type("status_query")
-                .build();
+        GatewayMessage query = GatewayMessage.statusQuery();
         sendToLocalAgent(ak, query);
         log.debug("Sent status_query to agent: ak={}", ak);
     }
@@ -173,7 +168,7 @@ public class EventRelayService {
         sendStatusQuery(ak);
 
         try {
-            return future.get(1500, TimeUnit.MILLISECONDS);
+            return future.get(STATUS_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             log.debug("Timed out waiting for status_response: ak={}", ak);
             return opencodeStatusCache.getOrDefault(ak, false);

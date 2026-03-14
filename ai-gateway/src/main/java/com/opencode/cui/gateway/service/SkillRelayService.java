@@ -16,7 +16,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
+
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -111,7 +111,7 @@ public class SkillRelayService {
      * target agent.
      */
     public void handleInvokeFromSkill(WebSocketSession session, GatewayMessage message) {
-        GatewayMessage tracedMessage = ensureTraceId(message);
+        GatewayMessage tracedMessage = message.ensureTraceId();
         String boundSource = resolveBoundSource(session);
         String messageSource = tracedMessage.getSource();
         if (messageSource == null || messageSource.isBlank()) {
@@ -158,7 +158,7 @@ public class SkillRelayService {
      * Route a message from PC Agent to the correct upstream source domain.
      */
     public boolean relayToSkill(GatewayMessage message) {
-        GatewayMessage tracedMessage = ensureTraceId(message);
+        GatewayMessage tracedMessage = message.ensureTraceId();
         String source = resolveMessageSource(tracedMessage);
         if (source == null) {
             log.warn("Rejected upstream relay: traceId={}, source={}, instanceId={}, ownerKey={}, messageType={}, routeDecision=rejected, fallbackUsed=false, errorCode=source_not_allowed, ak={}, toolSessionId={}, welinkSessionId={}",
@@ -203,7 +203,7 @@ public class SkillRelayService {
      * Handle a message relayed from another Gateway instance.
      */
     public void handleRelayedMessage(GatewayMessage message) {
-        GatewayMessage tracedMessage = ensureTraceId(message);
+        GatewayMessage tracedMessage = message.ensureTraceId();
         String source = resolveMessageSource(tracedMessage);
         if (source == null) {
             log.warn("Rejected relayed upstream message: traceId={}, source={}, instanceId={}, ownerKey={}, messageType={}, routeDecision=rejected, fallbackUsed=false, errorCode=source_not_allowed",
@@ -368,12 +368,7 @@ public class SkillRelayService {
         return redisMessageBroker.getAgentSource(message.getAk());
     }
 
-    private GatewayMessage ensureTraceId(GatewayMessage message) {
-        if (message.getTraceId() != null && !message.getTraceId().isBlank()) {
-            return message;
-        }
-        return message.withTraceId(UUID.randomUUID().toString());
-    }
+
 
     private String resolveBoundSource(WebSocketSession session) {
         Object source = session.getAttributes().get(SOURCE_ATTR);

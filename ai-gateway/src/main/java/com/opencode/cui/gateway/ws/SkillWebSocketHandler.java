@@ -76,7 +76,7 @@ public class SkillWebSocketHandler extends TextWebSocketHandler implements Hands
             return;
         }
 
-        if (!"invoke".equals(message.getType())) {
+        if (!GatewayMessage.Type.INVOKE.equals(message.getType())) {
             log.warn("Unsupported message type from skill internal link: sessionId={}, type={}",
                     session.getId(), message.getType());
             return;

@@ -3,8 +3,13 @@ package com.opencode.cui.gateway.service;
 import com.opencode.cui.gateway.config.SnowflakeProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.locks.LockSupport;
+
 @Component
 public class SnowflakeIdGenerator {
+
+    /** 忙等待期间 park 间隔：100 微秒 */
+    private static final long PARK_NANOS = 100_000L;
 
     private final SnowflakeProperties properties;
     private long lastTimestamp = -1L;
@@ -66,6 +71,7 @@ public class SnowflakeIdGenerator {
     private long waitUntilNextMillis(long currentTimestamp) {
         long timestamp = currentTimeMillis();
         while (timestamp <= currentTimestamp) {
+            LockSupport.parkNanos(PARK_NANOS);
             timestamp = currentTimeMillis();
         }
         return timestamp;

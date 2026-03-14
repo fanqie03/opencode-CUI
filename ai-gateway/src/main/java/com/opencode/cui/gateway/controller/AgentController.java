@@ -1,8 +1,11 @@
 package com.opencode.cui.gateway.controller;
 
 import com.opencode.cui.gateway.model.AgentConnection;
+import com.opencode.cui.gateway.model.AgentStatusResponse;
+import com.opencode.cui.gateway.model.AgentSummaryResponse;
 import com.opencode.cui.gateway.model.ApiResponse;
 import com.opencode.cui.gateway.model.GatewayMessage;
+import com.opencode.cui.gateway.model.InvokeResult;
 import com.opencode.cui.gateway.service.AgentRegistryService;
 import com.opencode.cui.gateway.service.EventRelayService;
 import lombok.extern.slf4j.Slf4j;
@@ -20,7 +23,6 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * Gateway REST API.
@@ -52,7 +54,7 @@ public class AgentController {
     }
 
     @GetMapping("/agents")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listOnlineAgents(
+    public ResponseEntity<ApiResponse<List<AgentSummaryResponse>>> listOnlineAgents(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestParam(required = false) String ak,
             @RequestParam(required = false) String userId) {
@@ -73,14 +75,14 @@ public class AgentController {
             agents = agentRegistryService.findOnlineAgents();
         }
 
-        List<Map<String, Object>> data = agents.stream()
-                .map(this::toAgentSummary)
-                .collect(Collectors.toList());
+        List<AgentSummaryResponse> data = agents.stream()
+                .map(AgentSummaryResponse::fromAgent)
+                .toList();
         return ResponseEntity.ok(ApiResponse.ok(data));
     }
 
     @GetMapping("/agents/status")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getAgentStatusByAk(
+    public ResponseEntity<ApiResponse<AgentStatusResponse>> getAgentStatusByAk(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestParam String ak) {
         if (!isAuthorized(authorization)) {
@@ -96,17 +98,14 @@ public class AgentController {
         boolean wsActive = eventRelayService.hasAgentSession(ak);
         Boolean opencodeOnline = wsActive ? eventRelayService.requestAgentStatus(ak) : false;
 
-        Map<String, Object> status = new HashMap<>();
-        status.put("ak", ak);
-        status.put("status", agent.getStatus());
-        status.put("opencodeOnline", opencodeOnline);
-        status.put("activeSessionCount", wsActive ? 1 : 0);
+        AgentStatusResponse status = new AgentStatusResponse(
+                ak, agent.getStatus(), opencodeOnline, wsActive ? 1 : 0);
 
         return ResponseEntity.ok(ApiResponse.ok(status));
     }
 
     @PostMapping("/invoke")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> invokeAgentByAk(
+    public ResponseEntity<ApiResponse<InvokeResult>> invokeAgentByAk(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestBody GatewayMessage message) {
         if (!isAuthorized(authorization)) {
@@ -135,12 +134,8 @@ public class AgentController {
 
         eventRelayService.relayToAgent(ak, message.withAk(ak));
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
-        result.put("message", "Command sent to agent");
-
         log.info("REST invoke to agent: ak={}, action={}", ak, message.getAction());
-        return ResponseEntity.ok(ApiResponse.ok(result));
+        return ResponseEntity.ok(ApiResponse.ok(new InvokeResult(true, "Command sent to agent")));
     }
 
     @GetMapping("/agents/{id}/status")
@@ -191,18 +186,6 @@ public class AgentController {
         result.put("agentId", id);
         result.put("message", "Command sent to agent");
         return ResponseEntity.ok(result);
-    }
-
-    private Map<String, Object> toAgentSummary(AgentConnection agent) {
-        Map<String, Object> item = new HashMap<>();
-        item.put("ak", agent.getAkId());
-        item.put("status", agent.getStatus());
-        item.put("deviceName", agent.getDeviceName());
-        item.put("os", agent.getOs());
-        item.put("toolType", agent.getToolType() != null ? agent.getToolType().toLowerCase() : null);
-        item.put("toolVersion", agent.getToolVersion());
-        item.put("connectedAt", agent.getCreatedAt());
-        return item;
     }
 
     private boolean isAuthorized(String authorization) {

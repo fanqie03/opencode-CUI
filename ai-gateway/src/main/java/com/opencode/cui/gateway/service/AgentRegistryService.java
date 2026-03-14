@@ -154,10 +154,10 @@ public class AgentRegistryService {
             log.info("Found {} stale agents, marking offline", staleAgents.size());
             for (AgentConnection agent : staleAgents) {
                 repository.updateStatus(agent.getId(), AgentStatus.OFFLINE);
-                // Remove WebSocket session and notify Skill Server
-                eventRelayService.removeAgentSession(String.valueOf(agent.getId()));
-                log.info("Stale agent marked offline: agentId={}, lastSeen={}",
-                        agent.getId(), agent.getLastSeenAt());
+                // 使用 akId 清理 WebSocket 会话（agentSessions 以 ak 为 key）
+                eventRelayService.removeAgentSession(agent.getAkId());
+                log.info("Stale agent marked offline: agentId={}, ak={}, lastSeen={}",
+                        agent.getId(), agent.getAkId(), agent.getLastSeenAt());
             }
         }
     }

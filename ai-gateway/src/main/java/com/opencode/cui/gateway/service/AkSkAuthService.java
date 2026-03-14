@@ -132,21 +132,15 @@ public class AkSkAuthService {
 
     /**
      * Constant-time string comparison to prevent timing attacks.
+     * Delegates to JDK's MessageDigest.isEqual() for a proven implementation.
      */
     private boolean constantTimeEquals(String a, String b) {
         if (a == null || b == null) {
             return false;
         }
-        byte[] aBytes = a.getBytes(StandardCharsets.UTF_8);
-        byte[] bBytes = b.getBytes(StandardCharsets.UTF_8);
-        if (aBytes.length != bBytes.length) {
-            return false;
-        }
-        int result = 0;
-        for (int i = 0; i < aBytes.length; i++) {
-            result |= aBytes[i] ^ bBytes[i];
-        }
-        return result == 0;
+        return java.security.MessageDigest.isEqual(
+                a.getBytes(StandardCharsets.UTF_8),
+                b.getBytes(StandardCharsets.UTF_8));
     }
 
     /**

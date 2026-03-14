@@ -340,6 +340,12 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
   const finalizeAllStreamingMessages = useCallback(() => {
     const activeIds = Array.from(activeMessageIdsRef.current);
     activeIds.forEach((messageId) => finalizeMessage(messageId));
+    // 兜底：即使 activeMessageIdsRef 已为空（例如 text.done 已清理完毕），
+    // 也必须确保 isStreaming 被复位。
+    // 场景：session.status:busy 直接 setIsStreaming(true) 但不往 activeMessageIdsRef 加 ID，
+    // 后续 session.status:idle 到达时 activeIds 为空，forEach 不执行，
+    // finalizeMessage 中的 setIsStreaming(false) 永远不会被调用。
+    setIsStreaming(false);
   }, [finalizeMessage]);
 
   const applyStreamedMessage = useCallback((msg: StreamMessage) => {

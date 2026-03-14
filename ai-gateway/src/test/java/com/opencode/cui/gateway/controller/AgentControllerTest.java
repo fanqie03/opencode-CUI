@@ -2,6 +2,7 @@ package com.opencode.cui.gateway.controller;
 
 import com.opencode.cui.gateway.model.AgentConnection;
 import com.opencode.cui.gateway.model.AgentConnection.AgentStatus;
+import com.opencode.cui.gateway.model.AgentSummaryResponse;
 import com.opencode.cui.gateway.model.ApiResponse;
 import com.opencode.cui.gateway.service.AgentRegistryService;
 import com.opencode.cui.gateway.service.EventRelayService;
@@ -16,7 +17,6 @@ import org.springframework.http.ResponseEntity;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -57,7 +57,7 @@ class AgentControllerTest {
                 .build();
         when(agentRegistryService.findOnlineByUserId("user-001")).thenReturn(List.of(agent));
 
-        ResponseEntity<ApiResponse<List<Map<String, Object>>>> response = controller.listOnlineAgents(
+        ResponseEntity<ApiResponse<List<AgentSummaryResponse>>> response = controller.listOnlineAgents(
                 "Bearer " + INTERNAL_TOKEN,
                 null,
                 "user-001");
@@ -66,7 +66,8 @@ class AgentControllerTest {
         assertNotNull(response.getBody());
         assertEquals(0, response.getBody().getCode());
         assertEquals(1, response.getBody().getData().size());
-        assertEquals("ak_test_001", response.getBody().getData().get(0).get("ak"));
+        assertEquals("ak_test_001", response.getBody().getData().get(0).ak());
         verify(agentRegistryService).findOnlineByUserId("user-001");
     }
 }
+

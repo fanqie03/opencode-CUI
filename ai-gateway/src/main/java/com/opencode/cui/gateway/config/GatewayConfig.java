@@ -17,6 +17,9 @@ public class GatewayConfig implements WebSocketConfigurer {
     @Value("${gateway.websocket.max-text-message-buffer-size-bytes:1048576}")
     private int maxTextMessageBufferSizeBytes;
 
+    @Value("${gateway.websocket.allowed-origins:*}")
+    private String[] allowedOrigins;
+
     private final AgentWebSocketHandler agentWebSocketHandler;
     private final SkillWebSocketHandler skillWebSocketHandler;
 
@@ -30,11 +33,11 @@ public class GatewayConfig implements WebSocketConfigurer {
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(agentWebSocketHandler, "/ws/agent")
                 .addInterceptors(agentWebSocketHandler)
-                .setAllowedOrigins("*");
+                .setAllowedOrigins(allowedOrigins);
 
         registry.addHandler(skillWebSocketHandler, "/ws/skill")
                 .addInterceptors(skillWebSocketHandler)
-                .setAllowedOrigins("*");
+                .setAllowedOrigins(allowedOrigins);
     }
 
     @Bean
