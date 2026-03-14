@@ -93,10 +93,8 @@ public class SnapshotService {
     }
 
     private List<Object> buildSnapshotMessages(String sessionId) {
-        Long numericSessionId;
-        try {
-            numericSessionId = Long.valueOf(sessionId);
-        } catch (NumberFormatException e) {
+        Long numericSessionId = ProtocolUtils.parseSessionId(sessionId);
+        if (numericSessionId == null) {
             log.warn("Cannot build snapshot: invalid sessionId={}", sessionId);
             return List.of();
         }

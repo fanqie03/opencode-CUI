@@ -39,7 +39,7 @@ class AgentQueryControllerTest {
         var agent = com.opencode.cui.skill.model.AgentSummary.builder().ak("ak-1").build();
         List<com.opencode.cui.skill.model.AgentSummary> agents = List.of(agent);
         when(accessControlService.requireUserId("10001")).thenReturn("10001");
-        when(gatewayApiClient.getOnlineAgentSummaries("10001")).thenReturn(agents);
+        when(gatewayApiClient.getOnlineAgentsByUserId("10001")).thenReturn(agents);
 
         var response = controller.getOnlineAgents("10001");
 
@@ -47,7 +47,7 @@ class AgentQueryControllerTest {
         assertNotNull(response.getBody());
         assertEquals(0, response.getBody().getCode());
         assertEquals("ak-1", response.getBody().getData().get(0).getAk());
-        verify(gatewayApiClient).getOnlineAgentSummaries("10001");
+        verify(gatewayApiClient).getOnlineAgentsByUserId("10001");
     }
 
     @Test

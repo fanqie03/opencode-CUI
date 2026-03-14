@@ -28,7 +28,7 @@ public class SkillMessageService {
      * Also touches the parent session to refresh last_active_at.
      */
     @Transactional
-    public SkillMessage saveMessage(Long sessionId, String messageId, SkillMessage.Role role, String content,
+    SkillMessage saveMessage(Long sessionId, String messageId, SkillMessage.Role role, String content,
             SkillMessage.ContentType contentType, String meta) {
         int nextSeq = messageRepository.findMaxSeqBySessionId(sessionId) + 1;
         String effectiveMessageId = messageId != null && !messageId.isBlank()
@@ -60,7 +60,7 @@ public class SkillMessageService {
      * Also touches the parent session to refresh last_active_at.
      */
     @Transactional
-    public SkillMessage saveMessage(Long sessionId, SkillMessage.Role role, String content,
+    SkillMessage saveMessage(Long sessionId, SkillMessage.Role role, String content,
             SkillMessage.ContentType contentType, String meta) {
         return saveMessage(sessionId, null, role, content, contentType, meta);
     }

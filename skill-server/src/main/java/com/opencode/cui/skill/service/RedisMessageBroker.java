@@ -1,6 +1,5 @@
 package com.opencode.cui.skill.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
@@ -19,7 +18,8 @@ import java.util.function.Consumer;
  *
  * Channel patterns:
  * - agent:{agentId} - messages to specific agent
- * - user-stream:{userId} - realtime messages to all instances holding the user's stream link
+ * - user-stream:{userId} - realtime messages to all instances holding the
+ * user's stream link
  */
 @Slf4j
 @Service
@@ -27,17 +27,14 @@ public class RedisMessageBroker {
 
     private final StringRedisTemplate redisTemplate;
     private final RedisMessageListenerContainer listenerContainer;
-    private final ObjectMapper objectMapper;
 
     /** Track active subscriptions for cleanup */
     private final Map<String, MessageListener> activeListeners = new ConcurrentHashMap<>();
 
     public RedisMessageBroker(StringRedisTemplate redisTemplate,
-            RedisMessageListenerContainer listenerContainer,
-            ObjectMapper objectMapper) {
+            RedisMessageListenerContainer listenerContainer) {
         this.redisTemplate = redisTemplate;
         this.listenerContainer = listenerContainer;
-        this.objectMapper = objectMapper;
     }
 
     /**

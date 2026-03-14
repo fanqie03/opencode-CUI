@@ -69,7 +69,15 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget {
     @PreDestroy
     public void destroy() {
         running.set(false);
-        scheduler.shutdownNow();
+        scheduler.shutdown();
+        try {
+            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scheduler.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
         if (wsClient != null) {
             try {
                 wsClient.closeBlocking();

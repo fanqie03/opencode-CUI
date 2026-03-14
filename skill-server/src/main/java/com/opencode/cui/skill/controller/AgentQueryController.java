@@ -12,7 +12,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-
 import java.util.List;
 
 /**
@@ -42,7 +41,7 @@ public class AgentQueryController {
             @CookieValue(value = "userId", required = false) String userIdCookie) {
         String userId = accessControlService.requireUserId(userIdCookie);
         log.debug("Querying online agents for userId={}", userId);
-        List<AgentSummary> agents = gatewayApiClient.getOnlineAgentSummaries(userId);
+        List<AgentSummary> agents = gatewayApiClient.getOnlineAgentsByUserId(userId);
         return ResponseEntity.ok(ApiResponse.ok(agents));
     }
 }

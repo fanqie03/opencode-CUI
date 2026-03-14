@@ -10,7 +10,6 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -31,6 +30,10 @@ public class StreamBufferService {
 
     private static final long TTL_HOURS = 1;
     private static final String PREFIX = "stream:";
+    private static final String SUFFIX_STATUS = ":status";
+    private static final String SUFFIX_PART = ":part:";
+    private static final String SUFFIX_ORDER = ":parts_order";
+    private static final String SUFFIX_REGISTERED = ":registered";
 
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
@@ -48,61 +51,46 @@ public class StreamBufferService {
     public void accumulate(String sessionId, StreamMessage msg) {
         try {
             switch (msg.getType()) {
-                case StreamMessage.Types.TEXT_DELTA:
-                    appendContent(sessionId, msg, "text");
-                    setSessionStreaming(sessionId, true);
-                    break;
-
-                case StreamMessage.Types.TEXT_DONE:
-                    // Final text: set full content then clear (will be persisted to DB)
-                    if (msg.getPartId() != null) {
-                        clearPart(sessionId, msg.getPartId());
-                    }
-                    break;
-
-                case StreamMessage.Types.THINKING_DELTA:
-                    appendContent(sessionId, msg, "thinking");
-                    setSessionStreaming(sessionId, true);
-                    break;
-
-                case StreamMessage.Types.THINKING_DONE:
-                    if (msg.getPartId() != null) {
-                        clearPart(sessionId, msg.getPartId());
-                    }
-                    break;
-
-                case StreamMessage.Types.TOOL_UPDATE:
-                    // Tool state: overwrite with latest status
+                case StreamMessage.Types.TEXT_DELTA -> accumulateDelta(sessionId, msg, "text");
+                case StreamMessage.Types.TEXT_DONE -> clearPartIfPresent(sessionId, msg);
+                case StreamMessage.Types.THINKING_DELTA -> accumulateDelta(sessionId, msg, "thinking");
+                case StreamMessage.Types.THINKING_DONE -> clearPartIfPresent(sessionId, msg);
+                case StreamMessage.Types.TOOL_UPDATE, StreamMessage.Types.QUESTION,
+                        StreamMessage.Types.FILE ->
                     setPartFull(sessionId, msg.getPartId(), msg);
-                    break;
-
-                case StreamMessage.Types.QUESTION:
-                    setPartFull(sessionId, msg.getPartId(), msg);
-                    break;
-
-                case StreamMessage.Types.PERMISSION_ASK:
-                case StreamMessage.Types.PERMISSION_REPLY:
-                    String permPartId = msg.getPartId() != null ? msg.getPartId() : msg.getPermissionId();
-                    setPartFull(sessionId, permPartId, msg);
-                    break;
-
-                case StreamMessage.Types.FILE:
-                    setPartFull(sessionId, msg.getPartId(), msg);
-                    break;
-
-                case StreamMessage.Types.SESSION_STATUS:
-                    if ("idle".equals(msg.getSessionStatus()) || "completed".equals(msg.getSessionStatus())) {
-                        clearSession(sessionId);
-                    }
-                    break;
-
-                default:
-                    // step.start, agent.online/offline, error, etc. — no buffering needed
-                    break;
+                case StreamMessage.Types.PERMISSION_ASK,
+                        StreamMessage.Types.PERMISSION_REPLY ->
+                    accumulatePermission(sessionId, msg);
+                case StreamMessage.Types.SESSION_STATUS -> handleSessionStatus(sessionId, msg);
+                default -> {
+                    /* step.start, agent.online/offline, error — no buffering */ }
             }
         } catch (Exception e) {
             log.error("Failed to accumulate StreamMessage to Redis for session {}: {}",
                     sessionId, e.getMessage(), e);
+        }
+    }
+
+    private void accumulateDelta(String sessionId, StreamMessage msg, String partType) {
+        appendContent(sessionId, msg, partType);
+        setSessionStreaming(sessionId, true);
+    }
+
+    private void clearPartIfPresent(String sessionId, StreamMessage msg) {
+        if (msg.getPartId() != null) {
+            clearPart(sessionId, msg.getPartId());
+        }
+    }
+
+    private void accumulatePermission(String sessionId, StreamMessage msg) {
+        String permId = msg.getPermission() != null ? msg.getPermission().getPermissionId() : null;
+        String permPartId = msg.getPartId() != null ? msg.getPartId() : permId;
+        setPartFull(sessionId, permPartId, msg);
+    }
+
+    private void handleSessionStatus(String sessionId, StreamMessage msg) {
+        if ("idle".equals(msg.getSessionStatus()) || "completed".equals(msg.getSessionStatus())) {
+            clearSession(sessionId);
         }
     }
 
@@ -233,6 +221,7 @@ public class StreamBufferService {
     /**
      * Set a part with full StreamMessage data (used for tool.update, question,
      * permission).
+     * 先无条件写入 part 数据，再通过 setIfAbsent 检查 order 列表是否需要注册。
      */
     private void setPartFull(String sessionId, String partId, StreamMessage msg) {
         if (partId == null)
@@ -240,12 +229,17 @@ public class StreamBufferService {
 
         String key = partKey(sessionId, partId);
         try {
-            Boolean exists = redis.hasKey(key);
-            redis.opsForValue().set(key, objectMapper.writeValueAsString(msg),
-                    TTL_HOURS, TimeUnit.HOURS);
-            if (!Boolean.TRUE.equals(exists)) {
-                redis.opsForList().rightPush(partsOrderKey(sessionId), partId);
-                redis.expire(partsOrderKey(sessionId), TTL_HOURS, TimeUnit.HOURS);
+            String serialized = objectMapper.writeValueAsString(msg);
+            // 无条件写入最新数据
+            redis.opsForValue().set(key, serialized, TTL_HOURS, TimeUnit.HOURS);
+            // 尝试注册到 parts_order（如果已存在则跳过）
+            String orderKey = partsOrderKey(sessionId);
+            // 用一个 sentinel key 检查此 partId 是否已注册过
+            Boolean isNew = redis.opsForValue().setIfAbsent(
+                    key + SUFFIX_REGISTERED, "1", TTL_HOURS, TimeUnit.HOURS);
+            if (Boolean.TRUE.equals(isNew)) {
+                redis.opsForList().rightPush(orderKey, partId);
+                redis.expire(orderKey, TTL_HOURS, TimeUnit.HOURS);
             }
         } catch (JsonProcessingException e) {
             log.warn("Failed to set part {}: {}", partId, e.getMessage());
@@ -285,14 +279,14 @@ public class StreamBufferService {
     // ==================== Key builders ====================
 
     private String statusKey(String sessionId) {
-        return PREFIX + sessionId + ":status";
+        return PREFIX + sessionId + SUFFIX_STATUS;
     }
 
     private String partKey(String sessionId, String partId) {
-        return PREFIX + sessionId + ":part:" + partId;
+        return PREFIX + sessionId + SUFFIX_PART + partId;
     }
 
     private String partsOrderKey(String sessionId) {
-        return PREFIX + sessionId + ":parts_order";
+        return PREFIX + sessionId + SUFFIX_ORDER;
     }
 }

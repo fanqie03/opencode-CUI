@@ -48,8 +48,8 @@ public class GlobalExceptionHandler {
      * 兜底：处理所有未捕获的异常。
      */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<?>> handleGenericException(Exception e) {
-        log.error("Unhandled exception", e);
-        return ResponseEntity.ok(ApiResponse.error(500, "Internal server error"));
+    public ResponseEntity<ApiResponse<?>> handleGeneral(Exception e) {
+        log.error("Unexpected error: {}", e.getMessage(), e);
+        return ResponseEntity.status(500).body(ApiResponse.error(500, "Internal server error"));
     }
 }

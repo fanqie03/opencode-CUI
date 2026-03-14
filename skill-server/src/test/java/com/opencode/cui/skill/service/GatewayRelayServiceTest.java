@@ -2,9 +2,9 @@ package com.opencode.cui.skill.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
-import com.opencode.cui.skill.ws.SkillStreamHandler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -29,8 +29,6 @@ class GatewayRelayServiceTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Mock
-    private SkillStreamHandler skillStreamHandler;
-    @Mock
     private SkillMessageService messageService;
     @Mock
     private SkillSessionService sessionService;
@@ -47,19 +45,23 @@ class GatewayRelayServiceTest {
     @Mock
     private GatewayRelayService.GatewayRelayTarget gatewayRelayTarget;
 
+    private GatewayMessageRouter messageRouter;
     private GatewayRelayService service;
 
     @BeforeEach
     void setUp() {
-        service = new GatewayRelayService(
+        messageRouter = new GatewayMessageRouter(
                 new ObjectMapper(),
-                skillStreamHandler,
                 messageService,
                 sessionService,
                 redisMessageBroker,
                 translator,
                 persistenceService,
                 bufferService,
+                rebuildService);
+        service = new GatewayRelayService(
+                new ObjectMapper(),
+                messageRouter,
                 rebuildService);
         service.setGatewayRelayTarget(gatewayRelayTarget);
     }
@@ -84,7 +86,6 @@ class GatewayRelayServiceTest {
         assertEquals(123L, published.path("message").path("welinkSessionId").asLong());
         verify(bufferService).accumulate(eq("123"), any(StreamMessage.class));
         verify(persistenceService).persistIfFinal(eq(123L), any(StreamMessage.class));
-        verifyNoInteractions(skillStreamHandler);
     }
 
     @Test
@@ -97,7 +98,6 @@ class GatewayRelayServiceTest {
         verify(redisMessageBroker).publishToUser(eq("user-1"), contains("session.status"));
         verify(bufferService).accumulate(eq("42"), any(StreamMessage.class));
         verify(persistenceService).persistIfFinal(eq(42L), any(StreamMessage.class));
-        verifyNoInteractions(skillStreamHandler);
     }
 
     @Test
@@ -110,17 +110,20 @@ class GatewayRelayServiceTest {
                 .build());
         when(sessionService.activateSession(123L)).thenReturn(true);
 
-        service.handleGatewayMessage("{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":123,\"event\":{\"data\":\"hello\"}}");
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":123,\"event\":{\"data\":\"hello\"}}");
 
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(redisMessageBroker, org.mockito.Mockito.atLeast(2)).publishToUser(eq("user-1"), payloadCaptor.capture());
-        assertTrue(payloadCaptor.getAllValues().stream().anyMatch(payload -> payload.contains("\"sessionStatus\":\"busy\"")));
+        assertTrue(payloadCaptor.getAllValues().stream()
+                .anyMatch(payload -> payload.contains("\"sessionStatus\":\"busy\"")));
     }
 
     @Test
     @DisplayName("session rebuild broadcasts retry status")
     void sessionRebuildBroadcastsRetryStatus() {
-        service.handleGatewayMessage("{\"type\":\"tool_error\",\"welinkSessionId\":42,\"error\":\"session_not_found\"}");
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_error\",\"welinkSessionId\":42,\"error\":\"session_not_found\"}");
 
         verify(rebuildService).handleSessionNotFound(eq("42"), any(), any());
     }
@@ -134,7 +137,6 @@ class GatewayRelayServiceTest {
 
         verify(messageService).saveSystemMessage(eq(42L), contains("timeout"));
         verify(redisMessageBroker).publishToUser(eq("user-42"), contains("error"));
-        verifyNoInteractions(skillStreamHandler);
     }
 
     @Test
@@ -180,7 +182,7 @@ class GatewayRelayServiceTest {
     void permissionRequestBroadcasts() {
         when(translator.translatePermissionFromGateway(any())).thenReturn(StreamMessage.builder()
                 .type(StreamMessage.Types.PERMISSION_ASK)
-                .permissionId("p-1")
+                .permission(StreamMessage.PermissionInfo.builder().permissionId("p-1").build())
                 .build());
 
         String msg = "{\"type\":\"permission_request\",\"userId\":\"user-42\",\"welinkSessionId\":42,\"permissionId\":\"p-1\",\"command\":\"rm -rf /\",\"workingDirectory\":\"/tmp\"}";
@@ -226,7 +228,6 @@ class GatewayRelayServiceTest {
 
         service.handleGatewayMessage(msg);
 
-        verifyNoInteractions(skillStreamHandler);
         verifyNoInteractions(redisMessageBroker);
     }
 
@@ -234,7 +235,6 @@ class GatewayRelayServiceTest {
     @DisplayName("malformed JSON does not throw")
     void malformedJsonDoesNotThrow() {
         service.handleGatewayMessage("not json at all");
-        verifyNoInteractions(skillStreamHandler);
     }
 
     @Test
@@ -244,7 +244,6 @@ class GatewayRelayServiceTest {
 
         service.handleGatewayMessage(msg);
 
-        verifyNoInteractions(skillStreamHandler);
         verifyNoInteractions(redisMessageBroker);
     }
 
@@ -254,7 +253,8 @@ class GatewayRelayServiceTest {
         when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
         when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
 
-        service.sendInvokeToGateway("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}");
+        service.sendInvokeToGateway(
+                new InvokeCommand("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}"));
 
         verify(gatewayRelayTarget).sendToGateway(contains("invoke"));
         verify(redisMessageBroker, never()).publishToUser(any(), any());
@@ -266,7 +266,8 @@ class GatewayRelayServiceTest {
         when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
         when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
 
-        service.sendInvokeToGateway("agent-1", "user-1", "42", "create_session", "{\"title\":\"demo\"}");
+        service.sendInvokeToGateway(
+                new InvokeCommand("agent-1", "user-1", "42", "create_session", "{\"title\":\"demo\"}"));
 
         // welinkSessionId 应作为字符串序列化，防止 JavaScript IEEE 754 大数精度丢失
         verify(gatewayRelayTarget).sendToGateway(contains("\"welinkSessionId\":\"42\""));
@@ -277,7 +278,8 @@ class GatewayRelayServiceTest {
     void sendInvokeDropsWhenNoActiveConnection() {
         when(gatewayRelayTarget.hasActiveConnection()).thenReturn(false);
 
-        service.sendInvokeToGateway("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}");
+        service.sendInvokeToGateway(
+                new InvokeCommand("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}"));
 
         verify(gatewayRelayTarget, never()).sendToGateway(any());
         verifyNoInteractions(redisMessageBroker);
@@ -289,7 +291,8 @@ class GatewayRelayServiceTest {
         when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
         when(gatewayRelayTarget.sendToGateway(any())).thenReturn(false);
 
-        service.sendInvokeToGateway("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}");
+        service.sendInvokeToGateway(
+                new InvokeCommand("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}"));
 
         verify(gatewayRelayTarget).sendToGateway(contains("invoke"));
         verifyNoInteractions(redisMessageBroker);
@@ -308,7 +311,8 @@ class GatewayRelayServiceTest {
                 .content("hello")
                 .build());
 
-        service.handleGatewayMessage("{\"type\":\"tool_event\",\"welinkSessionId\":123,\"event\":{\"data\":\"hello\"}}");
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"welinkSessionId\":123,\"event\":{\"data\":\"hello\"}}");
 
         verify(redisMessageBroker).publishToUser(eq("user-123"), contains("text.delta"));
     }
@@ -359,7 +363,8 @@ class GatewayRelayServiceTest {
                 .content("hello")
                 .build());
 
-        service.handleGatewayMessage("{\"type\":\"tool_event\",\"toolSessionId\":\"ts-a\",\"event\":{\"data\":\"hello\"}}");
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"toolSessionId\":\"ts-a\",\"event\":{\"data\":\"hello\"}}");
 
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(redisMessageBroker).publishToUser(eq("user-a"), payloadCaptor.capture());
@@ -376,12 +381,14 @@ class GatewayRelayServiceTest {
         verify(redisMessageBroker).publishToUser(eq("user-1"), contains("session.status"));
 
         // Step 2: stale tool_event arrives after tool_done → should be suppressed
-        service.handleGatewayMessage("{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"data\":\"stale\"}}");
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"data\":\"stale\"}}");
 
         // Translator should never be called for the suppressed event
         verifyNoInteractions(translator);
 
-        // Redis should only have been called once (for tool_done idle), NOT for the stale tool_event
+        // Redis should only have been called once (for tool_done idle), NOT for the
+        // stale tool_event
         verify(redisMessageBroker, org.mockito.Mockito.times(1)).publishToUser(any(), any());
     }
 
@@ -391,10 +398,11 @@ class GatewayRelayServiceTest {
         // Step 1: tool_done arrives → session marked as completed
         service.handleGatewayMessage("{\"type\":\"tool_done\",\"userId\":\"user-1\",\"welinkSessionId\":42}");
 
-        // Step 2: user sends a new message → sendInvokeToGateway("chat") clears the mark
+        // Step 2: user sends a new message → sendInvokeToGateway("chat") clears the
+        // mark
         when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
         when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
-        service.sendInvokeToGateway("test-ak", "user-1", "42", "chat", "{\"text\":\"hello\"}");
+        service.sendInvokeToGateway(new InvokeCommand("test-ak", "user-1", "42", "chat", "{\"text\":\"hello\"}"));
 
         // Step 3: new tool_event arrives → should NOT be suppressed
         when(translator.translate(any())).thenReturn(StreamMessage.builder()
@@ -403,10 +411,13 @@ class GatewayRelayServiceTest {
                 .content("new response")
                 .build());
 
-        service.handleGatewayMessage("{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"data\":\"new\"}}");
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"data\":\"new\"}}");
 
-        // Redis should have been called 3 times: idle (tool_done) + busy (activate) + text.delta
-        // Note: activateSession defaults to false in mock, so no "busy" broadcast from activation
+        // Redis should have been called 3 times: idle (tool_done) + busy (activate) +
+        // text.delta
+        // Note: activateSession defaults to false in mock, so no "busy" broadcast from
+        // activation
         // But text.delta event should be broadcast
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(redisMessageBroker, org.mockito.Mockito.atLeast(2)).publishToUser(eq("user-1"), payloadCaptor.capture());

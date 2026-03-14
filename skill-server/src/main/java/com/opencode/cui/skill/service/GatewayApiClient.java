@@ -14,7 +14,6 @@ import org.springframework.web.client.RestTemplate;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 
 /**
  * REST client for querying AI-Gateway APIs.
@@ -43,9 +42,9 @@ public class GatewayApiClient {
      * Query online agents for a specific user from the Gateway.
      *
      * @param userId the user ID to filter by
-     * @return list of online agent info maps
+     * @return list of online agent summaries
      */
-    public List<Map<String, Object>> getOnlineAgentsByUserId(String userId) {
+    public List<AgentSummary> getOnlineAgentsByUserId(String userId) {
         try {
             String url = gatewayBaseUrl + "/api/gateway/agents?userId=" + userId;
             ResponseEntity<String> response = restTemplate.exchange(
@@ -55,17 +54,14 @@ public class GatewayApiClient {
                     String.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Map<String, Object> envelope = objectMapper.readValue(
-                        response.getBody(),
-                        new TypeReference<Map<String, Object>>() {
-                        });
-                Object data = envelope.get("data");
-                if (data == null) {
+                var root = objectMapper.readTree(response.getBody());
+                var dataNode = root.path("data");
+                if (dataNode.isMissingNode() || dataNode.isNull()) {
                     return Collections.emptyList();
                 }
-                List<Map<String, Object>> agents = objectMapper.convertValue(
-                        data,
-                        new TypeReference<List<Map<String, Object>>>() {
+                List<AgentSummary> agents = objectMapper.convertValue(
+                        dataNode,
+                        new TypeReference<List<AgentSummary>>() {
                         });
                 log.debug("Fetched {} online agents for userId={}", agents.size(), userId);
                 return agents;
@@ -82,28 +78,13 @@ public class GatewayApiClient {
 
     /**
      * 查询指定用户的在线 Agent 列表，返回类型化的 AgentSummary DTO。
+     * 
+     * @deprecated 使用 {@link #getOnlineAgentsByUserId(String)} 代替，已直接返回
+     *             AgentSummary。
      */
+    @Deprecated
     public List<AgentSummary> getOnlineAgentSummaries(String userId) {
-        return getOnlineAgentsByUserId(userId).stream()
-                .map(this::toAgentSummary)
-                .toList();
-    }
-
-    private AgentSummary toAgentSummary(Map<String, Object> raw) {
-        return AgentSummary.builder()
-                .ak(strVal(raw, "ak"))
-                .status(strVal(raw, "status"))
-                .deviceName(strVal(raw, "deviceName"))
-                .os(strVal(raw, "os"))
-                .toolType(strVal(raw, "toolType"))
-                .toolVersion(strVal(raw, "toolVersion"))
-                .connectedAt(strVal(raw, "connectedAt"))
-                .build();
-    }
-
-    private static String strVal(Map<String, Object> map, String key) {
-        Object v = map.get(key);
-        return v != null ? v.toString() : null;
+        return getOnlineAgentsByUserId(userId);
     }
 
     public boolean isAkOwnedByUser(String ak, String userId) {
@@ -112,9 +93,7 @@ public class GatewayApiClient {
         }
 
         return getOnlineAgentsByUserId(userId).stream()
-                .map(item -> item.get("ak"))
-                .filter(String.class::isInstance)
-                .map(String.class::cast)
+                .map(AgentSummary::getAk)
                 .anyMatch(ak::equals);
     }
 

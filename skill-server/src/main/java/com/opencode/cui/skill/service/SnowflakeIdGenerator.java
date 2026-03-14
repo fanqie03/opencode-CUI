@@ -14,6 +14,8 @@ public class SnowflakeIdGenerator {
         this.properties = properties;
     }
 
+    // TODO: Consider ThreadLocal sharding for high-QPS scenarios (current
+    // synchronized is fine for < 10K/s)
     public synchronized long nextId() {
         long timestamp = currentTimeMillis();
         if (timestamp < lastTimestamp) {

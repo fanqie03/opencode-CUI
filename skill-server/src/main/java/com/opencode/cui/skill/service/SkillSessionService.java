@@ -12,7 +12,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -29,7 +28,6 @@ public class SkillSessionService {
         this.sessionRepository = sessionRepository;
         this.snowflakeIdGenerator = snowflakeIdGenerator;
     }
-
 
     /**
      * Create a new skill session.

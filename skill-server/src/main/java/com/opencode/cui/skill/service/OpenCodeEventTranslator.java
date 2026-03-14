@@ -5,12 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.model.StreamMessage.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -22,19 +22,7 @@ import java.util.Map;
 public class OpenCodeEventTranslator {
 
     private final ObjectMapper objectMapper;
-
-    // 使用 Caffeine Cache 替换 ConcurrentHashMap，防止内存泄漏
-    private final Cache<String, String> partTypes = Caffeine.newBuilder()
-            .expireAfterAccess(Duration.ofHours(2)).maximumSize(50_000).build();
-    private final Cache<String, Integer> partSequences = Caffeine.newBuilder()
-            .expireAfterAccess(Duration.ofHours(2)).maximumSize(50_000).build();
-    private final Cache<String, Integer> nextPartSequences = Caffeine.newBuilder()
-            .expireAfterAccess(Duration.ofHours(2)).maximumSize(10_000).build();
-    private final Cache<String, String> messageRoles = Caffeine.newBuilder()
-            .expireAfterAccess(Duration.ofHours(2)).maximumSize(10_000).build();
-    // 缓存每个 messageId 的最终文本内容，用于当 message.updated(role=user) 到达时回溯获取用户文本
-    private final Cache<String, String> messageTexts = Caffeine.newBuilder()
-            .expireAfterAccess(Duration.ofMinutes(10)).maximumSize(10_000).build();
+    private final SessionCache cache = new SessionCache();
 
     public OpenCodeEventTranslator(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
@@ -51,7 +39,7 @@ public class OpenCodeEventTranslator {
             case "message.part.delta" -> translatePartDelta(event);
             case "message.part.removed" -> {
                 JsonNode props = event.path("properties");
-                evictPart(
+                cache.evictPart(
                         props.path("sessionID").asText(null),
                         props.path("messageID").asText(null),
                         props.path("partID").asText(null));
@@ -61,7 +49,7 @@ public class OpenCodeEventTranslator {
             case "session.status" -> translateSessionStatus(event);
             case "session.idle" -> {
                 String sessionId = event.path("properties").path("sessionID").asText(null);
-                clearSessionCaches(sessionId);
+                cache.clearSession(sessionId);
                 yield baseBuilder(StreamMessage.Types.SESSION_STATUS, sessionId)
                         .sessionStatus("idle")
                         .build();
@@ -84,10 +72,12 @@ public class OpenCodeEventTranslator {
         String sessionId = node.path("welinkSessionId").asText(null);
         String messageId = node.path("messageId").asText(null);
         return messageBuilder(StreamMessage.Types.PERMISSION_ASK, sessionId, messageId)
-                .permissionId(node.path("permissionId").asText(null))
-                .permType(node.path("permType").asText(null))
+                .permission(PermissionInfo.builder()
+                        .permissionId(node.path("permissionId").asText(null))
+                        .permType(node.path("permType").asText(null))
+                        .metadata(jsonNodeToMap(node.get("metadata")))
+                        .build())
                 .title(node.path("command").asText(null))
-                .metadata(jsonNodeToMap(node.get("metadata")))
                 .build();
     }
 
@@ -98,37 +88,25 @@ public class OpenCodeEventTranslator {
             return null;
         }
 
-        String sessionId = ProtocolUtils.firstNonBlank(part.path("sessionID").asText(null), props.path("sessionID").asText(null));
-        String messageId = ProtocolUtils.firstNonBlank(part.path("messageID").asText(null), props.path("messageID").asText(null));
+        String sessionId = ProtocolUtils.firstNonBlank(part.path("sessionID").asText(null),
+                props.path("sessionID").asText(null));
+        String messageId = ProtocolUtils.firstNonBlank(part.path("messageID").asText(null),
+                props.path("messageID").asText(null));
         String partId = part.path("id").asText(null);
         String partType = part.path("type").asText("");
         String delta = props.has("delta") && !props.get("delta").isNull()
                 ? props.path("delta").asText(null)
                 : null;
-        Integer partSeq = rememberPartSeq(sessionId, messageId, partId);
-        String role = resolveMessageRole(sessionId, messageId);
+        Integer partSeq = cache.rememberPartSeq(sessionId, messageId, partId);
+        String role = cache.resolveMessageRole(sessionId, messageId);
 
-        rememberPartType(sessionId, partId, partType);
+        cache.rememberPartType(sessionId, partId, partType);
 
         // User 消息文本特殊处理（必须在 shouldIgnoreMessage 之前）
-        // 解决事件时序问题：message.part.updated 和 message.updated 到达顺序不确定
         if ("text".equals(partType) && delta == null) {
-            String textContent = part.path("text").asText("");
-            if ("user".equals(role)) {
-                // Case A：message.updated(role=user) 已到达，role 已缓存
-                // 直接发射 TEXT_DONE(role=user)，绕过 shouldIgnoreMessage 过滤
-                if (!textContent.isBlank()) {
-                    log.info("Emitting user TEXT_DONE (role cached): sessionId={}, messageId={}", sessionId, messageId);
-                    return partBuilder(StreamMessage.Types.TEXT_DONE, sessionId, messageId, partId, partSeq, role)
-                            .content(textContent)
-                            .build();
-                }
-            } else {
-                // Case B：message.updated 还没到，role 未知（默认 assistant）
-                // 缓存文本，等 translateMessageUpdated(role=user) 到达时回溯使用
-                if (sessionId != null && messageId != null && !textContent.isBlank()) {
-                    messageTexts.put(messageCacheKey(sessionId, messageId), textContent);
-                }
+            StreamMessage userResult = handleUserTextSpecial(sessionId, messageId, partId, partSeq, role, part);
+            if (userResult != null) {
+                return userResult;
             }
         }
 
@@ -151,6 +129,33 @@ public class OpenCodeEventTranslator {
         };
     }
 
+    /**
+     * 处理 user 消息的文本 part 时序问题。
+     * 解决 message.part.updated 和 message.updated 到达顺序不确定的场景。
+     *
+     * @return 若能确定为 user TEXT_DONE，返回 StreamMessage；否则返回 null（缓存文本等待后续事件）
+     */
+    private StreamMessage handleUserTextSpecial(String sessionId, String messageId,
+            String partId, Integer partSeq, String role, JsonNode part) {
+        String textContent = part.path("text").asText("");
+        if ("user".equals(role)) {
+            // Case A：message.updated(role=user) 已到达，role 已缓存
+            if (!textContent.isBlank()) {
+                log.info("Emitting user TEXT_DONE (role cached): sessionId={}, messageId={}", sessionId, messageId);
+                return partBuilder(StreamMessage.Types.TEXT_DONE, sessionId, messageId, partId, partSeq, role)
+                        .content(textContent)
+                        .build();
+            }
+        } else {
+            // Case B：message.updated 还没到，role 未知（默认 assistant）
+            // 缓存文本，等 translateMessageUpdated(role=user) 到达时回溯使用
+            if (sessionId != null && messageId != null && !textContent.isBlank()) {
+                cache.rememberMessageText(sessionId, messageId, textContent);
+            }
+        }
+        return null;
+    }
+
     private StreamMessage translatePartDelta(JsonNode event) {
         JsonNode props = event.path("properties");
         String sessionId = props.path("sessionID").asText(null);
@@ -161,14 +166,14 @@ public class OpenCodeEventTranslator {
             return null;
         }
 
-        String partType = getPartType(sessionId, partId);
+        String partType = cache.getPartType(sessionId, partId);
         if (partType == null) {
             log.debug("Ignoring delta for unknown part: sessionId={}, partId={}", sessionId, partId);
             return null;
         }
 
-        Integer partSeq = rememberPartSeq(sessionId, messageId, partId);
-        String role = resolveMessageRole(sessionId, messageId);
+        Integer partSeq = cache.rememberPartSeq(sessionId, messageId, partId);
+        String role = cache.resolveMessageRole(sessionId, messageId);
         if (shouldIgnoreMessage(role)) {
             return null;
         }
@@ -176,9 +181,10 @@ public class OpenCodeEventTranslator {
             case "text" -> partBuilder(StreamMessage.Types.TEXT_DELTA, sessionId, messageId, partId, partSeq, role)
                     .content(delta)
                     .build();
-            case "reasoning" -> partBuilder(StreamMessage.Types.THINKING_DELTA, sessionId, messageId, partId, partSeq, role)
-                    .content(delta)
-                    .build();
+            case "reasoning" ->
+                partBuilder(StreamMessage.Types.THINKING_DELTA, sessionId, messageId, partId, partSeq, role)
+                        .content(delta)
+                        .build();
             default -> {
                 log.debug("Ignoring delta for unsupported part type: sessionId={}, partId={}, partType={}",
                         sessionId, partId, partType);
@@ -193,7 +199,7 @@ public class OpenCodeEventTranslator {
         String content = delta != null ? delta : part.path("text").asText("");
         // TEXT_DONE 时缓存文本，供 translateMessageUpdated(role=user) 回溯使用
         if (delta == null && sessionId != null && messageId != null && !content.isBlank()) {
-            messageTexts.put(messageCacheKey(sessionId, messageId), content);
+            cache.rememberMessageText(sessionId, messageId, content);
         }
         return partBuilder(type, sessionId, messageId, partId, partSeq, role)
                 .content(content)
@@ -216,106 +222,83 @@ public class OpenCodeEventTranslator {
         JsonNode state = part.get("state");
         String status = state != null ? state.path("status").asText("") : "";
 
+        // Skip question tool here — the dedicated "question.asked" event
+        // (handled by translateQuestionAsked) is the single source of truth.
+        // Processing it here as well would produce a duplicate question card.
         if ("question".equals(toolName) && "running".equals(status)) {
-            return translateQuestion(sessionId, messageId, partId, partSeq, callId, state, role);
+            return null;
         }
 
-        StreamMessage.StreamMessageBuilder builder = partBuilder(
+        ToolInfo.ToolInfoBuilder toolBuilder = ToolInfo.builder()
+                .toolName(toolName)
+                .toolCallId(callId);
+
+        StreamMessage.StreamMessageBuilder msgBuilder = partBuilder(
                 StreamMessage.Types.TOOL_UPDATE,
                 sessionId,
                 messageId,
                 partId,
                 partSeq,
                 role)
-                .toolName(toolName)
-                .toolCallId(callId)
                 .status(status);
 
         if (state != null) {
             JsonNode inputNode = state.get("input");
             if (inputNode != null && !inputNode.isNull()) {
-                builder.input(jsonNodeToMap(inputNode));
+                toolBuilder.input(jsonNodeToMap(inputNode));
             }
             String output = state.path("output").asText(null);
             if (output != null) {
-                builder.output(output);
+                toolBuilder.output(output);
             }
             String error = state.path("error").asText(null);
             if (error != null) {
-                builder.error(error);
+                msgBuilder.error(error);
             }
             String title = state.path("title").asText(null);
             if (title != null) {
-                builder.title(title);
+                msgBuilder.title(title);
             }
         }
 
-        return builder.build();
-    }
-
-    private StreamMessage translateQuestion(String sessionId, String messageId, String partId,
-            Integer partSeq, String callId, JsonNode state, String role) {
-        JsonNode input = state != null ? state.get("input") : null;
-        JsonNode questionNode = resolveQuestionPayload(input);
-        StreamMessage.StreamMessageBuilder builder = partBuilder(
-                StreamMessage.Types.QUESTION,
-                sessionId,
-                messageId,
-                partId,
-                partSeq,
-                role)
-                .toolCallId(callId)
-                .toolName("question")
-                .status("running");
-
-        if (input != null && !input.isNull()) {
-            builder.input(jsonNodeToMap(input));
-        }
-
-        if (questionNode != null) {
-            builder.header(questionNode.path("header").asText(null));
-            builder.question(questionNode.path("question").asText(null));
-
-            List<String> options = extractQuestionOptions(questionNode.get("options"));
-            if (!options.isEmpty()) {
-                builder.options(options);
-            }
-        }
-
-        return builder.build();
+        return msgBuilder.tool(toolBuilder.build()).build();
     }
 
     private StreamMessage translateStepFinish(String sessionId, String messageId, JsonNode part, String role) {
-        StreamMessage.StreamMessageBuilder builder = messageBuilder(
-                StreamMessage.Types.STEP_DONE,
-                sessionId,
-                messageId,
-                role);
+        UsageInfo.UsageInfoBuilder usageBuilder = UsageInfo.builder();
 
         JsonNode tokensNode = part.get("tokens");
         if (tokensNode != null) {
-            builder.tokens(jsonNodeToMap(tokensNode));
+            usageBuilder.tokens(jsonNodeToMap(tokensNode));
         }
 
         double cost = part.path("cost").asDouble(0);
         if (cost > 0) {
-            builder.cost(cost);
+            usageBuilder.cost(cost);
         }
 
         String reason = part.path("reason").asText(null);
         if (reason != null) {
-            builder.reason(reason);
+            usageBuilder.reason(reason);
         }
 
-        return builder.build();
+        return messageBuilder(
+                StreamMessage.Types.STEP_DONE,
+                sessionId,
+                messageId,
+                role)
+                .usage(usageBuilder.build())
+                .build();
     }
 
     private StreamMessage translateFilePart(String sessionId, String messageId, String partId,
             Integer partSeq, JsonNode part, String role) {
         return partBuilder(StreamMessage.Types.FILE, sessionId, messageId, partId, partSeq, role)
-                .fileName(part.path("filename").asText(null))
-                .fileUrl(part.path("url").asText(null))
-                .fileMime(part.path("mime").asText(null))
+                .file(FileInfo.builder()
+                        .fileName(part.path("filename").asText(null))
+                        .fileUrl(part.path("url").asText(null))
+                        .fileMime(part.path("mime").asText(null))
+                        .build())
                 .build();
     }
 
@@ -325,7 +308,7 @@ public class OpenCodeEventTranslator {
         String rawStatus = props.path("status").path("type").asText(props.path("status").asText(""));
         String status = normalizeSessionStatus(rawStatus);
         if ("idle".equals(status)) {
-            clearSessionCaches(sessionId);
+            cache.clearSession(sessionId);
         }
         return baseBuilder(StreamMessage.Types.SESSION_STATUS, sessionId)
                 .sessionStatus(status)
@@ -362,17 +345,19 @@ public class OpenCodeEventTranslator {
             return null;
         }
 
-        String sessionId = ProtocolUtils.firstNonBlank(props.path("sessionID").asText(null), info.path("sessionID").asText(null));
-        String messageId = ProtocolUtils.firstNonBlank(props.path("messageID").asText(null), info.path("id").asText(null));
+        String sessionId = ProtocolUtils.firstNonBlank(props.path("sessionID").asText(null),
+                info.path("sessionID").asText(null));
+        String messageId = ProtocolUtils.firstNonBlank(props.path("messageID").asText(null),
+                info.path("id").asText(null));
         String role = ProtocolUtils.normalizeRole(info.path("role").asText(null));
-        rememberMessageRole(sessionId, messageId, role);
+        cache.rememberMessageRole(sessionId, messageId, role);
 
         // 当 role=user 时，尝试从缓存中获取该消息的文本内容并作为 TEXT_DONE 发射
         // 这解决了 message.part.updated 先到但 role 未知的时序问题
         if ("user".equals(role)) {
-            String cachedText = messageTexts.getIfPresent(messageCacheKey(sessionId, messageId));
+            String cachedText = cache.getMessageText(sessionId, messageId);
             if (cachedText != null) {
-                messageTexts.invalidate(messageCacheKey(sessionId, messageId));
+                cache.invalidateMessageText(sessionId, messageId);
                 log.info("Emitting user TEXT_DONE from cache: sessionId={}, messageId={}, len={}",
                         sessionId, messageId, cachedText.length());
                 return messageBuilder(StreamMessage.Types.TEXT_DONE, sessionId, messageId, role)
@@ -393,7 +378,9 @@ public class OpenCodeEventTranslator {
                 sessionId,
                 messageId,
                 role)
-                .reason(info.path("finish").path("reason").asText(null))
+                .usage(UsageInfo.builder()
+                        .reason(info.path("finish").path("reason").asText(null))
+                        .build())
                 .build();
     }
 
@@ -407,70 +394,50 @@ public class OpenCodeEventTranslator {
                 StreamMessage.Types.PERMISSION_ASK,
                 props.path("sessionID").asText(null),
                 props.path("messageID").asText(null))
-                .permissionId(props.path("id").asText(null))
-                .permType(props.path("type").asText(props.path("permission").asText(null)))
+                .permission(PermissionInfo.builder()
+                        .permissionId(props.path("id").asText(null))
+                        .permType(props.path("type").asText(props.path("permission").asText(null)))
+                        .metadata(jsonNodeToMap(props.get("metadata")))
+                        .build())
                 .title(props.path("title").asText(props.path("permission").asText(null)))
-                .metadata(jsonNodeToMap(props.get("metadata")))
                 .build();
     }
 
     private StreamMessage translateQuestionAsked(JsonNode event) {
         JsonNode props = event.path("properties");
-        JsonNode firstQuestion = resolveQuestionPayload(props);
+        String sessionId = props.path("sessionID").asText(null);
+        JsonNode firstQuestion = ProtocolUtils.resolveQuestionPayload(props);
         if (firstQuestion == null) {
-            return null;
+            return baseBuilder(StreamMessage.Types.QUESTION, sessionId).build();
         }
 
-        List<String> options = extractQuestionOptions(firstQuestion.get("options"));
+        List<String> options = ProtocolUtils.extractQuestionOptions(firstQuestion.path("options"));
 
-        String sessionId = props.path("sessionID").asText(null);
-        String messageId = props.path("messageID").asText(null);
+        // callID and messageID live inside "properties.tool" in the question.asked
+        // event,
+        // but fall back to top-level properties for forward compatibility.
+        JsonNode toolNode = props.path("tool");
+        String callId = toolNode.path("callID").asText(
+                props.path("callID").asText(props.path("toolCallId").asText(null)));
+        String messageId = toolNode.path("messageID").asText(
+                props.path("messageID").asText(null));
+
         String partId = props.path("id").asText(null);
-        Integer partSeq = rememberPartSeq(sessionId, messageId, partId);
+        Integer partSeq = cache.rememberPartSeq(sessionId, messageId, partId);
 
         return partBuilder(StreamMessage.Types.QUESTION, sessionId, messageId, partId, partSeq)
-                .toolName("question")
-                .toolCallId(props.path("callID").asText(props.path("toolCallId").asText(null)))
+                .tool(ToolInfo.builder()
+                        .toolName("question")
+                        .toolCallId(callId)
+                        .input(jsonNodeToMap(props))
+                        .build())
                 .status("running")
-                .input(jsonNodeToMap(props))
-                .header(firstQuestion.path("header").asText(null))
-                .question(firstQuestion.path("question").asText(null))
-                .options(options.isEmpty() ? null : options)
+                .questionInfo(QuestionInfo.builder()
+                        .header(firstQuestion.path("header").asText(null))
+                        .question(firstQuestion.path("question").asText(null))
+                        .options(options.isEmpty() ? null : options)
+                        .build())
                 .build();
-    }
-
-    private JsonNode resolveQuestionPayload(JsonNode input) {
-        if (input == null || input.isMissingNode() || input.isNull()) {
-            return null;
-        }
-
-        JsonNode questionsNode = input.get("questions");
-        if (questionsNode != null && questionsNode.isArray() && !questionsNode.isEmpty()) {
-            JsonNode firstQuestion = questionsNode.get(0);
-            if (firstQuestion != null && !firstQuestion.isNull()) {
-                return firstQuestion;
-            }
-        }
-
-        return input;
-    }
-
-    private List<String> extractQuestionOptions(JsonNode optionsNode) {
-        if (optionsNode == null || !optionsNode.isArray()) {
-            return List.of();
-        }
-
-        List<String> options = new ArrayList<>();
-        for (JsonNode optionNode : optionsNode) {
-            String label = optionNode.path("label").asText(null);
-            if (label == null || label.isBlank()) {
-                label = optionNode.asText(null);
-            }
-            if (label != null && !label.isBlank()) {
-                options.add(label);
-            }
-        }
-        return options;
     }
 
     private StreamMessage.StreamMessageBuilder baseBuilder(String type, String sessionId) {
@@ -481,7 +448,7 @@ public class OpenCodeEventTranslator {
     }
 
     private StreamMessage.StreamMessageBuilder messageBuilder(String type, String sessionId, String sourceMessageId) {
-        return messageBuilder(type, sessionId, sourceMessageId, resolveMessageRole(sessionId, sourceMessageId));
+        return messageBuilder(type, sessionId, sourceMessageId, cache.resolveMessageRole(sessionId, sourceMessageId));
     }
 
     private StreamMessage.StreamMessageBuilder messageBuilder(
@@ -500,7 +467,8 @@ public class OpenCodeEventTranslator {
 
     private StreamMessage.StreamMessageBuilder partBuilder(String type, String sessionId, String sourceMessageId,
             String partId, Integer partSeq) {
-        return partBuilder(type, sessionId, sourceMessageId, partId, partSeq, resolveMessageRole(sessionId, sourceMessageId));
+        return partBuilder(type, sessionId, sourceMessageId, partId, partSeq,
+                cache.resolveMessageRole(sessionId, sourceMessageId));
     }
 
     private StreamMessage.StreamMessageBuilder partBuilder(String type, String sessionId, String sourceMessageId,
@@ -513,95 +481,9 @@ public class OpenCodeEventTranslator {
         return builder;
     }
 
-    private void rememberPartType(String sessionId, String partId, String partType) {
-        if (sessionId == null || sessionId.isBlank() || partId == null || partId.isBlank()
-                || partType == null || partType.isBlank()) {
-            return;
-        }
-        partTypes.put(partCacheKey(sessionId, partId), partType);
-    }
-
-
-    private String getPartType(String sessionId, String partId) {
-        if (sessionId == null || sessionId.isBlank() || partId == null || partId.isBlank()) {
-            return null;
-        }
-        return partTypes.getIfPresent(partCacheKey(sessionId, partId));
-    }
-
-    private Integer rememberPartSeq(String sessionId, String messageId, String partId) {
-        if (sessionId == null || sessionId.isBlank() || messageId == null || messageId.isBlank()
-                || partId == null || partId.isBlank()) {
-            return null;
-        }
-
-        String partKey = partCacheKey(sessionId, partId);
-        Integer existing = partSequences.getIfPresent(partKey);
-        if (existing != null) {
-            return existing;
-        }
-
-        String messageKey = messageCacheKey(sessionId, messageId);
-        Integer nextSeq = nextPartSequences.asMap().compute(messageKey, (key, value) -> value == null ? 1 : value + 1);
-        Integer prior = partSequences.asMap().putIfAbsent(partKey, nextSeq);
-        return prior != null ? prior : nextSeq;
-    }
-
-    private void evictPart(String sessionId, String messageId, String partId) {
-        if (sessionId == null || sessionId.isBlank() || partId == null || partId.isBlank()) {
-            return;
-        }
-        partTypes.invalidate(partCacheKey(sessionId, partId));
-        partSequences.invalidate(partCacheKey(sessionId, partId));
-        if (messageId != null && !messageId.isBlank()) {
-            String messageKey = messageCacheKey(sessionId, messageId);
-            if (partSequences.asMap().keySet().stream().noneMatch(key -> key.startsWith(sessionId + ":"))) {
-                nextPartSequences.invalidate(messageKey);
-            }
-        }
-    }
-
-    private void clearSessionCaches(String sessionId) {
-        if (sessionId == null || sessionId.isBlank()) {
-            return;
-        }
-
-        String prefix = sessionId + ":";
-        partTypes.asMap().keySet().removeIf(key -> key.startsWith(prefix));
-        partSequences.asMap().keySet().removeIf(key -> key.startsWith(prefix));
-        nextPartSequences.asMap().keySet().removeIf(key -> key.startsWith(prefix));
-        messageRoles.asMap().keySet().removeIf(key -> key.startsWith(prefix));
-    }
-
-    private String partCacheKey(String sessionId, String partId) {
-        return sessionId + ":" + partId;
-    }
-
-    private String messageCacheKey(String sessionId, String messageId) {
-        return sessionId + ":" + messageId;
-    }
-
-    private void rememberMessageRole(String sessionId, String messageId, String role) {
-        if (sessionId == null || sessionId.isBlank() || messageId == null || messageId.isBlank()
-                || role == null || role.isBlank()) {
-            return;
-        }
-        messageRoles.put(messageCacheKey(sessionId, messageId), role);
-    }
-
-
-    private String resolveMessageRole(String sessionId, String messageId) {
-        if (sessionId == null || sessionId.isBlank() || messageId == null || messageId.isBlank()) {
-            return "assistant";
-        }
-        return ProtocolUtils.normalizeRole(messageRoles.getIfPresent(messageCacheKey(sessionId, messageId)));
-    }
-
     private boolean shouldIgnoreMessage(String role) {
         return "user".equals(ProtocolUtils.normalizeRole(role));
     }
-
-
 
     private String normalizeSessionStatus(String rawStatus) {
         if (rawStatus == null || rawStatus.isBlank()) {
@@ -625,6 +507,117 @@ public class OpenCodeEventTranslator {
         } catch (Exception e) {
             log.warn("Failed to convert JsonNode to Map: {}", e.getMessage());
             return null;
+        }
+    }
+
+    // ==================== Session Cache ====================
+
+    /**
+     * Encapsulates all session-scoped caching for part types, sequences,
+     * message roles, and text content.
+     */
+    private static class SessionCache {
+        private static final Duration LONG_TTL = Duration.ofHours(2);
+        private static final Duration SHORT_TTL = Duration.ofMinutes(10);
+
+        private final Cache<String, String> partTypes = Caffeine.newBuilder()
+                .expireAfterAccess(LONG_TTL).maximumSize(50_000).build();
+        private final Cache<String, Integer> partSequences = Caffeine.newBuilder()
+                .expireAfterAccess(LONG_TTL).maximumSize(50_000).build();
+        private final Cache<String, Integer> nextPartSequences = Caffeine.newBuilder()
+                .expireAfterAccess(LONG_TTL).maximumSize(10_000).build();
+        private final Cache<String, String> messageRoles = Caffeine.newBuilder()
+                .expireAfterAccess(LONG_TTL).maximumSize(10_000).build();
+        private final Cache<String, String> messageTexts = Caffeine.newBuilder()
+                .expireAfterAccess(SHORT_TTL).maximumSize(10_000).build();
+
+        void rememberPartType(String sessionId, String partId, String partType) {
+            if (isBlank(sessionId) || isBlank(partId) || isBlank(partType))
+                return;
+            partTypes.put(key(sessionId, partId), partType);
+        }
+
+        String getPartType(String sessionId, String partId) {
+            if (isBlank(sessionId) || isBlank(partId))
+                return null;
+            return partTypes.getIfPresent(key(sessionId, partId));
+        }
+
+        Integer rememberPartSeq(String sessionId, String messageId, String partId) {
+            if (isBlank(sessionId) || isBlank(messageId) || isBlank(partId))
+                return null;
+
+            String partKey = key(sessionId, partId);
+            Integer existing = partSequences.getIfPresent(partKey);
+            if (existing != null)
+                return existing;
+
+            String msgKey = key(sessionId, messageId);
+            Integer nextSeq = nextPartSequences.asMap().compute(msgKey, (k, v) -> v == null ? 1 : v + 1);
+            Integer prior = partSequences.asMap().putIfAbsent(partKey, nextSeq);
+            return prior != null ? prior : nextSeq;
+        }
+
+        void evictPart(String sessionId, String messageId, String partId) {
+            if (isBlank(sessionId) || isBlank(partId))
+                return;
+            String partKey = key(sessionId, partId);
+            partTypes.invalidate(partKey);
+            partSequences.invalidate(partKey);
+            if (!isBlank(messageId)) {
+                String msgKey = key(sessionId, messageId);
+                if (partSequences.asMap().keySet().stream().noneMatch(k -> k.startsWith(sessionId + ":"))) {
+                    nextPartSequences.invalidate(msgKey);
+                }
+            }
+        }
+
+        void rememberMessageRole(String sessionId, String messageId, String role) {
+            if (isBlank(sessionId) || isBlank(messageId) || isBlank(role))
+                return;
+            messageRoles.put(key(sessionId, messageId), role);
+        }
+
+        String resolveMessageRole(String sessionId, String messageId) {
+            if (isBlank(sessionId) || isBlank(messageId))
+                return "assistant";
+            return ProtocolUtils.normalizeRole(messageRoles.getIfPresent(key(sessionId, messageId)));
+        }
+
+        void rememberMessageText(String sessionId, String messageId, String text) {
+            if (isBlank(sessionId) || isBlank(messageId) || isBlank(text))
+                return;
+            messageTexts.put(key(sessionId, messageId), text);
+        }
+
+        String getMessageText(String sessionId, String messageId) {
+            if (isBlank(sessionId) || isBlank(messageId))
+                return null;
+            return messageTexts.getIfPresent(key(sessionId, messageId));
+        }
+
+        void invalidateMessageText(String sessionId, String messageId) {
+            if (isBlank(sessionId) || isBlank(messageId))
+                return;
+            messageTexts.invalidate(key(sessionId, messageId));
+        }
+
+        void clearSession(String sessionId) {
+            if (isBlank(sessionId))
+                return;
+            String prefix = sessionId + ":";
+            partTypes.asMap().keySet().removeIf(k -> k.startsWith(prefix));
+            partSequences.asMap().keySet().removeIf(k -> k.startsWith(prefix));
+            nextPartSequences.asMap().keySet().removeIf(k -> k.startsWith(prefix));
+            messageRoles.asMap().keySet().removeIf(k -> k.startsWith(prefix));
+        }
+
+        private static String key(String a, String b) {
+            return a + ":" + b;
+        }
+
+        private static boolean isBlank(String s) {
+            return s == null || s.isBlank();
         }
     }
 }

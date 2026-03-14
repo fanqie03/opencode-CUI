@@ -3,6 +3,7 @@ package com.opencode.cui.skill.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.ProtocolMessageView;
+import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillMessagePart;
 import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillSession;
@@ -28,6 +29,7 @@ import java.time.LocalDateTime;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import org.mockito.ArgumentCaptor;
 
 /**
  * Unit tests for SkillMessageController (plain Mockito, no Spring context).
@@ -85,7 +87,12 @@ class SkillMessageControllerTest {
         assertEquals("1", body.getData().getWelinkSessionId());
         assertEquals("user", body.getData().getRole());
         verify(messagePersistenceService).finalizeActiveAssistantTurn(1L);
-        verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("1"), eq("chat"), any());
+        ArgumentCaptor<InvokeCommand> cmdCaptor = ArgumentCaptor.forClass(InvokeCommand.class);
+        verify(gatewayRelayService).sendInvokeToGateway(cmdCaptor.capture());
+        assertEquals("99", cmdCaptor.getValue().ak());
+        assertEquals("1", cmdCaptor.getValue().userId());
+        assertEquals("1", cmdCaptor.getValue().sessionId());
+        assertEquals("chat", cmdCaptor.getValue().action());
     }
 
     @Test
@@ -109,7 +116,9 @@ class SkillMessageControllerTest {
 
         ResponseEntity<?> response = controller.sendMessage("1", "1", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("1"), eq("question_reply"), any());
+        ArgumentCaptor<InvokeCommand> cmdCaptor = ArgumentCaptor.forClass(InvokeCommand.class);
+        verify(gatewayRelayService).sendInvokeToGateway(cmdCaptor.capture());
+        assertEquals("question_reply", cmdCaptor.getValue().action());
     }
 
     @Test
@@ -196,7 +205,9 @@ class SkillMessageControllerTest {
         assertEquals("1", response.getBody().getData().get("welinkSessionId"));
         assertEquals("p-abc", response.getBody().getData().get("permissionId"));
         assertEquals("once", response.getBody().getData().get("response"));
-        verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("1"), eq("permission_reply"), any());
+        ArgumentCaptor<InvokeCommand> cmdCaptor = ArgumentCaptor.forClass(InvokeCommand.class);
+        verify(gatewayRelayService).sendInvokeToGateway(cmdCaptor.capture());
+        assertEquals("permission_reply", cmdCaptor.getValue().action());
         verify(gatewayRelayService).publishProtocolMessage(eq("1"), any());
     }
 

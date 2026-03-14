@@ -22,94 +22,97 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class MessagePersistenceServiceTest {
 
-    @Mock
-    private SkillMessageService messageService;
-    @Mock
-    private SkillMessagePartRepository partRepository;
-    @Mock
-    private SnowflakeIdGenerator snowflakeIdGenerator;
+        @Mock
+        private SkillMessageService messageService;
+        @Mock
+        private SkillMessagePartRepository partRepository;
+        @Mock
+        private SnowflakeIdGenerator snowflakeIdGenerator;
 
-    private MessagePersistenceService service;
+        private ActiveMessageTracker activeMessageTracker;
+        private MessagePersistenceService service;
 
-    @BeforeEach
-    void setUp() {
-        lenient().when(snowflakeIdGenerator.nextId()).thenReturn(501L, 502L, 503L, 504L);
-        service = new MessagePersistenceService(messageService, partRepository, new ObjectMapper(), snowflakeIdGenerator);
-    }
+        @BeforeEach
+        void setUp() {
+                lenient().when(snowflakeIdGenerator.nextId()).thenReturn(501L, 502L, 503L, 504L);
+                activeMessageTracker = new ActiveMessageTracker(messageService);
+                service = new MessagePersistenceService(messageService, partRepository, new ObjectMapper(),
+                                snowflakeIdGenerator, activeMessageTracker);
+        }
 
-    @Test
-    @DisplayName("finalizeActiveAssistantTurn closes dangling assistant message")
-    void finalizeActiveAssistantTurnClosesDanglingAssistantMessage() {
-        when(messageService.saveMessage(
-                eq(1L),
-                eq(null),
-                eq(SkillMessage.Role.ASSISTANT),
-                eq(""),
-                eq(SkillMessage.ContentType.MARKDOWN),
-                eq(null)))
-                .thenReturn(SkillMessage.builder()
-                        .id(11L)
-                        .messageId("msg_1_1")
-                        .sessionId(1L)
-                        .seq(1)
-                        .build());
-        when(partRepository.findMaxSeqByMessageId(11L)).thenReturn(0);
-        when(partRepository.findByMessageId(11L)).thenReturn(java.util.List.of(
-                SkillMessagePart.builder()
-                        .messageId(11L)
-                        .partType("text")
-                        .content("hello")
-                        .build()));
+        @Test
+        @DisplayName("finalizeActiveAssistantTurn closes dangling assistant message")
+        void finalizeActiveAssistantTurnClosesDanglingAssistantMessage() {
+                when(messageService.saveMessage(
+                                eq(1L),
+                                eq(null),
+                                eq(SkillMessage.Role.ASSISTANT),
+                                eq(""),
+                                eq(SkillMessage.ContentType.MARKDOWN),
+                                eq(null)))
+                                .thenReturn(SkillMessage.builder()
+                                                .id(11L)
+                                                .messageId("msg_1_1")
+                                                .sessionId(1L)
+                                                .seq(1)
+                                                .build());
+                when(partRepository.findMaxSeqByMessageId(11L)).thenReturn(0);
+                when(partRepository.findByMessageId(11L)).thenReturn(java.util.List.of(
+                                SkillMessagePart.builder()
+                                                .messageId(11L)
+                                                .partType("text")
+                                                .content("hello")
+                                                .build()));
 
-        service.persistIfFinal(1L, StreamMessage.builder()
-                .type(StreamMessage.Types.TEXT_DONE)
-                .partId("part-1")
-                .content("hello")
-                .build());
+                service.persistIfFinal(1L, StreamMessage.builder()
+                                .type(StreamMessage.Types.TEXT_DONE)
+                                .partId("part-1")
+                                .content("hello")
+                                .build());
 
-        service.finalizeActiveAssistantTurn(1L);
+                service.finalizeActiveAssistantTurn(1L);
 
-        verify(messageService).markMessageFinished(11L);
-    }
+                verify(messageService).markMessageFinished(11L);
+        }
 
-    @Test
-    @DisplayName("text parts refresh skill_message content")
-    void textPartsRefreshMessageContent() {
-        when(messageService.saveMessage(
-                eq(1L),
-                eq(null),
-                eq(SkillMessage.Role.ASSISTANT),
-                eq(""),
-                eq(SkillMessage.ContentType.MARKDOWN),
-                eq(null)))
-                .thenReturn(SkillMessage.builder()
-                        .id(11L)
-                        .messageId("msg_1_1")
-                        .sessionId(1L)
-                        .seq(1)
-                        .build());
-        when(partRepository.findMaxSeqByMessageId(11L)).thenReturn(0);
-        when(partRepository.findByMessageId(11L)).thenReturn(java.util.List.of(
-                SkillMessagePart.builder()
-                        .messageId(11L)
-                        .partType("text")
-                        .content("final answer")
-                        .build()));
+        @Test
+        @DisplayName("text parts refresh skill_message content")
+        void textPartsRefreshMessageContent() {
+                when(messageService.saveMessage(
+                                eq(1L),
+                                eq(null),
+                                eq(SkillMessage.Role.ASSISTANT),
+                                eq(""),
+                                eq(SkillMessage.ContentType.MARKDOWN),
+                                eq(null)))
+                                .thenReturn(SkillMessage.builder()
+                                                .id(11L)
+                                                .messageId("msg_1_1")
+                                                .sessionId(1L)
+                                                .seq(1)
+                                                .build());
+                when(partRepository.findMaxSeqByMessageId(11L)).thenReturn(0);
+                when(partRepository.findByMessageId(11L)).thenReturn(java.util.List.of(
+                                SkillMessagePart.builder()
+                                                .messageId(11L)
+                                                .partType("text")
+                                                .content("final answer")
+                                                .build()));
 
-        service.persistIfFinal(1L, StreamMessage.builder()
-                .type(StreamMessage.Types.TEXT_DONE)
-                .partId("part-1")
-                .content("final answer")
-                .build());
+                service.persistIfFinal(1L, StreamMessage.builder()
+                                .type(StreamMessage.Types.TEXT_DONE)
+                                .partId("part-1")
+                                .content("final answer")
+                                .build());
 
-        verify(messageService).updateMessageContent(11L, "final answer");
-    }
+                verify(messageService).updateMessageContent(11L, "final answer");
+        }
 
-    @Test
-    @DisplayName("finalizeActiveAssistantTurn is a no-op when no assistant turn is open")
-    void finalizeActiveAssistantTurnNoopWhenNoAssistantTurnOpen() {
-        service.finalizeActiveAssistantTurn(1L);
+        @Test
+        @DisplayName("finalizeActiveAssistantTurn is a no-op when no assistant turn is open")
+        void finalizeActiveAssistantTurnNoopWhenNoAssistantTurnOpen() {
+                service.finalizeActiveAssistantTurn(1L);
 
-        verify(messageService, never()).markMessageFinished(anyLong());
-    }
+                verify(messageService, never()).markMessageFinished(anyLong());
+        }
 }

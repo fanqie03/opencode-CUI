@@ -1,11 +1,14 @@
 package com.opencode.cui.skill.controller;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.ApiResponse;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.ProtocolMessageView;
+import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillMessage;
+import com.opencode.cui.skill.service.GatewayActions;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.repository.SkillMessagePartRepository;
@@ -14,6 +17,7 @@ import com.opencode.cui.skill.service.ImMessageService;
 import com.opencode.cui.skill.service.MessagePersistenceService;
 
 import com.opencode.cui.skill.service.ProtocolMessageMapper;
+import com.opencode.cui.skill.service.ProtocolUtils;
 import com.opencode.cui.skill.service.SessionAccessControlService;
 import com.opencode.cui.skill.service.SkillMessageService;
 import com.opencode.cui.skill.service.SkillSessionService;
@@ -82,15 +86,12 @@ public class SkillMessageController {
             return ResponseEntity.ok(ApiResponse.error(400, "Content is required"));
         }
 
-        Long numericSessionId;
-        try {
-            numericSessionId = Long.parseLong(sessionId);
-        } catch (NumberFormatException e) {
+        Long numericSessionId = ProtocolUtils.parseSessionId(sessionId);
+        if (numericSessionId == null) {
             return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
         }
 
-        SkillSession session;
-        session = accessControlService.requireSessionAccess(numericSessionId, userIdCookie);
+        SkillSession session = accessControlService.requireSessionAccess(numericSessionId, userIdCookie);
 
         if (session.getStatus() == SkillSession.Status.CLOSED) {
             return ResponseEntity.ok(ApiResponse.error(409, "Session is closed"));
@@ -99,45 +100,48 @@ public class SkillMessageController {
         // Persist user message
         messagePersistenceService.finalizeActiveAssistantTurn(numericSessionId);
         SkillMessage message = messageService.saveUserMessage(numericSessionId, request.getContent());
-        // 标记待去重，防止 OpenCode 回传的 user message echo 重复入库
         messagePersistenceService.markPendingUserMessage(numericSessionId);
 
-        // Send invoke to AI-Gateway to trigger OpenCode processing
-        if (session.getAk() != null) {
-            if (session.getToolSessionId() == null) {
-                log.info("Session {} has no toolSessionId, triggering create_session rebuild", sessionId);
-                gatewayRelayService.rebuildToolSession(
-                        sessionId, session, request.getContent());
-                return ResponseEntity.ok(ApiResponse.ok(ProtocolMessageMapper.toProtocolMessage(
-                        message, List.of(), objectMapper)));
-            }
-
-            // Route: toolCallId present → question_reply, otherwise → chat
-            String action;
-            String payload;
-            if (request.getToolCallId() != null && !request.getToolCallId().isBlank()) {
-                action = "question_reply";
-                payload = buildQuestionReplyPayload(
-                        request.getContent(), request.getToolCallId(), session.getToolSessionId());
-            } else {
-                action = "chat";
-                payload = buildChatPayload(request.getContent(), session.getToolSessionId());
-            }
-
-            gatewayRelayService.sendInvokeToGateway(
-                    session.getAk(),
-                    session.getUserId(),
-                    sessionId,
-                    action,
-                    payload);
-        } else {
-            log.warn("No agent associated with session {}, cannot invoke AI", sessionId);
-        }
+        // Route to AI-Gateway
+        routeToGateway(session, sessionId, numericSessionId, request);
 
         return ResponseEntity.ok(ApiResponse.ok(ProtocolMessageMapper.toProtocolMessage(
-                message,
-                List.of(),
-                objectMapper)));
+                message, List.of(), objectMapper)));
+    }
+
+    /**
+     * Route the user message to AI-Gateway based on session state and request type.
+     */
+    private void routeToGateway(SkillSession session, String sessionId,
+            Long numericSessionId, SendMessageRequest request) {
+        if (session.getAk() == null) {
+            log.warn("No agent associated with session {}, cannot invoke AI", sessionId);
+            return;
+        }
+
+        if (session.getToolSessionId() == null) {
+            log.info("Session {} has no toolSessionId, triggering create_session rebuild", sessionId);
+            gatewayRelayService.rebuildToolSession(sessionId, session, request.getContent());
+            return;
+        }
+
+        String action;
+        String payload;
+        if (request.getToolCallId() != null && !request.getToolCallId().isBlank()) {
+            action = GatewayActions.QUESTION_REPLY;
+            payload = buildPayload(Map.of(
+                    "answer", request.getContent(),
+                    "toolCallId", request.getToolCallId(),
+                    "toolSessionId", session.getToolSessionId()));
+        } else {
+            action = GatewayActions.CHAT;
+            payload = buildPayload(Map.of(
+                    "text", request.getContent(),
+                    "toolSessionId", session.getToolSessionId()));
+        }
+
+        gatewayRelayService.sendInvokeToGateway(
+                new InvokeCommand(session.getAk(), session.getUserId(), sessionId, action, payload));
     }
 
     /**
@@ -151,10 +155,8 @@ public class SkillMessageController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
 
-        Long numericSessionId;
-        try {
-            numericSessionId = Long.parseLong(sessionId);
-        } catch (NumberFormatException e) {
+        Long numericSessionId = ProtocolUtils.parseSessionId(sessionId);
+        if (numericSessionId == null) {
             return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
         }
 
@@ -187,10 +189,8 @@ public class SkillMessageController {
             return ResponseEntity.ok(ApiResponse.error(400, "Content is required"));
         }
 
-        Long numericSessionId;
-        try {
-            numericSessionId = Long.parseLong(sessionId);
-        } catch (NumberFormatException e) {
+        Long numericSessionId = ProtocolUtils.parseSessionId(sessionId);
+        if (numericSessionId == null) {
             return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
         }
 
@@ -239,10 +239,8 @@ public class SkillMessageController {
                     ApiResponse.error(400, "Invalid response value. Must be one of: once, always, reject"));
         }
 
-        Long numericSessionId;
-        try {
-            numericSessionId = Long.parseLong(sessionId);
-        } catch (NumberFormatException e) {
+        Long numericSessionId = ProtocolUtils.parseSessionId(sessionId);
+        if (numericSessionId == null) {
             return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
         }
 
@@ -261,84 +259,54 @@ public class SkillMessageController {
             return ResponseEntity.ok(ApiResponse.error(500, "No toolSessionId available"));
         }
 
-        String payload = buildPermissionReplyPayload(permId, request.getResponse(),
-                session.getToolSessionId());
+        String payload = buildPayload(Map.of(
+                "permissionId", permId,
+                "response", request.getResponse(),
+                "toolSessionId", session.getToolSessionId()));
 
         // Send permission_reply invoke to AI-Gateway
         gatewayRelayService.sendInvokeToGateway(
-                session.getAk(),
-                session.getUserId(),
-                sessionId.toString(),
-                "permission_reply",
-                payload);
+                new InvokeCommand(session.getAk(),
+                        session.getUserId(),
+                        sessionId,
+                        GatewayActions.PERMISSION_REPLY,
+                        payload));
 
         StreamMessage replyMessage = StreamMessage.builder()
                 .type(StreamMessage.Types.PERMISSION_REPLY)
                 .role("assistant")
-                .permissionId(permId)
-                .response(request.getResponse())
+                .permission(StreamMessage.PermissionInfo.builder()
+                        .permissionId(permId)
+                        .response(request.getResponse())
+                        .build())
                 .build();
-        gatewayRelayService.publishProtocolMessage(sessionId.toString(), replyMessage);
+        gatewayRelayService.publishProtocolMessage(sessionId, replyMessage);
 
         log.info("Permission reply sent: sessionId={}, permId={}, response={}",
                 sessionId, permId, request.getResponse());
 
         return ResponseEntity.ok(ApiResponse.ok(Map.of(
-                "welinkSessionId", sessionId.toString(),
+                "welinkSessionId", sessionId,
                 "permissionId", permId,
                 "response", request.getResponse())));
     }
 
     /**
-     * Build the JSON payload for a chat invoke command.
+     * 通用 JSON payload 构建器。
+     * 统一替代 buildChatPayload / buildQuestionReplyPayload /
+     * buildPermissionReplyPayload。
      */
-    private String buildChatPayload(String text, String toolSessionId) {
-        var node = objectMapper.createObjectNode();
-        node.put("text", text);
-        if (toolSessionId != null) {
-            node.put("toolSessionId", toolSessionId);
-        }
+    private String buildPayload(Map<String, String> fields) {
+        ObjectNode node = objectMapper.createObjectNode();
+        fields.forEach((k, v) -> {
+            if (v != null) {
+                node.put(k, v);
+            }
+        });
         try {
             return objectMapper.writeValueAsString(node);
         } catch (JsonProcessingException e) {
-            log.error("Failed to serialize chat payload", e);
-            return "{}";
-        }
-    }
-
-    /**
-     * Build the JSON payload for a question_reply invoke command.
-     */
-    private String buildQuestionReplyPayload(String answer, String toolCallId, String toolSessionId) {
-        var node = objectMapper.createObjectNode();
-        node.put("answer", answer);
-        node.put("toolCallId", toolCallId);
-        if (toolSessionId != null) {
-            node.put("toolSessionId", toolSessionId);
-        }
-        try {
-            return objectMapper.writeValueAsString(node);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize question_reply payload", e);
-            return "{}";
-        }
-    }
-
-    /**
-     * Build the JSON payload for a permission_reply invoke command.
-     */
-    private String buildPermissionReplyPayload(String permissionId, String response,
-            String toolSessionId) {
-        var node = objectMapper.createObjectNode();
-        node.put("permissionId", permissionId);
-        node.put("response", response);
-        if (toolSessionId != null) {
-            node.put("toolSessionId", toolSessionId);
-        }
-        try {
-            return objectMapper.writeValueAsString(node);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize permission reply payload", e);
+            log.error("Failed to serialize payload: {}", e.getMessage());
             return "{}";
         }
     }

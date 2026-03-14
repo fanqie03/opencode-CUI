@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
@@ -50,8 +51,13 @@ public class SessionRebuildService {
     public void handleSessionNotFound(String sessionId, String userId, RebuildCallback callback) {
         log.warn("Tool session not found for welinkSession={}, initiating rebuild", sessionId);
 
+        Long sessionIdLong = ProtocolUtils.parseSessionId(sessionId);
+        if (sessionIdLong == null) {
+            log.error("Failed to rebuild session {}: invalid sessionId", sessionId);
+            return;
+        }
+
         try {
-            Long sessionIdLong = Long.valueOf(sessionId);
             SkillSession session = sessionService.getSession(sessionIdLong);
 
             // 清除无效的 toolSessionId
@@ -101,7 +107,8 @@ public class SessionRebuildService {
             } catch (JsonProcessingException e) {
                 payloadStr = "{}";
             }
-            callback.sendInvoke(session.getAk(), session.getUserId(), sessionId, "create_session", payloadStr);
+            callback.sendInvoke(new InvokeCommand(session.getAk(), session.getUserId(), sessionId,
+                    GatewayActions.CREATE_SESSION, payloadStr));
             log.info("Rebuild create_session sent for welinkSession={}, ak={}", sessionId, session.getAk());
         } else {
             log.error("Cannot rebuild session {}: no ak associated", sessionId);
@@ -134,6 +141,7 @@ public class SessionRebuildService {
      */
     public interface RebuildCallback {
         void broadcast(String sessionId, String userId, StreamMessage msg);
-        void sendInvoke(String ak, String userId, String sessionId, String action, String payload);
+
+        void sendInvoke(InvokeCommand command);
     }
 }

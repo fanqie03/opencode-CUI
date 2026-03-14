@@ -3,7 +3,6 @@ package com.opencode.cui.skill.ws;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.service.RedisMessageBroker;
@@ -25,6 +24,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -137,70 +138,8 @@ public class SkillStreamHandler extends TextWebSocketHandler {
             return;
         }
 
-        long seq = nextTransportSeq(sessionId);
-        msg.setSeq(seq);
-
-        String messageText;
-        try {
-            messageText = objectMapper.writeValueAsString(msg);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize StreamMessage: type={}", msg.getType(), e);
-            return;
-        }
-
-        TextMessage textMessage = new TextMessage(messageText);
-        for (WebSocketSession ws : recipients) {
-            synchronized (ws) {
-                if (ws.isOpen()) {
-                    try {
-                        ws.sendMessage(textMessage);
-                    } catch (IOException e) {
-                        log.error("Failed to push StreamMessage to subscriber: sessionId={}, wsId={}, error={}",
-                                sessionId, ws.getId(), e.getMessage());
-                        unregisterSubscriber(ws);
-                    }
-                } else {
-                    unregisterSubscriber(ws);
-                }
-            }
-        }
-    }
-
-    /**
-     * Push a legacy ad-hoc message to subscribers of a given skill session.
-     *
-     * @deprecated Use {@link #pushStreamMessage(String, StreamMessage)} instead.
-     */
-    @Deprecated
-    public void pushToSession(String sessionId, String type, String content) {
-        Set<WebSocketSession> recipients = resolveRecipients(sessionId);
-        if (recipients.isEmpty()) {
-            log.debug("No subscribers for session {}, message type={} dropped", sessionId, type);
-            return;
-        }
-
-        long seq = nextTransportSeq(sessionId);
-        String message = buildMessage(sessionId, type, content, seq);
-        if (message == null) {
-            return;
-        }
-
-        TextMessage textMessage = new TextMessage(message);
-        for (WebSocketSession ws : recipients) {
-            synchronized (ws) {
-                if (ws.isOpen()) {
-                    try {
-                        ws.sendMessage(textMessage);
-                    } catch (IOException e) {
-                        log.error("Failed to push message to subscriber: sessionId={}, wsId={}, error={}",
-                                sessionId, ws.getId(), e.getMessage());
-                        unregisterSubscriber(ws);
-                    }
-                } else {
-                    unregisterSubscriber(ws);
-                }
-            }
-        }
+        msg.setSeq(nextTransportSeq(sessionId));
+        serializeAndBroadcast(msg, recipients, sessionId);
     }
 
     public int getSubscriberCount(String sessionId) {
@@ -283,7 +222,12 @@ public class SkillStreamHandler extends TextWebSocketHandler {
             String type = node.path("type").asText("delta");
             String content = node.has("content") ? node.get("content").toString() : null;
             if (sessionId != null) {
-                pushToSession(sessionId, type, content);
+                StreamMessage adHocMsg = StreamMessage.builder()
+                        .type(type)
+                        .sessionId(sessionId)
+                        .content(content)
+                        .build();
+                pushStreamMessage(sessionId, adHocMsg);
             }
         } catch (JsonProcessingException e) {
             log.error("Failed to parse user broadcast for user {}: {}", userId, e.getMessage());
@@ -302,30 +246,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
             msg.setSeq(nextTransportSeq(sessionId));
         }
 
-        String messageText;
-        try {
-            messageText = objectMapper.writeValueAsString(msg);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize user stream message: userId={}, type={}", userId, msg.getType(), e);
-            return;
-        }
-
-        TextMessage textMessage = new TextMessage(messageText);
-        for (WebSocketSession ws : recipients) {
-            synchronized (ws) {
-                if (ws.isOpen()) {
-                    try {
-                        ws.sendMessage(textMessage);
-                    } catch (IOException e) {
-                        log.error("Failed to push user stream message: userId={}, wsId={}, error={}",
-                                userId, ws.getId(), e.getMessage());
-                        unregisterSubscriber(ws);
-                    }
-                } else {
-                    unregisterSubscriber(ws);
-                }
-            }
-        }
+        serializeAndBroadcast(msg, recipients, "user:" + userId);
     }
 
     private void sendInitialStreamingState(WebSocketSession session, String userId) {
@@ -339,38 +260,17 @@ public class SkillStreamHandler extends TextWebSocketHandler {
     }
 
     private void sendSnapshot(WebSocketSession session, String sessionId) {
-        synchronized (session) {
-            if (!session.isOpen()) {
-                return;
-            }
-            try {
-                StreamMessage snapshotMsg = snapshotService.buildSnapshot(sessionId, nextTransportSeq(sessionId));
-                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(snapshotMsg)));
-                log.info("Snapshot sent: sessionId={}, messages={}",
-                        sessionId, snapshotMsg.getMessages() != null ? snapshotMsg.getMessages().size() : 0);
-            } catch (Exception e) {
-                log.error("Failed to send snapshot for session {}: {}", sessionId, e.getMessage(), e);
-            }
-        }
+        sendToSession(session, sessionId,
+                () -> snapshotService.buildSnapshot(sessionId, nextTransportSeq(sessionId)),
+                msg -> "Snapshot sent: sessionId=" + sessionId + ", messages="
+                        + (msg.getMessages() != null ? msg.getMessages().size() : 0));
     }
 
     private void sendStreamingState(WebSocketSession session, String sessionId) {
-        synchronized (session) {
-            if (!session.isOpen()) {
-                return;
-            }
-            try {
-                StreamMessage streamingMsg = snapshotService.buildStreamingState(sessionId, nextTransportSeq(sessionId));
-                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(streamingMsg)));
-                log.info("Streaming state sent: sessionId={}, status={}",
-                        sessionId, streamingMsg.getSessionStatus());
-            } catch (Exception e) {
-                log.error("Failed to send streaming state for session {}: {}", sessionId, e.getMessage(), e);
-            }
-        }
+        sendToSession(session, sessionId,
+                () -> snapshotService.buildStreamingState(sessionId, nextTransportSeq(sessionId)),
+                msg -> "Streaming state sent: sessionId=" + sessionId + ", status=" + msg.getSessionStatus());
     }
-
-
 
     private Set<WebSocketSession> resolveRecipients(String sessionId) {
         String ownerUserId = sessionOwners.get(sessionId, this::resolveOwnerUserId);
@@ -393,7 +293,6 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         }
     }
 
-
     private void preloadActiveSessionOwners(String userId) {
         for (SkillSession session : sessionService.findActiveByUserId(userId)) {
             if (session.getId() != null && session.getUserId() != null) {
@@ -402,35 +301,64 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         }
     }
 
-    private String buildMessage(String sessionId, String type, String content, long seq) {
-        ObjectNode node = objectMapper.createObjectNode();
-        node.put("type", type);
-        node.put("seq", seq);
-        putWelinkSessionId(node, sessionId);
+    // ==================== Shared helpers ====================
 
-        if (content != null) {
-            try {
-                node.set("content", objectMapper.readTree(content));
-            } catch (JsonProcessingException e) {
-                node.put("content", content);
-            }
-        }
-
+    /**
+     * 序列化 StreamMessage 并广播到一组 WebSocket 会话。
+     * 统一了 pushStreamMessage 和 pushStreamMessageToUser 中的重复逻辑。
+     */
+    private void serializeAndBroadcast(StreamMessage msg, Set<WebSocketSession> recipients, String context) {
+        String messageText;
         try {
-            return objectMapper.writeValueAsString(node);
+            messageText = objectMapper.writeValueAsString(msg);
         } catch (JsonProcessingException e) {
-            log.error("Failed to serialize stream message: type={}", type, e);
-            return null;
+            log.error("Failed to serialize StreamMessage: type={}, context={}", msg.getType(), context, e);
+            return;
+        }
+        broadcastText(new TextMessage(messageText), recipients, context);
+    }
+
+    /**
+     * 在 synchronized 会话上安全发送单条 StreamMessage。
+     * 统一了 sendSnapshot 和 sendStreamingState 中的重复逻辑。
+     */
+    private void sendToSession(WebSocketSession session, String sessionId,
+            Supplier<StreamMessage> messageSupplier, Function<StreamMessage, String> logFormatter) {
+        synchronized (session) {
+            if (!session.isOpen()) {
+                return;
+            }
+            try {
+                StreamMessage msg = messageSupplier.get();
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(msg)));
+                log.info(logFormatter.apply(msg));
+            } catch (Exception e) {
+                log.error("Failed to send message for session {}: {}", sessionId, e.getMessage(), e);
+            }
         }
     }
 
-    private void putWelinkSessionId(ObjectNode node, String sessionId) {
-        if (sessionId == null || sessionId.isBlank()) {
-            node.putNull("welinkSessionId");
-            return;
+    /**
+     * Broadcast a pre-serialized TextMessage to a set of WebSocket sessions.
+     * Handles synchronized sending and automatic unregistration of closed/failed
+     * sessions.
+     */
+    private void broadcastText(TextMessage textMessage, Set<WebSocketSession> recipients, String context) {
+        for (WebSocketSession ws : recipients) {
+            synchronized (ws) {
+                if (ws.isOpen()) {
+                    try {
+                        ws.sendMessage(textMessage);
+                    } catch (IOException e) {
+                        log.error("Failed to push message: context={}, wsId={}, error={}",
+                                context, ws.getId(), e.getMessage());
+                        unregisterSubscriber(ws);
+                    }
+                } else {
+                    unregisterSubscriber(ws);
+                }
+            }
         }
-        // 以字符串传输，防止 JavaScript IEEE 754 大数精度丢失
-        node.put("welinkSessionId", sessionId);
     }
 
     private long nextTransportSeq(String sessionId) {

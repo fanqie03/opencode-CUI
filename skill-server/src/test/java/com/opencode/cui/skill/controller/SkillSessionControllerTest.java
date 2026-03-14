@@ -1,6 +1,7 @@
 package com.opencode.cui.skill.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ProtocolException;
@@ -13,11 +14,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import org.mockito.ArgumentCaptor;
 
 /**
  * Unit tests for SkillSessionController (plain Mockito, no Spring context).
@@ -36,7 +37,8 @@ class SkillSessionControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new SkillSessionController(sessionService, gatewayRelayService, accessControlService, new ObjectMapper());
+        controller = new SkillSessionController(sessionService, gatewayRelayService, accessControlService,
+                new ObjectMapper());
     }
 
     @Test
@@ -57,7 +59,11 @@ class SkillSessionControllerTest {
         assertNotNull(response.getBody());
         assertEquals(0, response.getBody().getCode());
         assertNotNull(response.getBody().getData());
-        verify(gatewayRelayService).sendInvokeToGateway(eq("3"), eq("1"), eq("1"), eq("create_session"), contains("Test"));
+        ArgumentCaptor<InvokeCommand> cmdCaptor = ArgumentCaptor.forClass(InvokeCommand.class);
+        verify(gatewayRelayService).sendInvokeToGateway(cmdCaptor.capture());
+        assertEquals("3", cmdCaptor.getValue().ak());
+        assertEquals("create_session", cmdCaptor.getValue().action());
+        assertTrue(cmdCaptor.getValue().payload().contains("Test"));
     }
 
     @Test
@@ -119,7 +125,10 @@ class SkillSessionControllerTest {
         when(accessControlService.requireSessionAccess(42L, "1")).thenReturn(session);
 
         controller.closeSession("1", "42");
-        verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("42"), eq("close_session"), any());
+        ArgumentCaptor<InvokeCommand> cmdCaptor = ArgumentCaptor.forClass(InvokeCommand.class);
+        verify(gatewayRelayService).sendInvokeToGateway(cmdCaptor.capture());
+        assertEquals("99", cmdCaptor.getValue().ak());
+        assertEquals("close_session", cmdCaptor.getValue().action());
     }
 
     @Test
@@ -137,7 +146,10 @@ class SkillSessionControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("aborted", response.getBody().getData().get("status"));
         assertEquals("42", response.getBody().getData().get("welinkSessionId"));
-        verify(gatewayRelayService).sendInvokeToGateway(eq("99"), eq("1"), eq("42"), eq("abort_session"), any());
+        ArgumentCaptor<InvokeCommand> cmdCaptor = ArgumentCaptor.forClass(InvokeCommand.class);
+        verify(gatewayRelayService).sendInvokeToGateway(cmdCaptor.capture());
+        assertEquals("99", cmdCaptor.getValue().ak());
+        assertEquals("abort_session", cmdCaptor.getValue().action());
         verify(sessionService, never()).closeSession(anyLong());
         verify(gatewayRelayService, never()).publishProtocolMessage(anyString(), any());
     }
