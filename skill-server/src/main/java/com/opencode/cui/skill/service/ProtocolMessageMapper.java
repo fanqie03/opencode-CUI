@@ -7,10 +7,14 @@ import com.opencode.cui.skill.model.ProtocolMessageView;
 import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillMessagePart;
 import com.opencode.cui.skill.model.StreamMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
 public final class ProtocolMessageMapper {
+
+    private static final Logger log = LoggerFactory.getLogger(ProtocolMessageMapper.class);
 
     private ProtocolMessageMapper() {
     }
@@ -205,6 +209,7 @@ public final class ProtocolMessageMapper {
         try {
             return objectMapper.readTree(json);
         } catch (Exception e) {
+            log.debug("Failed to parse JSON: {}", json, e);
             return null;
         }
     }

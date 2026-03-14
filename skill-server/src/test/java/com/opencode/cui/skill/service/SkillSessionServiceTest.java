@@ -1,13 +1,13 @@
 package com.opencode.cui.skill.service;
 
 import com.opencode.cui.skill.model.PageResult;
+import com.opencode.cui.skill.model.SessionListQuery;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.repository.SkillSessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -111,7 +111,8 @@ class SkillSessionServiceTest {
         when(sessionRepository.findByUserId("1", 0, 10)).thenReturn(List.of());
         when(sessionRepository.countByUserId("1")).thenReturn(0L);
 
-        PageResult<SkillSession> result = service.listSessions("1", null, null, null, 0, 10);
+        PageResult<SkillSession> result = service.listSessions(
+                new SessionListQuery("1", null, null, null, 0, 10));
         assertNotNull(result);
         assertEquals(0, result.getTotalElements());
     }
@@ -124,7 +125,7 @@ class SkillSessionServiceTest {
         when(sessionRepository.countByUserIdFiltered(eq("1"), isNull(), isNull(), anyList())).thenReturn(0L);
 
         PageResult<SkillSession> result = service.listSessions(
-                "1", null, null, "ACTIVE", 0, 10);
+                new SessionListQuery("1", null, null, "ACTIVE", 0, 10));
         assertNotNull(result);
     }
 }

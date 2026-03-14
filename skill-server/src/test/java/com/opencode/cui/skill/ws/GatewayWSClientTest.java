@@ -17,7 +17,7 @@ class GatewayWSClientTest {
 
     @Test
     @DisplayName("buildAuthProtocol generates base64url token subprotocol")
-    void buildAuthProtocolGeneratesBase64UrlTokenSubprotocol() {
+    void buildAuthProtocolGeneratesBase64UrlTokenSubprotocol() throws Exception {
         GatewayWSClient client = new GatewayWSClient(Mockito.mock(GatewayRelayService.class), new ObjectMapper());
         ReflectionTestUtils.setField(client, "internalToken", "secret-token");
 
@@ -26,6 +26,9 @@ class GatewayWSClientTest {
         assertTrue(protocol.startsWith("auth."));
         String encoded = protocol.substring("auth.".length());
         byte[] decoded = Base64.getUrlDecoder().decode(encoded);
-        assertEquals("{\"source\":\"skill-server\",\"token\":\"secret-token\"}", new String(decoded, StandardCharsets.UTF_8));
+        com.fasterxml.jackson.databind.JsonNode node = new ObjectMapper()
+                .readTree(new String(decoded, StandardCharsets.UTF_8));
+        assertEquals("skill-server", node.get("source").asText());
+        assertEquals("secret-token", node.get("token").asText());
     }
 }

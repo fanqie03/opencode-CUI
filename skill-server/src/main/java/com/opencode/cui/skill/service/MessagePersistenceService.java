@@ -258,13 +258,8 @@ public class MessagePersistenceService {
     }
 
     private void syncMessageContent(ActiveMessageTracker.ActiveMessageRef active) {
-        StringBuilder content = new StringBuilder();
-        for (SkillMessagePart existingPart : partRepository.findByMessageId(active.dbId())) {
-            if ("text".equals(existingPart.getPartType()) && existingPart.getContent() != null) {
-                content.append(existingPart.getContent());
-            }
-        }
-        messageService.updateMessageContent(active.dbId(), content.toString());
+        String content = partRepository.findConcatenatedTextByMessageId(active.dbId());
+        messageService.updateMessageContent(active.dbId(), content != null ? content : "");
     }
 
     private boolean requiresMessageContext(StreamMessage msg) {

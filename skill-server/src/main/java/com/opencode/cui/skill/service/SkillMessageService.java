@@ -1,7 +1,11 @@
 package com.opencode.cui.skill.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.PageResult;
+import com.opencode.cui.skill.model.ProtocolMessageView;
+import com.opencode.cui.skill.model.SaveMessageCommand;
 import com.opencode.cui.skill.model.SkillMessage;
+import com.opencode.cui.skill.repository.SkillMessagePartRepository;
 import com.opencode.cui.skill.repository.SkillMessageRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -12,15 +16,21 @@ import org.springframework.transaction.annotation.Transactional;
 public class SkillMessageService {
 
     private final SkillMessageRepository messageRepository;
+    private final SkillMessagePartRepository partRepository;
     private final SkillSessionService sessionService;
     private final SnowflakeIdGenerator snowflakeIdGenerator;
+    private final ObjectMapper objectMapper;
 
     public SkillMessageService(SkillMessageRepository messageRepository,
+            SkillMessagePartRepository partRepository,
             SkillSessionService sessionService,
-            SnowflakeIdGenerator snowflakeIdGenerator) {
+            SnowflakeIdGenerator snowflakeIdGenerator,
+            ObjectMapper objectMapper) {
         this.messageRepository = messageRepository;
+        this.partRepository = partRepository;
         this.sessionService = sessionService;
         this.snowflakeIdGenerator = snowflakeIdGenerator;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -28,30 +38,29 @@ public class SkillMessageService {
      * Also touches the parent session to refresh last_active_at.
      */
     @Transactional
-    SkillMessage saveMessage(Long sessionId, String messageId, SkillMessage.Role role, String content,
-            SkillMessage.ContentType contentType, String meta) {
-        int nextSeq = messageRepository.findMaxSeqBySessionId(sessionId) + 1;
-        String effectiveMessageId = messageId != null && !messageId.isBlank()
-                ? messageId
-                : generateMessageId(sessionId, nextSeq);
+    SkillMessage saveMessage(SaveMessageCommand cmd) {
+        int nextSeq = messageRepository.findMaxSeqBySessionId(cmd.sessionId()) + 1;
+        String effectiveMessageId = cmd.messageId() != null && !cmd.messageId().isBlank()
+                ? cmd.messageId()
+                : generateMessageId(cmd.sessionId(), nextSeq);
 
         SkillMessage message = SkillMessage.builder()
                 .id(snowflakeIdGenerator.nextId())
                 .messageId(effectiveMessageId)
-                .sessionId(sessionId)
+                .sessionId(cmd.sessionId())
                 .seq(nextSeq)
                 .messageSeq(nextSeq)
-                .role(role)
-                .content(content)
-                .contentType(contentType != null ? contentType : SkillMessage.ContentType.MARKDOWN)
-                .meta(meta)
+                .role(cmd.role())
+                .content(cmd.content())
+                .contentType(cmd.contentType() != null ? cmd.contentType() : SkillMessage.ContentType.MARKDOWN)
+                .meta(cmd.meta())
                 .build();
 
         messageRepository.insert(message);
-        sessionService.touchSession(sessionId);
+        sessionService.touchSession(cmd.sessionId());
 
         log.debug("Saved message: sessionId={}, messageId={}, seq={}, role={}",
-                sessionId, effectiveMessageId, nextSeq, role);
+                cmd.sessionId(), effectiveMessageId, nextSeq, cmd.role());
         return message;
     }
 
@@ -62,7 +71,7 @@ public class SkillMessageService {
     @Transactional
     SkillMessage saveMessage(Long sessionId, SkillMessage.Role role, String content,
             SkillMessage.ContentType contentType, String meta) {
-        return saveMessage(sessionId, null, role, content, contentType, meta);
+        return saveMessage(new SaveMessageCommand(sessionId, role, content, contentType, meta));
     }
 
     /**
@@ -110,6 +119,22 @@ public class SkillMessageService {
         var content = messageRepository.findBySessionId(sessionId, offset, size);
         long total = messageRepository.countBySessionId(sessionId);
         return new PageResult<>(content, total, page, size);
+    }
+
+    /**
+     * Query message history with attached parts, returning protocol-ready views.
+     */
+    @Transactional(readOnly = true)
+    public PageResult<ProtocolMessageView> getMessageHistoryWithParts(Long sessionId, int page, int size) {
+        PageResult<SkillMessage> messages = getMessageHistory(sessionId, page, size);
+        var content = messages.getContent().stream()
+                .map(message -> ProtocolMessageMapper.toProtocolMessage(
+                        message,
+                        partRepository.findByMessageId(message.getId()),
+                        objectMapper))
+                .toList();
+        return new PageResult<>(content, messages.getTotalElements(),
+                messages.getNumber(), messages.getSize());
     }
 
     /**

@@ -1,13 +1,12 @@
 package com.opencode.cui.skill.config;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-
-import java.time.Duration;
 
 /**
  * Redis configuration for multi-instance coordination.
@@ -16,6 +15,18 @@ import java.time.Duration;
 @Slf4j
 @Configuration
 public class RedisConfig {
+
+    @Value("${skill.redis.listener.core-pool-size:5}")
+    private int corePoolSize;
+
+    @Value("${skill.redis.listener.max-pool-size:50}")
+    private int maxPoolSize;
+
+    @Value("${skill.redis.listener.keep-alive-seconds:60}")
+    private int keepAliveSeconds;
+
+    @Value("${skill.redis.listener.queue-capacity:200}")
+    private int queueCapacity;
 
     /**
      * Configure Redis message listener container for pub/sub.
@@ -37,10 +48,11 @@ public class RedisConfig {
 
         // Configure task executor for message processing
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(5);
-        executor.setMaxPoolSize(50);
-        executor.setQueueCapacity(100);
-        executor.setThreadNamePrefix("redis-listener-");
+        executor.setCorePoolSize(corePoolSize);
+        executor.setMaxPoolSize(maxPoolSize);
+        executor.setKeepAliveSeconds(keepAliveSeconds);
+        executor.setQueueCapacity(queueCapacity);
+        executor.setThreadNamePrefix("redis-sub-");
         executor.initialize();
         container.setTaskExecutor(executor);
 
@@ -62,7 +74,7 @@ public class RedisConfig {
         container.setRecoveryInterval(5000L);
 
         log.info("Redis message listener container configured with thread pool " +
-                "(max-active=50, core=5, queue=100)");
+                "(core={}, max={}, queue={})", corePoolSize, maxPoolSize, queueCapacity);
 
         return container;
     }

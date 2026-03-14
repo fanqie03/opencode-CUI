@@ -10,7 +10,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class OpenCodeEventTranslatorTest {
 
   private final ObjectMapper objectMapper = new ObjectMapper();
-  private final OpenCodeEventTranslator translator = new OpenCodeEventTranslator(objectMapper);
+  private final OpenCodeEventTranslator translator = new OpenCodeEventTranslator(
+      objectMapper, new TranslatorSessionCache());
 
   @Test
   @DisplayName("message.part.delta is translated after part type is learned from updated event")

@@ -51,14 +51,13 @@ class AgentQueryControllerTest {
     }
 
     @Test
-    @DisplayName("getOnlineAgents returns 400 when userId cookie is missing")
+    @DisplayName("getOnlineAgents throws ProtocolException when userId cookie is missing")
     void getOnlineAgentsWithoutCookie() {
         when(accessControlService.requireUserId(null)).thenThrow(new ProtocolException(400, "userId is required"));
 
-        var response = controller.getOnlineAgents(null);
-
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertNotNull(response.getBody());
-        assertEquals(400, response.getBody().getCode());
+        ProtocolException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                ProtocolException.class,
+                () -> controller.getOnlineAgents(null));
+        assertEquals(400, ex.getCode());
     }
 }

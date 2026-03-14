@@ -1,7 +1,9 @@
 package com.opencode.cui.skill.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.SkillMessage;
+import com.opencode.cui.skill.repository.SkillMessagePartRepository;
 import com.opencode.cui.skill.repository.SkillMessageRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -22,16 +24,21 @@ class SkillMessageServiceTest {
     @Mock
     private SkillMessageRepository messageRepository;
     @Mock
+    private SkillMessagePartRepository partRepository;
+    @Mock
     private SkillSessionService sessionService;
     @Mock
     private SnowflakeIdGenerator snowflakeIdGenerator;
+    @Mock
+    private ObjectMapper objectMapper;
 
     private SkillMessageService service;
 
     @BeforeEach
     void setUp() {
         lenient().when(snowflakeIdGenerator.nextId()).thenReturn(100L, 101L, 102L, 103L, 104L, 105L);
-        service = new SkillMessageService(messageRepository, sessionService, snowflakeIdGenerator);
+        service = new SkillMessageService(messageRepository, partRepository,
+                sessionService, snowflakeIdGenerator, new ObjectMapper());
     }
 
     @Test

@@ -1,23 +1,21 @@
 package com.opencode.cui.skill.controller;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.ApiResponse;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.ProtocolMessageView;
 import com.opencode.cui.skill.model.InvokeCommand;
-import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.service.GatewayActions;
+import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
-import com.opencode.cui.skill.repository.SkillMessagePartRepository;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
 import com.opencode.cui.skill.service.MessagePersistenceService;
 
-import com.opencode.cui.skill.service.ProtocolMessageMapper;
 import com.opencode.cui.skill.service.ProtocolUtils;
+import com.opencode.cui.skill.service.PayloadBuilder;
+import com.opencode.cui.skill.service.ProtocolMessageMapper;
 import com.opencode.cui.skill.service.SessionAccessControlService;
 import com.opencode.cui.skill.service.SkillMessageService;
 import com.opencode.cui.skill.service.SkillSessionService;
@@ -49,7 +47,6 @@ public class SkillMessageController {
     private final GatewayRelayService gatewayRelayService;
     private final ImMessageService imMessageService;
     private final ObjectMapper objectMapper;
-    private final SkillMessagePartRepository partRepository;
     private final MessagePersistenceService messagePersistenceService;
     private final SessionAccessControlService accessControlService;
 
@@ -58,7 +55,6 @@ public class SkillMessageController {
             GatewayRelayService gatewayRelayService,
             ImMessageService imMessageService,
             ObjectMapper objectMapper,
-            SkillMessagePartRepository partRepository,
             MessagePersistenceService messagePersistenceService,
             SessionAccessControlService accessControlService) {
         this.messageService = messageService;
@@ -66,7 +62,6 @@ public class SkillMessageController {
         this.gatewayRelayService = gatewayRelayService;
         this.imMessageService = imMessageService;
         this.objectMapper = objectMapper;
-        this.partRepository = partRepository;
         this.messagePersistenceService = messagePersistenceService;
         this.accessControlService = accessControlService;
     }
@@ -129,13 +124,13 @@ public class SkillMessageController {
         String payload;
         if (request.getToolCallId() != null && !request.getToolCallId().isBlank()) {
             action = GatewayActions.QUESTION_REPLY;
-            payload = buildPayload(Map.of(
+            payload = PayloadBuilder.buildPayload(objectMapper, Map.of(
                     "answer", request.getContent(),
                     "toolCallId", request.getToolCallId(),
                     "toolSessionId", session.getToolSessionId()));
         } else {
             action = GatewayActions.CHAT;
-            payload = buildPayload(Map.of(
+            payload = PayloadBuilder.buildPayload(objectMapper, Map.of(
                     "text", request.getContent(),
                     "toolSessionId", session.getToolSessionId()));
         }
@@ -162,17 +157,9 @@ public class SkillMessageController {
 
         accessControlService.requireSessionAccess(numericSessionId, userIdCookie);
 
-        PageResult<SkillMessage> messages = messageService.getMessageHistory(numericSessionId, page, size);
-        var content = messages.getContent().stream()
-                .map(message -> ProtocolMessageMapper.toProtocolMessage(
-                        message,
-                        partRepository.findByMessageId(message.getId()),
-                        objectMapper))
-                .toList();
-        return ResponseEntity.ok(ApiResponse.ok(new PageResult<>(content,
-                messages.getTotalElements(),
-                messages.getNumber(),
-                messages.getSize())));
+        PageResult<ProtocolMessageView> result = messageService.getMessageHistoryWithParts(
+                numericSessionId, page, size);
+        return ResponseEntity.ok(ApiResponse.ok(result));
     }
 
     /**
@@ -259,7 +246,7 @@ public class SkillMessageController {
             return ResponseEntity.ok(ApiResponse.error(500, "No toolSessionId available"));
         }
 
-        String payload = buildPayload(Map.of(
+        String payload = PayloadBuilder.buildPayload(objectMapper, Map.of(
                 "permissionId", permId,
                 "response", request.getResponse(),
                 "toolSessionId", session.getToolSessionId()));
@@ -289,26 +276,6 @@ public class SkillMessageController {
                 "welinkSessionId", sessionId,
                 "permissionId", permId,
                 "response", request.getResponse())));
-    }
-
-    /**
-     * 通用 JSON payload 构建器。
-     * 统一替代 buildChatPayload / buildQuestionReplyPayload /
-     * buildPermissionReplyPayload。
-     */
-    private String buildPayload(Map<String, String> fields) {
-        ObjectNode node = objectMapper.createObjectNode();
-        fields.forEach((k, v) -> {
-            if (v != null) {
-                node.put(k, v);
-            }
-        });
-        try {
-            return objectMapper.writeValueAsString(node);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize payload: {}", e.getMessage());
-            return "{}";
-        }
     }
 
     @Data

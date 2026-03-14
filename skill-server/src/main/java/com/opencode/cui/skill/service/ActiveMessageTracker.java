@@ -3,6 +3,7 @@ package com.opencode.cui.skill.service;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.skill.model.SkillMessage;
+import com.opencode.cui.skill.model.SaveMessageCommand;
 import com.opencode.cui.skill.model.StreamMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -80,12 +81,13 @@ public class ActiveMessageTracker {
         }
 
         SkillMessage created = messageService.saveMessage(
-                sessionId,
-                requestedMessageId,
-                toRoleEnum(role),
-                "",
-                toContentType(role),
-                null);
+                new SaveMessageCommand(
+                        sessionId,
+                        requestedMessageId,
+                        toRoleEnum(role),
+                        "",
+                        toContentType(role),
+                        null));
         ActiveMessageRef createdRef = new ActiveMessageRef(
                 created.getId(),
                 created.getMessageId(),

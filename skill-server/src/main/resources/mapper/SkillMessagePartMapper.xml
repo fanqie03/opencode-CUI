@@ -100,6 +100,12 @@
         SELECT COALESCE(MAX(seq), 0) FROM skill_message_part WHERE message_id = #{messageId}
     </select>
 
+    <select id="findConcatenatedTextByMessageId" resultType="string">
+        SELECT GROUP_CONCAT(content ORDER BY seq SEPARATOR '')
+        FROM skill_message_part
+        WHERE message_id = #{messageId} AND part_type = 'text' AND content IS NOT NULL
+    </select>
+
     <delete id="deleteByMessageId">
         DELETE FROM skill_message_part WHERE message_id = #{messageId}
     </delete>

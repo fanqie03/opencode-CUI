@@ -2,14 +2,12 @@ package com.opencode.cui.skill.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
+import com.opencode.cui.skill.model.PartContext;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.model.StreamMessage.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -22,10 +20,11 @@ import java.util.Map;
 public class OpenCodeEventTranslator {
 
     private final ObjectMapper objectMapper;
-    private final SessionCache cache = new SessionCache();
+    private final TranslatorSessionCache cache;
 
-    public OpenCodeEventTranslator(ObjectMapper objectMapper) {
+    public OpenCodeEventTranslator(ObjectMapper objectMapper, TranslatorSessionCache cache) {
         this.objectMapper = objectMapper;
+        this.cache = cache;
     }
 
     public StreamMessage translate(JsonNode event) {
@@ -99,12 +98,13 @@ public class OpenCodeEventTranslator {
                 : null;
         Integer partSeq = cache.rememberPartSeq(sessionId, messageId, partId);
         String role = cache.resolveMessageRole(sessionId, messageId);
+        PartContext ctx = new PartContext(sessionId, messageId, partId, partSeq, role);
 
         cache.rememberPartType(sessionId, partId, partType);
 
         // User 消息文本特殊处理（必须在 shouldIgnoreMessage 之前）
         if ("text".equals(partType) && delta == null) {
-            StreamMessage userResult = handleUserTextSpecial(sessionId, messageId, partId, partSeq, role, part);
+            StreamMessage userResult = handleUserTextSpecial(ctx, part);
             if (userResult != null) {
                 return userResult;
             }
@@ -115,13 +115,13 @@ public class OpenCodeEventTranslator {
         }
 
         return switch (partType) {
-            case "text" -> translateTextPart(sessionId, messageId, partId, partSeq, part, delta, role);
-            case "reasoning" -> translateReasoningPart(sessionId, messageId, partId, partSeq, part, delta, role);
-            case "tool" -> translateToolPart(sessionId, messageId, partId, partSeq, part, role);
+            case "text" -> translateTextPart(ctx, part, delta);
+            case "reasoning" -> translateReasoningPart(ctx, part, delta);
+            case "tool" -> translateToolPart(ctx, part);
             case "step-start" -> messageBuilder(StreamMessage.Types.STEP_START, sessionId, messageId, role)
                     .build();
-            case "step-finish" -> translateStepFinish(sessionId, messageId, part, role);
-            case "file" -> translateFilePart(sessionId, messageId, partId, partSeq, part, role);
+            case "step-finish" -> translateStepFinish(ctx, part);
+            case "file" -> translateFilePart(ctx, part);
             default -> {
                 log.debug("Ignoring part type: {}", partType);
                 yield null;
@@ -135,22 +135,22 @@ public class OpenCodeEventTranslator {
      *
      * @return 若能确定为 user TEXT_DONE，返回 StreamMessage；否则返回 null（缓存文本等待后续事件）
      */
-    private StreamMessage handleUserTextSpecial(String sessionId, String messageId,
-            String partId, Integer partSeq, String role, JsonNode part) {
+    private StreamMessage handleUserTextSpecial(PartContext ctx, JsonNode part) {
         String textContent = part.path("text").asText("");
-        if ("user".equals(role)) {
+        if ("user".equals(ctx.role())) {
             // Case A：message.updated(role=user) 已到达，role 已缓存
             if (!textContent.isBlank()) {
-                log.info("Emitting user TEXT_DONE (role cached): sessionId={}, messageId={}", sessionId, messageId);
-                return partBuilder(StreamMessage.Types.TEXT_DONE, sessionId, messageId, partId, partSeq, role)
+                log.info("Emitting user TEXT_DONE (role cached): sessionId={}, messageId={}",
+                        ctx.sessionId(), ctx.messageId());
+                return partBuilder(StreamMessage.Types.TEXT_DONE, ctx)
                         .content(textContent)
                         .build();
             }
         } else {
             // Case B：message.updated 还没到，role 未知（默认 assistant）
             // 缓存文本，等 translateMessageUpdated(role=user) 到达时回溯使用
-            if (sessionId != null && messageId != null && !textContent.isBlank()) {
-                cache.rememberMessageText(sessionId, messageId, textContent);
+            if (ctx.sessionId() != null && ctx.messageId() != null && !textContent.isBlank()) {
+                cache.rememberMessageText(ctx.sessionId(), ctx.messageId(), textContent);
             }
         }
         return null;
@@ -177,12 +177,13 @@ public class OpenCodeEventTranslator {
         if (shouldIgnoreMessage(role)) {
             return null;
         }
+        PartContext ctx = new PartContext(sessionId, messageId, partId, partSeq, role);
         return switch (partType) {
-            case "text" -> partBuilder(StreamMessage.Types.TEXT_DELTA, sessionId, messageId, partId, partSeq, role)
+            case "text" -> partBuilder(StreamMessage.Types.TEXT_DELTA, ctx)
                     .content(delta)
                     .build();
             case "reasoning" ->
-                partBuilder(StreamMessage.Types.THINKING_DELTA, sessionId, messageId, partId, partSeq, role)
+                partBuilder(StreamMessage.Types.THINKING_DELTA, ctx)
                         .content(delta)
                         .build();
             default -> {
@@ -193,30 +194,27 @@ public class OpenCodeEventTranslator {
         };
     }
 
-    private StreamMessage translateTextPart(String sessionId, String messageId, String partId,
-            Integer partSeq, JsonNode part, String delta, String role) {
+    private StreamMessage translateTextPart(PartContext ctx, JsonNode part, String delta) {
         String type = delta != null ? StreamMessage.Types.TEXT_DELTA : StreamMessage.Types.TEXT_DONE;
         String content = delta != null ? delta : part.path("text").asText("");
         // TEXT_DONE 时缓存文本，供 translateMessageUpdated(role=user) 回溯使用
-        if (delta == null && sessionId != null && messageId != null && !content.isBlank()) {
-            cache.rememberMessageText(sessionId, messageId, content);
+        if (delta == null && ctx.sessionId() != null && ctx.messageId() != null && !content.isBlank()) {
+            cache.rememberMessageText(ctx.sessionId(), ctx.messageId(), content);
         }
-        return partBuilder(type, sessionId, messageId, partId, partSeq, role)
+        return partBuilder(type, ctx)
                 .content(content)
                 .build();
     }
 
-    private StreamMessage translateReasoningPart(String sessionId, String messageId, String partId,
-            Integer partSeq, JsonNode part, String delta, String role) {
+    private StreamMessage translateReasoningPart(PartContext ctx, JsonNode part, String delta) {
         String type = delta != null ? StreamMessage.Types.THINKING_DELTA : StreamMessage.Types.THINKING_DONE;
         String content = delta != null ? delta : part.path("text").asText("");
-        return partBuilder(type, sessionId, messageId, partId, partSeq, role)
+        return partBuilder(type, ctx)
                 .content(content)
                 .build();
     }
 
-    private StreamMessage translateToolPart(String sessionId, String messageId, String partId,
-            Integer partSeq, JsonNode part, String role) {
+    private StreamMessage translateToolPart(PartContext ctx, JsonNode part) {
         String toolName = part.path("tool").asText("");
         String callId = part.path("callID").asText(null);
         JsonNode state = part.get("state");
@@ -234,12 +232,7 @@ public class OpenCodeEventTranslator {
                 .toolCallId(callId);
 
         StreamMessage.StreamMessageBuilder msgBuilder = partBuilder(
-                StreamMessage.Types.TOOL_UPDATE,
-                sessionId,
-                messageId,
-                partId,
-                partSeq,
-                role)
+                StreamMessage.Types.TOOL_UPDATE, ctx)
                 .status(status);
 
         if (state != null) {
@@ -264,7 +257,7 @@ public class OpenCodeEventTranslator {
         return msgBuilder.tool(toolBuilder.build()).build();
     }
 
-    private StreamMessage translateStepFinish(String sessionId, String messageId, JsonNode part, String role) {
+    private StreamMessage translateStepFinish(PartContext ctx, JsonNode part) {
         UsageInfo.UsageInfoBuilder usageBuilder = UsageInfo.builder();
 
         JsonNode tokensNode = part.get("tokens");
@@ -284,16 +277,15 @@ public class OpenCodeEventTranslator {
 
         return messageBuilder(
                 StreamMessage.Types.STEP_DONE,
-                sessionId,
-                messageId,
-                role)
+                ctx.sessionId(),
+                ctx.messageId(),
+                ctx.role())
                 .usage(usageBuilder.build())
                 .build();
     }
 
-    private StreamMessage translateFilePart(String sessionId, String messageId, String partId,
-            Integer partSeq, JsonNode part, String role) {
-        return partBuilder(StreamMessage.Types.FILE, sessionId, messageId, partId, partSeq, role)
+    private StreamMessage translateFilePart(PartContext ctx, JsonNode part) {
+        return partBuilder(StreamMessage.Types.FILE, ctx)
                 .file(FileInfo.builder()
                         .fileName(part.path("filename").asText(null))
                         .fileUrl(part.path("url").asText(null))
@@ -467,16 +459,15 @@ public class OpenCodeEventTranslator {
 
     private StreamMessage.StreamMessageBuilder partBuilder(String type, String sessionId, String sourceMessageId,
             String partId, Integer partSeq) {
-        return partBuilder(type, sessionId, sourceMessageId, partId, partSeq,
-                cache.resolveMessageRole(sessionId, sourceMessageId));
+        return partBuilder(type, new PartContext(sessionId, sourceMessageId, partId, partSeq,
+                cache.resolveMessageRole(sessionId, sourceMessageId)));
     }
 
-    private StreamMessage.StreamMessageBuilder partBuilder(String type, String sessionId, String sourceMessageId,
-            String partId, Integer partSeq, String role) {
-        StreamMessage.StreamMessageBuilder builder = messageBuilder(type, sessionId, sourceMessageId, role)
-                .partId(partId);
-        if (partSeq != null) {
-            builder.partSeq(partSeq);
+    private StreamMessage.StreamMessageBuilder partBuilder(String type, PartContext ctx) {
+        StreamMessage.StreamMessageBuilder builder = messageBuilder(type, ctx.sessionId(), ctx.messageId(), ctx.role())
+                .partId(ctx.partId());
+        if (ctx.partSeq() != null) {
+            builder.partSeq(ctx.partSeq());
         }
         return builder;
     }
@@ -507,117 +498,6 @@ public class OpenCodeEventTranslator {
         } catch (Exception e) {
             log.warn("Failed to convert JsonNode to Map: {}", e.getMessage());
             return null;
-        }
-    }
-
-    // ==================== Session Cache ====================
-
-    /**
-     * Encapsulates all session-scoped caching for part types, sequences,
-     * message roles, and text content.
-     */
-    private static class SessionCache {
-        private static final Duration LONG_TTL = Duration.ofHours(2);
-        private static final Duration SHORT_TTL = Duration.ofMinutes(10);
-
-        private final Cache<String, String> partTypes = Caffeine.newBuilder()
-                .expireAfterAccess(LONG_TTL).maximumSize(50_000).build();
-        private final Cache<String, Integer> partSequences = Caffeine.newBuilder()
-                .expireAfterAccess(LONG_TTL).maximumSize(50_000).build();
-        private final Cache<String, Integer> nextPartSequences = Caffeine.newBuilder()
-                .expireAfterAccess(LONG_TTL).maximumSize(10_000).build();
-        private final Cache<String, String> messageRoles = Caffeine.newBuilder()
-                .expireAfterAccess(LONG_TTL).maximumSize(10_000).build();
-        private final Cache<String, String> messageTexts = Caffeine.newBuilder()
-                .expireAfterAccess(SHORT_TTL).maximumSize(10_000).build();
-
-        void rememberPartType(String sessionId, String partId, String partType) {
-            if (isBlank(sessionId) || isBlank(partId) || isBlank(partType))
-                return;
-            partTypes.put(key(sessionId, partId), partType);
-        }
-
-        String getPartType(String sessionId, String partId) {
-            if (isBlank(sessionId) || isBlank(partId))
-                return null;
-            return partTypes.getIfPresent(key(sessionId, partId));
-        }
-
-        Integer rememberPartSeq(String sessionId, String messageId, String partId) {
-            if (isBlank(sessionId) || isBlank(messageId) || isBlank(partId))
-                return null;
-
-            String partKey = key(sessionId, partId);
-            Integer existing = partSequences.getIfPresent(partKey);
-            if (existing != null)
-                return existing;
-
-            String msgKey = key(sessionId, messageId);
-            Integer nextSeq = nextPartSequences.asMap().compute(msgKey, (k, v) -> v == null ? 1 : v + 1);
-            Integer prior = partSequences.asMap().putIfAbsent(partKey, nextSeq);
-            return prior != null ? prior : nextSeq;
-        }
-
-        void evictPart(String sessionId, String messageId, String partId) {
-            if (isBlank(sessionId) || isBlank(partId))
-                return;
-            String partKey = key(sessionId, partId);
-            partTypes.invalidate(partKey);
-            partSequences.invalidate(partKey);
-            if (!isBlank(messageId)) {
-                String msgKey = key(sessionId, messageId);
-                if (partSequences.asMap().keySet().stream().noneMatch(k -> k.startsWith(sessionId + ":"))) {
-                    nextPartSequences.invalidate(msgKey);
-                }
-            }
-        }
-
-        void rememberMessageRole(String sessionId, String messageId, String role) {
-            if (isBlank(sessionId) || isBlank(messageId) || isBlank(role))
-                return;
-            messageRoles.put(key(sessionId, messageId), role);
-        }
-
-        String resolveMessageRole(String sessionId, String messageId) {
-            if (isBlank(sessionId) || isBlank(messageId))
-                return "assistant";
-            return ProtocolUtils.normalizeRole(messageRoles.getIfPresent(key(sessionId, messageId)));
-        }
-
-        void rememberMessageText(String sessionId, String messageId, String text) {
-            if (isBlank(sessionId) || isBlank(messageId) || isBlank(text))
-                return;
-            messageTexts.put(key(sessionId, messageId), text);
-        }
-
-        String getMessageText(String sessionId, String messageId) {
-            if (isBlank(sessionId) || isBlank(messageId))
-                return null;
-            return messageTexts.getIfPresent(key(sessionId, messageId));
-        }
-
-        void invalidateMessageText(String sessionId, String messageId) {
-            if (isBlank(sessionId) || isBlank(messageId))
-                return;
-            messageTexts.invalidate(key(sessionId, messageId));
-        }
-
-        void clearSession(String sessionId) {
-            if (isBlank(sessionId))
-                return;
-            String prefix = sessionId + ":";
-            partTypes.asMap().keySet().removeIf(k -> k.startsWith(prefix));
-            partSequences.asMap().keySet().removeIf(k -> k.startsWith(prefix));
-            nextPartSequences.asMap().keySet().removeIf(k -> k.startsWith(prefix));
-            messageRoles.asMap().keySet().removeIf(k -> k.startsWith(prefix));
-        }
-
-        private static String key(String a, String b) {
-            return a + ":" + b;
-        }
-
-        private static boolean isBlank(String s) {
-            return s == null || s.isBlank();
         }
     }
 }

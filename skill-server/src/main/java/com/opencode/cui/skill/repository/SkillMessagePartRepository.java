@@ -24,5 +24,10 @@ public interface SkillMessagePartRepository {
 
     int findMaxSeqByMessageId(@Param("messageId") Long messageId);
 
+    /**
+     * 在 SQL 层拼接指定消息所有 text 类型 part 的内容，避免 N+1 查询。
+     */
+    String findConcatenatedTextByMessageId(@Param("messageId") Long messageId);
+
     int deleteByMessageId(@Param("messageId") Long messageId);
 }

@@ -4,10 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.ProtocolMessageView;
 import com.opencode.cui.skill.model.InvokeCommand;
-import com.opencode.cui.skill.model.SkillMessagePart;
 import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillSession;
-import com.opencode.cui.skill.repository.SkillMessagePartRepository;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
 import com.opencode.cui.skill.service.MessagePersistenceService;
@@ -24,7 +22,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import java.util.List;
-import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -46,8 +43,6 @@ class SkillMessageControllerTest {
     @Mock
     private ImMessageService imMessageService;
     @Mock
-    private SkillMessagePartRepository partRepository;
-    @Mock
     private MessagePersistenceService messagePersistenceService;
     @Mock
     private SessionAccessControlService accessControlService;
@@ -58,7 +53,7 @@ class SkillMessageControllerTest {
     void setUp() {
         controller = new SkillMessageController(
                 messageService, sessionService, gatewayRelayService,
-                imMessageService, new ObjectMapper(), partRepository,
+                imMessageService, new ObjectMapper(),
                 messagePersistenceService, accessControlService);
     }
 
@@ -152,30 +147,13 @@ class SkillMessageControllerTest {
     @DisplayName("getMessageHistory returns 200")
     void getMessages200() {
         when(accessControlService.requireSessionAccess(1L, "1")).thenReturn(new SkillSession());
-        SkillMessage message = SkillMessage.builder()
-                .id(10L)
-                .sessionId(1L)
-                .messageId("msg-10")
-                .messageSeq(3)
-                .role(SkillMessage.Role.ASSISTANT)
-                .content("Done")
-                .contentType(SkillMessage.ContentType.MARKDOWN)
-                .createdAt(LocalDateTime.of(2026, 3, 11, 9, 0))
-                .build();
-        when(messageService.getMessageHistory(1L, 0, 50))
-                .thenReturn(new PageResult<>(List.of(message), 1, 0, 50));
-        when(partRepository.findByMessageId(10L)).thenReturn(List.of(
-                SkillMessagePart.builder()
-                        .messageId(10L)
-                        .partId("part-1")
-                        .seq(1)
-                        .partType("tool")
-                        .toolName("bash")
-                        .toolCallId("call-1")
-                        .toolStatus("completed")
-                        .toolInput("{\"command\":\"pwd\"}")
-                        .toolOutput("/tmp")
-                        .build()));
+        ProtocolMessageView view = new ProtocolMessageView();
+        view.setWelinkSessionId("1");
+        view.setRole("assistant");
+        view.setContentType("markdown");
+        view.setParts(List.of());
+        when(messageService.getMessageHistoryWithParts(1L, 0, 50))
+                .thenReturn(new PageResult<>(List.of(view), 1, 0, 50));
 
         var response = controller.getMessages("1", "1", 0, 50);
         assertEquals(HttpStatus.OK, response.getStatusCode());
@@ -183,7 +161,6 @@ class SkillMessageControllerTest {
         assertEquals("1", response.getBody().getData().getContent().get(0).getWelinkSessionId());
         assertEquals("assistant", response.getBody().getData().getContent().get(0).getRole());
         assertEquals("markdown", response.getBody().getData().getContent().get(0).getContentType());
-        assertEquals("tool", response.getBody().getData().getContent().get(0).getParts().get(0).getType());
     }
 
     @Test

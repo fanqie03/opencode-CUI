@@ -1,6 +1,5 @@
 package com.opencode.cui.skill.controller;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.ApiResponse;
@@ -9,6 +8,7 @@ import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.service.GatewayActions;
 import com.opencode.cui.skill.service.GatewayRelayService;
 
+import com.opencode.cui.skill.service.PayloadBuilder;
 import com.opencode.cui.skill.service.ProtocolUtils;
 import com.opencode.cui.skill.service.SessionAccessControlService;
 import com.opencode.cui.skill.service.SkillSessionService;
@@ -70,9 +70,10 @@ public class SkillSessionController {
                             resolvedUserId,
                             session.getId().toString(),
                             GatewayActions.CREATE_SESSION,
-                            buildPayload(request.getTitle() != null && !request.getTitle().isBlank()
-                                    ? Map.of("title", request.getTitle())
-                                    : Map.of())));
+                            PayloadBuilder.buildPayload(objectMapper,
+                                    request.getTitle() != null && !request.getTitle().isBlank()
+                                            ? Map.of("title", request.getTitle())
+                                            : Map.of())));
         }
 
         return ResponseEntity.ok(ApiResponse.ok(session));
@@ -93,7 +94,8 @@ public class SkillSessionController {
 
         String resolvedUserId = accessControlService.requireUserId(userIdCookie);
         PageResult<SkillSession> sessions = sessionService.listSessions(
-                resolvedUserId, ak, imGroupId, status, page, size);
+                new com.opencode.cui.skill.model.SessionListQuery(
+                        resolvedUserId, ak, imGroupId, status, page, size));
         return ResponseEntity.ok(ApiResponse.ok(sessions));
     }
 
@@ -134,7 +136,8 @@ public class SkillSessionController {
                             session.getUserId(),
                             session.getId().toString(),
                             GatewayActions.CLOSE_SESSION,
-                            buildPayload(Map.of("toolSessionId", session.getToolSessionId()))));
+                            PayloadBuilder.buildPayload(objectMapper,
+                                    Map.of("toolSessionId", session.getToolSessionId()))));
         }
         sessionService.closeSession(sessionId);
         return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "closed", "welinkSessionId", id)));
@@ -166,25 +169,11 @@ public class SkillSessionController {
                             session.getUserId(),
                             session.getId().toString(),
                             GatewayActions.ABORT_SESSION,
-                            buildPayload(Map.of("toolSessionId", session.getToolSessionId()))));
+                            PayloadBuilder.buildPayload(objectMapper,
+                                    Map.of("toolSessionId", session.getToolSessionId()))));
         }
 
         return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "aborted", "welinkSessionId", id)));
-    }
-
-    private String buildPayload(Map<String, String> fields) {
-        var node = objectMapper.createObjectNode();
-        fields.forEach((k, v) -> {
-            if (v != null) {
-                node.put(k, v);
-            }
-        });
-        try {
-            return objectMapper.writeValueAsString(node);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize payload: {}", e.getMessage());
-            return "{}";
-        }
     }
 
     @Data

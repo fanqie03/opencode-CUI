@@ -61,6 +61,10 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget {
 
     @PostConstruct
     public void init() {
+        if ("changeme".equals(internalToken)) {
+            log.warn("⚠️ skill.gateway.internal-token is using the default value 'changeme'. "
+                    + "This is insecure for production. Please set a proper token.");
+        }
         gatewayRelayService.setGatewayRelayTarget(this);
         running.set(true);
         connect();

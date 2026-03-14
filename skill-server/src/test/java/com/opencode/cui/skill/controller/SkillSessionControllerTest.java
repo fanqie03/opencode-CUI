@@ -67,14 +67,14 @@ class SkillSessionControllerTest {
     }
 
     @Test
-    @DisplayName("createSession returns 400 when userId is null")
+    @DisplayName("createSession throws ProtocolException when userId is null")
     void createSessionBadRequest() {
         var request = new SkillSessionController.CreateSessionRequest();
         when(accessControlService.requireUserId(null)).thenThrow(new ProtocolException(400, "userId is required"));
 
-        var response = controller.createSession(null, request);
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(400, response.getBody().getCode());
+        ProtocolException ex = assertThrows(ProtocolException.class,
+                () -> controller.createSession(null, request));
+        assertEquals(400, ex.getCode());
     }
 
     @Test
@@ -90,13 +90,12 @@ class SkillSessionControllerTest {
     }
 
     @Test
-    @DisplayName("getSession returns 404 when not found")
+    @DisplayName("getSession throws when not found")
     void getSession404() {
         when(accessControlService.requireSessionAccess(999L, "1")).thenThrow(new IllegalArgumentException("Not found"));
 
-        var response = controller.getSession("1", "999");
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(404, response.getBody().getCode());
+        assertThrows(IllegalArgumentException.class,
+                () -> controller.getSession("1", "999"));
     }
 
     @Test
@@ -155,12 +154,11 @@ class SkillSessionControllerTest {
     }
 
     @Test
-    @DisplayName("abortSession returns 404 when session not found")
+    @DisplayName("abortSession throws when session not found")
     void abortSession404() {
         when(accessControlService.requireSessionAccess(999L, "1")).thenThrow(new IllegalArgumentException("Not found"));
 
-        var response = controller.abortSession("1", "999");
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(404, response.getBody().getCode());
+        assertThrows(IllegalArgumentException.class,
+                () -> controller.abortSession("1", "999"));
     }
 }

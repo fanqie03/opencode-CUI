@@ -1,6 +1,7 @@
 package com.opencode.cui.skill.service;
 
 import com.opencode.cui.skill.model.PageResult;
+import com.opencode.cui.skill.model.SessionListQuery;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.repository.SkillSessionRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -53,26 +54,25 @@ public class SkillSessionService {
      * List sessions for a user with pagination and optional filters.
      */
     @Transactional(readOnly = true)
-    public PageResult<SkillSession> listSessions(String userId, String ak, String imGroupId,
-            String status, int page, int size) {
-        int offset = page * size;
+    public PageResult<SkillSession> listSessions(SessionListQuery query) {
+        int offset = query.page() * query.size();
         List<String> statusNames = null;
-        if (status != null && !status.isBlank()) {
-            statusNames = List.of(status);
+        if (query.status() != null && !query.status().isBlank()) {
+            statusNames = List.of(query.status());
         }
-        boolean hasFilters = (ak != null && !ak.isBlank())
-                || (imGroupId != null && !imGroupId.isBlank())
+        boolean hasFilters = (query.ak() != null && !query.ak().isBlank())
+                || (query.imGroupId() != null && !query.imGroupId().isBlank())
                 || statusNames != null;
         if (hasFilters) {
             List<SkillSession> content = sessionRepository.findByUserIdFiltered(
-                    userId, ak, imGroupId, statusNames, offset, size);
+                    query.userId(), query.ak(), query.imGroupId(), statusNames, offset, query.size());
             long total = sessionRepository.countByUserIdFiltered(
-                    userId, ak, imGroupId, statusNames);
-            return new PageResult<>(content, total, page, size);
+                    query.userId(), query.ak(), query.imGroupId(), statusNames);
+            return new PageResult<>(content, total, query.page(), query.size());
         }
-        List<SkillSession> content = sessionRepository.findByUserId(userId, offset, size);
-        long total = sessionRepository.countByUserId(userId);
-        return new PageResult<>(content, total, page, size);
+        List<SkillSession> content = sessionRepository.findByUserId(query.userId(), offset, query.size());
+        long total = sessionRepository.countByUserId(query.userId());
+        return new PageResult<>(content, total, query.page(), query.size());
     }
 
     /**

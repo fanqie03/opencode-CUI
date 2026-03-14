@@ -2,7 +2,6 @@ package com.opencode.cui.skill.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.SkillMessage;
-import com.opencode.cui.skill.model.SkillMessagePart;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.repository.SkillMessagePartRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,8 +11,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,12 +43,7 @@ class MessagePersistenceServiceTest {
         @DisplayName("finalizeActiveAssistantTurn closes dangling assistant message")
         void finalizeActiveAssistantTurnClosesDanglingAssistantMessage() {
                 when(messageService.saveMessage(
-                                eq(1L),
-                                eq(null),
-                                eq(SkillMessage.Role.ASSISTANT),
-                                eq(""),
-                                eq(SkillMessage.ContentType.MARKDOWN),
-                                eq(null)))
+                                any(com.opencode.cui.skill.model.SaveMessageCommand.class)))
                                 .thenReturn(SkillMessage.builder()
                                                 .id(11L)
                                                 .messageId("msg_1_1")
@@ -57,12 +51,7 @@ class MessagePersistenceServiceTest {
                                                 .seq(1)
                                                 .build());
                 when(partRepository.findMaxSeqByMessageId(11L)).thenReturn(0);
-                when(partRepository.findByMessageId(11L)).thenReturn(java.util.List.of(
-                                SkillMessagePart.builder()
-                                                .messageId(11L)
-                                                .partType("text")
-                                                .content("hello")
-                                                .build()));
+                when(partRepository.findConcatenatedTextByMessageId(11L)).thenReturn("hello");
 
                 service.persistIfFinal(1L, StreamMessage.builder()
                                 .type(StreamMessage.Types.TEXT_DONE)
@@ -79,12 +68,7 @@ class MessagePersistenceServiceTest {
         @DisplayName("text parts refresh skill_message content")
         void textPartsRefreshMessageContent() {
                 when(messageService.saveMessage(
-                                eq(1L),
-                                eq(null),
-                                eq(SkillMessage.Role.ASSISTANT),
-                                eq(""),
-                                eq(SkillMessage.ContentType.MARKDOWN),
-                                eq(null)))
+                                any(com.opencode.cui.skill.model.SaveMessageCommand.class)))
                                 .thenReturn(SkillMessage.builder()
                                                 .id(11L)
                                                 .messageId("msg_1_1")
@@ -92,12 +76,7 @@ class MessagePersistenceServiceTest {
                                                 .seq(1)
                                                 .build());
                 when(partRepository.findMaxSeqByMessageId(11L)).thenReturn(0);
-                when(partRepository.findByMessageId(11L)).thenReturn(java.util.List.of(
-                                SkillMessagePart.builder()
-                                                .messageId(11L)
-                                                .partType("text")
-                                                .content("final answer")
-                                                .build()));
+                when(partRepository.findConcatenatedTextByMessageId(11L)).thenReturn("final answer");
 
                 service.persistIfFinal(1L, StreamMessage.builder()
                                 .type(StreamMessage.Types.TEXT_DONE)

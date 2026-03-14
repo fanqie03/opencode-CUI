@@ -3,7 +3,7 @@ package com.opencode.cui.skill.config;
 import com.opencode.cui.skill.model.ApiResponse;
 import com.opencode.cui.skill.service.ProtocolException;
 import lombok.extern.slf4j.Slf4j;
-
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -21,9 +21,20 @@ public class GlobalExceptionHandler {
      * 保持 HTTP 200 + body error 的约定（前端使用 ApiResponse.code 判断成功/失败）。
      */
     @ExceptionHandler(ProtocolException.class)
-    public ResponseEntity<ApiResponse<?>> handleProtocolException(ProtocolException e) {
-        log.warn("Protocol exception: code={}, message={}", e.getCode(), e.getMessage());
-        return ResponseEntity.ok(ApiResponse.error(e.getCode(), e.getMessage()));
+    public ResponseEntity<ApiResponse<Void>> handleProtocolException(ProtocolException ex) {
+        log.warn("Protocol error: code={}, message={}", ex.getCode(), ex.getMessage());
+        HttpStatus status = mapToHttpStatus(ex.getCode());
+        return ResponseEntity.status(status).body(ApiResponse.error(ex.getCode(), ex.getMessage()));
+    }
+
+    private HttpStatus mapToHttpStatus(int code) {
+        return switch (code) {
+            case 400 -> HttpStatus.BAD_REQUEST;
+            case 403 -> HttpStatus.FORBIDDEN;
+            case 404 -> HttpStatus.NOT_FOUND;
+            case 409 -> HttpStatus.CONFLICT;
+            default -> HttpStatus.INTERNAL_SERVER_ERROR;
+        };
     }
 
     /**
