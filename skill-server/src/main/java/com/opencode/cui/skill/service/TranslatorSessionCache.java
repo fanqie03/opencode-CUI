@@ -28,6 +28,9 @@ public class TranslatorSessionCache {
             .expireAfterAccess(LONG_TTL).maximumSize(10_000).build();
     private final Cache<String, String> messageTexts = Caffeine.newBuilder()
             .expireAfterAccess(SHORT_TTL).maximumSize(10_000).build();
+    /** Maps sessionId:callId → question partId (from question.asked event) */
+    private final Cache<String, String> questionPartIds = Caffeine.newBuilder()
+            .expireAfterAccess(LONG_TTL).maximumSize(10_000).build();
 
     public void rememberPartType(String sessionId, String partId, String partType) {
         if (isBlank(sessionId) || isBlank(partId) || isBlank(partType))
@@ -100,6 +103,22 @@ public class TranslatorSessionCache {
         messageTexts.invalidate(key(sessionId, messageId));
     }
 
+    /**
+     * Cache the question partId (from question.asked) for a given callId,
+     * so that when the tool completed event arrives we can reuse the same partId.
+     */
+    public void rememberQuestionPartId(String sessionId, String callId, String partId) {
+        if (isBlank(sessionId) || isBlank(callId) || isBlank(partId))
+            return;
+        questionPartIds.put(key(sessionId, callId), partId);
+    }
+
+    public String getQuestionPartId(String sessionId, String callId) {
+        if (isBlank(sessionId) || isBlank(callId))
+            return null;
+        return questionPartIds.getIfPresent(key(sessionId, callId));
+    }
+
     public void clearSession(String sessionId) {
         if (isBlank(sessionId))
             return;
@@ -108,6 +127,7 @@ public class TranslatorSessionCache {
         partSequences.asMap().keySet().removeIf(k -> k.startsWith(prefix));
         nextPartSequences.asMap().keySet().removeIf(k -> k.startsWith(prefix));
         messageRoles.asMap().keySet().removeIf(k -> k.startsWith(prefix));
+        questionPartIds.asMap().keySet().removeIf(k -> k.startsWith(prefix));
     }
 
     private static String key(String a, String b) {

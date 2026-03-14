@@ -182,12 +182,16 @@ export class StreamAssembler {
         part.toolName = msg.toolName ?? part.toolName;
         part.toolCallId = msg.toolCallId ?? part.toolCallId;
         part.toolStatus = msg.status ?? part.toolStatus;
+        part.toolOutput = msg.output ?? part.toolOutput;
         if (msg.input) {
           part.toolInput = msg.input;
         }
         part.header = msg.header ?? questionFields.header ?? part.header;
         part.question = msg.question ?? questionFields.question ?? part.question;
         part.options = questionFields.options ?? normalizeQuestionOptions(msg.options) ?? part.options;
+        if (msg.status === 'completed' || msg.status === 'error') {
+          part.answered = true;
+        }
         if (msg.content !== undefined && msg.content !== '') {
           part.content = msg.content;
         } else if (part.question && !part.content) {

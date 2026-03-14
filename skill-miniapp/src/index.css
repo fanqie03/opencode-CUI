@@ -1065,6 +1065,7 @@ body {
 .question-card__input-group {
     display: flex;
     gap: 6px;
+    align-items: flex-start;
 }
 
 .question-card__input {
@@ -1078,6 +1079,10 @@ body {
     font-family: inherit;
     outline: none;
     transition: border-color 0.15s;
+    resize: vertical;
+    min-height: 72px;
+    line-height: 1.5;
+    white-space: pre-wrap;
 }
 
 .question-card__input:focus {

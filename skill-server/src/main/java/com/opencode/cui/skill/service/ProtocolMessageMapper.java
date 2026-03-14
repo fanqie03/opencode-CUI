@@ -70,10 +70,15 @@ public final class ProtocolMessageMapper {
             case "question" -> {
                 JsonNode inputNode = parseJsonNode(part.getToolInput(), objectMapper);
                 JsonNode questionNode = ProtocolUtils.resolveQuestionPayload(inputNode);
+                String normalizedOutput = ProtocolUtils.normalizeQuestionAnswerOutput(part.getToolOutput(), inputNode);
                 builder.toolName("question")
                         .toolCallId(part.getToolCallId())
                         .status(part.getToolStatus())
-                        .input(inputNode);
+                        .input(inputNode)
+                        .output(normalizedOutput);
+                if ("completed".equals(part.getToolStatus())) {
+                    builder.answered(true);
+                }
                 if (questionNode != null && questionNode.isObject()) {
                     JsonNode header = questionNode.get("header");
                     JsonNode question = questionNode.get("question");
@@ -86,6 +91,13 @@ public final class ProtocolMessageMapper {
                     builder.options(ProtocolUtils.extractQuestionOptions(questionNode.get("options")));
                 }
             }
+            case "permission" -> builder.permissionId(
+                    part.getToolCallId() != null ? part.getToolCallId() : part.getPartId())
+                    .permType(part.getToolName())
+                    .metadata(parseJsonNode(part.getToolInput(), objectMapper))
+                    .response(part.getToolOutput())
+                    .status(part.getToolStatus())
+                    .content(part.getContent());
             case "file" -> builder.fileName(part.getFileName())
                     .fileUrl(part.getFileUrl())
                     .fileMime(part.getFileMime());
@@ -129,11 +141,19 @@ public final class ProtocolMessageMapper {
             case "question" -> {
                 var t = message.getTool();
                 var q = message.getQuestionInfo();
+                Object normalizedInput = t != null ? normalizeObjectValue(t.getInput(), objectMapper) : null;
+                JsonNode normalizedInputNode = normalizedInput instanceof JsonNode node ? node : null;
                 builder.toolName("question")
-                        .status(message.getStatus());
+                        .status(message.getStatus())
+                        .output(ProtocolUtils.normalizeQuestionAnswerOutput(
+                                t != null ? t.getOutput() : null,
+                                normalizedInputNode));
+                if ("completed".equals(message.getStatus())) {
+                    builder.answered(true);
+                }
                 if (t != null) {
                     builder.toolCallId(t.getToolCallId())
-                            .input(normalizeObjectValue(t.getInput(), objectMapper));
+                            .input(normalizedInput);
                 }
                 if (q != null) {
                     builder.header(q.getHeader())

@@ -33,6 +33,9 @@ public class OpenCodeEventTranslator {
         }
 
         String eventType = event.path("type").asText("");
+        if (eventType.startsWith("permission.")) {
+            return translatePermission(eventType, event);
+        }
         return switch (eventType) {
             case "message.part.updated" -> translatePartUpdated(event);
             case "message.part.delta" -> translatePartDelta(event);
@@ -55,7 +58,6 @@ public class OpenCodeEventTranslator {
             }
             case "session.updated" -> translateSessionUpdated(event);
             case "session.error" -> translateSessionError(event);
-            case "permission.updated", "permission.asked" -> translatePermission(event);
             case "question.asked" -> translateQuestionAsked(event);
             default -> {
                 log.debug("Ignoring OpenCode event type: {}", eventType);
@@ -220,11 +222,46 @@ public class OpenCodeEventTranslator {
         JsonNode state = part.get("state");
         String status = state != null ? state.path("status").asText("") : "";
 
-        // Skip question tool here — the dedicated "question.asked" event
-        // (handled by translateQuestionAsked) is the single source of truth.
-        // Processing it here as well would produce a duplicate question card.
-        if ("question".equals(toolName) && "running".equals(status)) {
-            return null;
+        // Question tool special handling:
+        // - running: skip — the dedicated "question.asked" event is the source of truth
+        // - completed/error: emit as QUESTION type so the frontend can update
+        // the existing QuestionCard via matching partId
+        if ("question".equals(toolName)) {
+            if ("pending".equals(status) || "running".equals(status)) {
+                return null;
+            }
+            // Resolve the original question partId cached from question.asked,
+            // so the frontend matches the existing QuestionCard instead of creating a
+            // duplicate
+            String questionPartId = cache.getQuestionPartId(ctx.sessionId(), callId);
+            PartContext questionCtx;
+            if (questionPartId != null) {
+                Integer questionPartSeq = cache.rememberPartSeq(
+                        ctx.sessionId(), ctx.messageId(), questionPartId);
+                questionCtx = new PartContext(
+                        ctx.sessionId(), ctx.messageId(), questionPartId, questionPartSeq, ctx.role());
+            } else {
+                // Fallback: if question.asked wasn't seen, use original tool part ctx
+                questionCtx = ctx;
+            }
+
+            ToolInfo.ToolInfoBuilder qToolBuilder = ToolInfo.builder()
+                    .toolName(toolName)
+                    .toolCallId(callId);
+            if (state != null) {
+                JsonNode inputNode = state.get("input");
+                if (inputNode != null && !inputNode.isNull()) {
+                    qToolBuilder.input(jsonNodeToMap(inputNode));
+                }
+                String output = state.path("output").asText(null);
+                if (output != null) {
+                    qToolBuilder.output(ProtocolUtils.normalizeQuestionAnswerOutput(output, inputNode));
+                }
+            }
+            return partBuilder(StreamMessage.Types.QUESTION, questionCtx)
+                    .tool(qToolBuilder.build())
+                    .status(status)
+                    .build();
         }
 
         ToolInfo.ToolInfoBuilder toolBuilder = ToolInfo.builder()
@@ -376,23 +413,100 @@ public class OpenCodeEventTranslator {
                 .build();
     }
 
-    private StreamMessage translatePermission(JsonNode event) {
+    private StreamMessage translatePermission(String eventType, JsonNode event) {
         JsonNode props = event.path("properties");
         if (props.isMissingNode() || props.isNull()) {
             return null;
         }
 
+        String status = props.path("status").path("type").asText(props.path("status").asText(null));
+        String response = normalizePermissionResponse(props);
+        boolean explicitResolved = resolvePermissionResolvedFlag(props);
+        boolean resolved = "permission.replied".equals(eventType)
+                || response != null
+                || explicitResolved
+                || isResolvedPermissionStatus(status);
+        if (!resolved && !isStandardPermissionEvent(eventType)) {
+            log.debug("Unresolved permission event: eventType={}, sessionID={}, messageID={}, propertyKeys={}",
+                    eventType,
+                    props.path("sessionID").asText(null),
+                    props.path("messageID").asText(null),
+                    props.properties().stream().map(Map.Entry::getKey).toList());
+        }
+        String messageType = resolved
+                ? StreamMessage.Types.PERMISSION_REPLY
+                : StreamMessage.Types.PERMISSION_ASK;
+
         return messageBuilder(
-                StreamMessage.Types.PERMISSION_ASK,
+                messageType,
                 props.path("sessionID").asText(null),
                 props.path("messageID").asText(null))
                 .permission(PermissionInfo.builder()
                         .permissionId(props.path("id").asText(null))
                         .permType(props.path("type").asText(props.path("permission").asText(null)))
                         .metadata(jsonNodeToMap(props.get("metadata")))
+                        .response(response)
                         .build())
+                .status(status)
                 .title(props.path("title").asText(props.path("permission").asText(null)))
                 .build();
+    }
+
+    private boolean isStandardPermissionEvent(String eventType) {
+        return switch (eventType) {
+            case "permission.asked", "permission.updated", "permission.replied" -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isResolvedPermissionStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return false;
+        }
+        return switch (status) {
+            case "completed", "resolved", "approved", "rejected", "denied" -> true;
+            default -> false;
+        };
+    }
+
+    private boolean resolvePermissionResolvedFlag(JsonNode props) {
+        if (props == null || props.isMissingNode() || props.isNull()) {
+            return false;
+        }
+        if (props.has("resolved")) {
+            return props.path("resolved").asBoolean(false);
+        }
+        if (props.has("isResolved")) {
+            return props.path("isResolved").asBoolean(false);
+        }
+        JsonNode resultNode = props.path("result");
+        if (!resultNode.isMissingNode() && !resultNode.isNull()) {
+            if (resultNode.has("resolved")) {
+                return resultNode.path("resolved").asBoolean(false);
+            }
+            if (resultNode.has("isResolved")) {
+                return resultNode.path("isResolved").asBoolean(false);
+            }
+        }
+        return false;
+    }
+
+    private String normalizePermissionResponse(JsonNode props) {
+        String raw = ProtocolUtils.firstNonBlank(
+                props.path("response").asText(null),
+                props.path("decision").asText(null));
+        if (raw == null || raw.isBlank()) {
+            raw = props.path("answer").asText(null);
+        }
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        return switch (raw) {
+            case "allow", "approved", "approve", "yes" -> "once";
+            case "always_allow", "always-allow", "allow_always" -> "always";
+            case "deny", "denied", "reject", "rejected", "no" -> "reject";
+            default -> raw;
+        };
     }
 
     private StreamMessage translateQuestionAsked(JsonNode event) {
@@ -416,6 +530,12 @@ public class OpenCodeEventTranslator {
 
         String partId = props.path("id").asText(null);
         Integer partSeq = cache.rememberPartSeq(sessionId, messageId, partId);
+
+        // Cache callId → partId so that the completed event from message.part.updated
+        // can reuse this partId to update (not duplicate) the QuestionCard
+        if (callId != null && partId != null) {
+            cache.rememberQuestionPartId(sessionId, callId, partId);
+        }
 
         return partBuilder(StreamMessage.Types.QUESTION, sessionId, messageId, partId, partSeq)
                 .tool(ToolInfo.builder()

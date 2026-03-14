@@ -89,6 +89,16 @@
         WHERE session_id = #{sessionId} AND part_id = #{partId}
     </select>
 
+    <select id="findLatestPendingPermissionPart" resultMap="SkillMessagePartResultMap">
+        SELECT <include refid="allColumns"/>
+        FROM skill_message_part
+        WHERE session_id = #{sessionId}
+          AND part_type = 'permission'
+          AND (tool_output IS NULL OR tool_output = '')
+        ORDER BY updated_at DESC, seq DESC
+        LIMIT 1
+    </select>
+
     <select id="findByMessageId" resultMap="SkillMessagePartResultMap">
         SELECT <include refid="allColumns"/>
         FROM skill_message_part

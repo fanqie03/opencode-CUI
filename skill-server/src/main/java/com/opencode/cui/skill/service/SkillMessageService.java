@@ -161,6 +161,14 @@ public class SkillMessageService {
         return messageRepository.findBySessionIdAndMessageId(sessionId, messageId);
     }
 
+    @Transactional(readOnly = true)
+    public SkillMessage findById(Long messageId) {
+        if (messageId == null) {
+            return null;
+        }
+        return messageRepository.findById(messageId);
+    }
+
     /**
      * Update token/cost stats for a message (called on step.done).
      */

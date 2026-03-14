@@ -20,6 +20,8 @@ public interface SkillMessagePartRepository {
     SkillMessagePart findByPartId(@Param("sessionId") Long sessionId,
             @Param("partId") String partId);
 
+    SkillMessagePart findLatestPendingPermissionPart(@Param("sessionId") Long sessionId);
+
     List<SkillMessagePart> findByMessageId(@Param("messageId") Long messageId);
 
     int findMaxSeqByMessageId(@Param("messageId") Long messageId);

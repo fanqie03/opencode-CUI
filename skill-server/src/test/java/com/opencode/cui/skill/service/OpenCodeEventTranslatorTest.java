@@ -191,6 +191,34 @@ class OpenCodeEventTranslatorTest {
   }
 
   @Test
+  @DisplayName("tool question pending from message.part.updated is skipped (waiting for question.asked)")
+  void skipsToolQuestionFromPartUpdatedWhenPending() throws Exception {
+    var event = objectMapper.readTree("""
+        {
+          "type": "message.part.updated",
+          "properties": {
+            "part": {
+              "id": "part-question-pending-1",
+              "sessionID": "sess-question",
+              "messageID": "msg-question",
+              "type": "tool",
+              "callID": "call-question-1",
+              "tool": "question",
+              "state": {
+                "status": "pending",
+                "input": {}
+              }
+            }
+          }
+        }
+        """);
+
+    StreamMessage translated = translator.translate(event);
+
+    assertNull(translated);
+  }
+
+  @Test
   @DisplayName("tool question running from message.part.updated is skipped (handled by question.asked)")
   void skipsToolQuestionFromPartUpdatedToAvoidDuplicate() throws Exception {
     var event = objectMapper.readTree("""
@@ -265,5 +293,249 @@ class OpenCodeEventTranslatorTest {
     assertNotNull(active);
     assertEquals("retry", reconnecting.getSessionStatus());
     assertEquals("busy", active.getSessionStatus());
+  }
+
+  @Test
+  @DisplayName("question completed from message.part.updated produces QUESTION type with same partId")
+  void translatesQuestionCompletedAsQuestionType() throws Exception {
+    // Step 1: Simulate question.asked event (establishes callId → partId cache)
+    var questionAsked = objectMapper.readTree("""
+        {
+          "type": "question.asked",
+          "properties": {
+            "id": "question-abc",
+            "sessionID": "sess-q",
+            "questions": [
+              {
+                "header": "方案选择",
+                "question": "选 A 还是 B？",
+                "options": [
+                  { "label": "A", "description": "选项A" },
+                  { "label": "B", "description": "选项B" }
+                ]
+              }
+            ],
+            "tool": {
+              "callID": "call-q-1",
+              "messageID": "msg-q"
+            }
+          }
+        }
+        """);
+    StreamMessage asked = translator.translate(questionAsked);
+    assertNotNull(asked);
+    assertEquals(StreamMessage.Types.QUESTION, asked.getType());
+    assertEquals("question-abc", asked.getPartId());
+
+    // Step 2: Simulate tool completed event for the same question
+    var toolCompleted = objectMapper.readTree("""
+        {
+          "type": "message.part.updated",
+          "properties": {
+            "part": {
+              "id": "part-tool-xyz",
+              "sessionID": "sess-q",
+              "messageID": "msg-q",
+              "type": "tool",
+              "callID": "call-q-1",
+              "tool": "question",
+              "state": {
+                "status": "completed",
+                "input": {
+                  "questions": [
+                    {
+                      "header": "方案选择",
+                      "question": "选 A 还是 B？",
+                      "options": [
+                        { "label": "A", "description": "选项A" },
+                        { "label": "B", "description": "选项B" }
+                      ]
+                    }
+                  ]
+                },
+                "output": "A"
+              }
+            }
+          }
+        }
+        """);
+
+    StreamMessage translated = translator.translate(toolCompleted);
+
+    assertNotNull(translated, "completed question tool should NOT be skipped");
+    assertEquals(StreamMessage.Types.QUESTION, translated.getType(),
+        "should emit QUESTION type, not TOOL_UPDATE");
+    assertEquals("completed", translated.getStatus());
+    // Key assertion: partId must match the original question.asked partId,
+    // NOT the tool part id, so the frontend updates the existing QuestionCard
+    assertEquals("question-abc", translated.getPartId(),
+        "partId must match original question.asked partId to avoid duplicate");
+    assertEquals("sess-q", translated.getSessionId());
+    assertEquals("msg-q", translated.getMessageId());
+    assertNotNull(translated.getTool());
+    assertEquals("question", translated.getTool().getToolName());
+    assertEquals("call-q-1", translated.getTool().getToolCallId());
+    assertEquals("A", translated.getTool().getOutput());
+  }
+
+  @Test
+  @DisplayName("question wrapped output is normalized to raw answer")
+  void normalizesWrappedQuestionOutput() throws Exception {
+    var questionAsked = objectMapper.readTree("""
+        {
+          "type": "question.asked",
+          "properties": {
+            "id": "question-raw-answer",
+            "sessionID": "sess-q",
+            "questions": [
+              {
+                "header": "实现方案选择",
+                "question": "实现方案选 A 还是 B？",
+                "options": [
+                  { "label": "A", "description": "只改最小范围" },
+                  { "label": "B", "description": "做完整重构" }
+                ]
+              }
+            ],
+            "tool": {
+              "callID": "call-q-raw-answer",
+              "messageID": "msg-q"
+            }
+          }
+        }
+        """);
+    translator.translate(questionAsked);
+
+    var toolCompleted = objectMapper.readTree("""
+        {
+          "type": "message.part.updated",
+          "properties": {
+            "part": {
+              "id": "part-tool-raw-answer",
+              "sessionID": "sess-q",
+              "messageID": "msg-q",
+              "type": "tool",
+              "callID": "call-q-raw-answer",
+              "tool": "question",
+              "state": {
+                "status": "completed",
+                "input": {
+                  "questions": [
+                    {
+                      "header": "实现方案选择",
+                      "question": "实现方案选 A 还是 B？",
+                      "options": [
+                        { "label": "A", "description": "只改最小范围" },
+                        { "label": "B", "description": "做完整重构" }
+                      ]
+                    }
+                  ]
+                },
+                "output": "User has answered your questions: \\"实现方案选 A 还是 B？\\"=\\"123\\". You can now continue with the user's answers in mind."
+              }
+            }
+          }
+        }
+        """);
+
+    StreamMessage translated = translator.translate(toolCompleted);
+
+    assertNotNull(translated);
+    assertNotNull(translated.getTool());
+    assertEquals("123", translated.getTool().getOutput());
+  }
+
+  @Test
+  @DisplayName("permission resolved event is mapped to permission.reply")
+  void translatesPermissionResolvedEvent() throws Exception {
+    var event = objectMapper.readTree("""
+        {
+          "type": "permission.updated",
+          "properties": {
+            "sessionID": "sess-perm",
+            "messageID": "msg-perm",
+            "id": "perm-1",
+            "type": "command",
+            "title": "Run command",
+            "metadata": {
+              "command": "rm -rf /tmp/demo"
+            },
+            "status": {
+              "type": "approved"
+            },
+            "response": "allow"
+          }
+        }
+        """);
+
+    StreamMessage translated = translator.translate(event);
+
+    assertNotNull(translated);
+    assertEquals(StreamMessage.Types.PERMISSION_REPLY, translated.getType());
+    assertEquals("approved", translated.getStatus());
+    assertNotNull(translated.getPermission());
+    assertEquals("perm-1", translated.getPermission().getPermissionId());
+    assertEquals("command", translated.getPermission().getPermType());
+    assertEquals("once", translated.getPermission().getResponse());
+    assertEquals("Run command", translated.getTitle());
+  }
+
+  @Test
+  @DisplayName("permission status approved without response is still mapped to permission.reply")
+  void translatesPermissionApprovedStatusWithoutResponse() throws Exception {
+    var event = objectMapper.readTree("""
+        {
+          "type": "permission.completed",
+          "properties": {
+            "sessionID": "sess-perm",
+            "messageID": "msg-perm",
+            "id": "perm-2",
+            "permission": "command",
+            "title": "Run command",
+            "status": {
+              "type": "approved"
+            }
+          }
+        }
+        """);
+
+    StreamMessage translated = translator.translate(event);
+
+    assertNotNull(translated);
+    assertEquals(StreamMessage.Types.PERMISSION_REPLY, translated.getType());
+    assertEquals("approved", translated.getStatus());
+    assertNotNull(translated.getPermission());
+    assertEquals("perm-2", translated.getPermission().getPermissionId());
+    assertEquals("command", translated.getPermission().getPermType());
+    assertNull(translated.getPermission().getResponse());
+  }
+
+  @Test
+  @DisplayName("unresolved permission event is mapped to permission.ask")
+  void translatesUnknownPermissionEventAsAskWhenUnresolved() throws Exception {
+    var event = objectMapper.readTree("""
+        {
+          "type": "permission.pending",
+          "properties": {
+            "sessionID": "sess-perm",
+            "messageID": "msg-perm",
+            "id": "perm-3",
+            "type": "command",
+            "title": "Run command",
+            "status": {
+              "type": "pending"
+            }
+          }
+        }
+        """);
+
+    StreamMessage translated = translator.translate(event);
+
+    assertNotNull(translated);
+    assertEquals(StreamMessage.Types.PERMISSION_ASK, translated.getType());
+    assertEquals("pending", translated.getStatus());
+    assertNotNull(translated.getPermission());
+    assertEquals("perm-3", translated.getPermission().getPermissionId());
+    assertEquals("command", translated.getPermission().getPermType());
   }
 }

@@ -117,7 +117,9 @@ public class GatewayMessageRouter {
     // ==================== Message Handlers ====================
 
     private void handleToolEvent(String sessionId, String userId, JsonNode node) {
-        if (shouldSuppressToolEvent(sessionId, node)) {
+        if (sessionId == null) {
+            log.warn("tool_event missing sessionId, agentId={}, raw keys={}",
+                    node.path("agentId").asText(null), node.fieldNames());
             return;
         }
         activateIdleSession(sessionId, userId);
@@ -127,24 +129,30 @@ public class GatewayMessageRouter {
             return;
         }
 
+        // Suppress stale assistant-side events that arrive after tool_done,
+        // but NEVER suppress:
+        // - QUESTION events (the completed/error update for a question often
+        //   arrives after tool_done due to event ordering)
+        // - PERMISSION events (permission resolved updates can also arrive after
+        //   tool_done)
+        // - USER messages (OpenCode may emit the user's text echo slightly
+        //   after tool_done; dropping it would make the message disappear from
+        //   ws and history)
+        if (completedSessions.getIfPresent(sessionId) != null
+                && !StreamMessage.Types.QUESTION.equals(msg.getType())
+                && !StreamMessage.Types.PERMISSION_ASK.equals(msg.getType())
+                && !StreamMessage.Types.PERMISSION_REPLY.equals(msg.getType())
+                && !"user".equals(ProtocolUtils.normalizeRole(msg.getRole()))) {
+            log.debug("Suppressing stale tool_event after tool_done: sessionId={}, type={}",
+                    sessionId, msg.getType());
+            return;
+        }
+
         if ("user".equals(msg.getRole())) {
             handleUserToolEvent(sessionId, userId, msg);
         } else {
             handleAssistantToolEvent(sessionId, userId, msg);
         }
-    }
-
-    private boolean shouldSuppressToolEvent(String sessionId, JsonNode node) {
-        if (sessionId == null) {
-            log.warn("tool_event missing sessionId, agentId={}, raw keys={}",
-                    node.path("agentId").asText(null), node.fieldNames());
-            return true;
-        }
-        if (completedSessions.getIfPresent(sessionId) != null) {
-            log.debug("Suppressing stale tool_event after tool_done: sessionId={}", sessionId);
-            return true;
-        }
-        return false;
     }
 
     private void activateIdleSession(String sessionId, String userId) {
@@ -197,9 +205,38 @@ public class GatewayMessageRouter {
     }
 
     private void handleAssistantToolEvent(String sessionId, String userId, StreamMessage msg) {
+        Long numericId = ProtocolUtils.parseSessionId(sessionId);
+        StreamMessage permissionReply = numericId != null
+                ? persistenceService.synthesizePermissionReplyFromToolOutcome(numericId, msg)
+                : null;
+        if (permissionReply != null) {
+            broadcastStreamMessage(sessionId, userId, permissionReply);
+            bufferService.accumulate(sessionId, permissionReply);
+            try {
+                persistenceService.persistIfFinal(numericId, permissionReply);
+                if (completedSessions.getIfPresent(sessionId) != null) {
+                    persistenceService.finalizeActiveAssistantTurn(numericId);
+                }
+            } catch (Exception e) {
+                log.error("Failed to persist synthesized permission reply for session {}: {}",
+                        sessionId, e.getMessage(), e);
+            }
+            String response = permissionReply.getPermission() != null
+                    ? permissionReply.getPermission().getResponse()
+                    : null;
+            log.info("Synthesized permission.reply from tool outcome: sessionId={}, permissionId={}, response={}",
+                    sessionId,
+                    permissionReply.getPermission() != null
+                            ? permissionReply.getPermission().getPermissionId()
+                            : null,
+                    response);
+            if ("reject".equals(response)) {
+                return;
+            }
+        }
+
         broadcastStreamMessage(sessionId, userId, msg);
         bufferService.accumulate(sessionId, msg);
-        Long numericId = ProtocolUtils.parseSessionId(sessionId);
         if (numericId != null) {
             try {
                 persistenceService.persistIfFinal(numericId, msg);

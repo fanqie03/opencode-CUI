@@ -457,12 +457,48 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
       case 'thinking.delta':
       case 'thinking.done':
       case 'tool.update':
-      case 'question':
       case 'permission.ask':
       case 'permission.reply':
       case 'file':
         applyStreamedMessage(msg);
         break;
+
+      case 'question': {
+        const messageId = msg.messageId ?? msg.sourceMessageId;
+        const isCompleted = msg.status === 'completed' || msg.status === 'error';
+        const hasActiveAssembler = messageId ? assemblersRef.current.has(messageId) : false;
+
+        // If the question is completed and the assembler was already finalized
+        // (session.status:idle arrived first), we must NOT recreate the assembler
+        // or it would replace all original parts with just the question part.
+        // Instead, directly patch the existing message's question part.
+        if (isCompleted && messageId && !hasActiveAssembler) {
+          setMessages((prev) =>
+            prev.map((message) => {
+              if (message.id !== messageId || !message.parts) return message;
+              const updatedParts = message.parts.map((part) => {
+                if (part.type !== 'question') return part;
+                // Match by partId or toolCallId
+                if (msg.partId && part.partId !== msg.partId &&
+                  msg.toolCallId && part.toolCallId !== msg.toolCallId) {
+                  return part;
+                }
+                return {
+                  ...part,
+                  answered: true,
+                  toolStatus: msg.status,
+                  toolOutput: msg.output ?? part.toolOutput,
+                };
+              });
+              return { ...message, parts: updatedParts };
+            }),
+          );
+          break;
+        }
+
+        applyStreamedMessage(msg);
+        break;
+      }
 
       case 'step.start':
         if (msg.messageId) {

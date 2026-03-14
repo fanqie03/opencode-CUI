@@ -363,9 +363,27 @@ public class SkillRelayService {
             return source;
         }
         if (message.getAk() == null || message.getAk().isBlank()) {
-            return null;
+            return inferSingleActiveSource();
         }
-        return redisMessageBroker.getAgentSource(message.getAk());
+        String boundSource = redisMessageBroker.getAgentSource(message.getAk());
+        if (boundSource != null && !boundSource.isBlank()) {
+            return boundSource;
+        }
+        return inferSingleActiveSource();
+    }
+
+    private String inferSingleActiveSource() {
+        String resolved = null;
+        for (String source : sourceSessions.keySet()) {
+            if (!hasOpenSession(source)) {
+                continue;
+            }
+            if (resolved != null) {
+                return null;
+            }
+            resolved = source;
+        }
+        return resolved;
     }
 
 

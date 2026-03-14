@@ -3,8 +3,8 @@ package com.opencode.cui.skill.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.InvokeCommand;
-import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.model.SkillSession;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -21,6 +21,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -98,6 +99,22 @@ class GatewayRelayServiceTest {
         verify(redisMessageBroker).publishToUser(eq("user-1"), contains("session.status"));
         verify(bufferService).accumulate(eq("42"), any(StreamMessage.class));
         verify(persistenceService).persistIfFinal(eq(42L), any(StreamMessage.class));
+    }
+
+    @Test
+    @DisplayName("user text echo after tool_done is not suppressed")
+    void userTextEchoAfterToolDoneIsNotSuppressed() {
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.TEXT_DONE)
+                .role("user")
+                .content("CLI user message")
+                .build());
+
+        service.handleGatewayMessage("{\"type\":\"tool_done\",\"userId\":\"user-1\",\"welinkSessionId\":42}");
+        service.handleGatewayMessage("{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"type\":\"message.part.updated\"}}");
+
+        verify(messageService).saveUserMessage(42L, "CLI user message");
+        verify(redisMessageBroker, times(2)).publishToUser(eq("user-1"), any(String.class));
     }
 
     @Test
@@ -376,6 +393,10 @@ class GatewayRelayServiceTest {
     @Test
     @DisplayName("tool_event after tool_done is suppressed")
     void toolEventAfterToolDoneIsSuppressed() {
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.TEXT_DELTA)
+                .content("stale")
+                .build());
         // Step 1: tool_done arrives → broadcasts idle
         service.handleGatewayMessage("{\"type\":\"tool_done\",\"userId\":\"user-1\",\"welinkSessionId\":42}");
         verify(redisMessageBroker).publishToUser(eq("user-1"), contains("session.status"));
@@ -384,8 +405,9 @@ class GatewayRelayServiceTest {
         service.handleGatewayMessage(
                 "{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"data\":\"stale\"}}");
 
-        // Translator should never be called for the suppressed event
-        verifyNoInteractions(translator);
+        // Translator may still be called so the router can inspect role/type, but the
+        // stale assistant event must not be broadcast.
+        verify(translator).translate(any());
 
         // Redis should only have been called once (for tool_done idle), NOT for the
         // stale tool_event
@@ -422,6 +444,120 @@ class GatewayRelayServiceTest {
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(redisMessageBroker, org.mockito.Mockito.atLeast(2)).publishToUser(eq("user-1"), payloadCaptor.capture());
         assertTrue(payloadCaptor.getAllValues().stream().anyMatch(p -> p.contains("text.delta")));
+    }
+
+    @Test
+    @DisplayName("permission reply after tool_done is not suppressed")
+    void permissionReplyAfterToolDoneIsNotSuppressed() {
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.PERMISSION_REPLY)
+                .permission(StreamMessage.PermissionInfo.builder()
+                        .permissionId("perm-1")
+                        .response("once")
+                        .build())
+                .build());
+
+        service.handleGatewayMessage("{\"type\":\"tool_done\",\"userId\":\"user-1\",\"welinkSessionId\":42}");
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"type\":\"permission.updated\"}}");
+
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisMessageBroker, org.mockito.Mockito.atLeast(2)).publishToUser(eq("user-1"), payloadCaptor.capture());
+        assertTrue(payloadCaptor.getAllValues().stream().anyMatch(p -> p.contains("permission.reply")));
+    }
+
+    @Test
+    @DisplayName("rejected permission tool error is synthesized into permission reply")
+    void rejectedPermissionToolErrorSynthesizesPermissionReply() {
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.TOOL_UPDATE)
+                .status("error")
+                .error("Error: The user rejected permission to use this specific tool call.")
+                .tool(StreamMessage.ToolInfo.builder()
+                        .toolName("bash")
+                        .toolCallId("toolu_function.bash:23")
+                        .build())
+                .build());
+        when(persistenceService.synthesizePermissionReplyFromToolOutcome(eq(42L), any(StreamMessage.class)))
+                .thenReturn(StreamMessage.builder()
+                        .type(StreamMessage.Types.PERMISSION_REPLY)
+                        .partId("perm-1")
+                        .partSeq(3)
+                        .permission(StreamMessage.PermissionInfo.builder()
+                                .permissionId("perm-1")
+                                .permType("external_directory")
+                                .response("reject")
+                                .build())
+                        .status("completed")
+                        .build());
+
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"type\":\"message.part.updated\"}}");
+
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisMessageBroker).publishToUser(eq("user-1"), payloadCaptor.capture());
+        JsonNode published = readPublishedMessage(payloadCaptor.getValue());
+        assertEquals("permission.reply", published.path("message").path("type").asText());
+        assertEquals("reject", published.path("message").path("response").asText());
+        verify(persistenceService).persistIfFinal(eq(42L), any(StreamMessage.class));
+    }
+
+    @Test
+    @DisplayName("successful gated tool also synthesizes permission reply")
+    void successfulGatedToolSynthesizesPermissionReply() {
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.TOOL_UPDATE)
+                .status("completed")
+                .tool(StreamMessage.ToolInfo.builder()
+                        .toolName("write")
+                        .toolCallId("toolu_function.write:24")
+                        .output("Wrote file successfully.")
+                        .build())
+                .build());
+        when(persistenceService.synthesizePermissionReplyFromToolOutcome(eq(42L), any(StreamMessage.class)))
+                .thenReturn(StreamMessage.builder()
+                        .type(StreamMessage.Types.PERMISSION_REPLY)
+                        .partId("perm-1")
+                        .partSeq(3)
+                        .permission(StreamMessage.PermissionInfo.builder()
+                                .permissionId("perm-1")
+                                .permType("external_directory")
+                                .response("once")
+                                .build())
+                        .status("completed")
+                        .build());
+
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"type\":\"message.part.updated\"}}");
+
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisMessageBroker, times(2)).publishToUser(eq("user-1"), payloadCaptor.capture());
+        assertTrue(payloadCaptor.getAllValues().stream().anyMatch(p -> p.contains("permission.reply")));
+        assertTrue(payloadCaptor.getAllValues().stream().anyMatch(p -> p.contains("tool.update")));
+    }
+
+    @Test
+    @DisplayName("plain tool error is not converted to permission reply")
+    void plainToolErrorIsNotConvertedToPermissionReply() {
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.TOOL_UPDATE)
+                .status("error")
+                .error("Error: command failed")
+                .tool(StreamMessage.ToolInfo.builder()
+                        .toolName("bash")
+                        .toolCallId("toolu_function.bash:23")
+                        .build())
+                .build());
+        when(persistenceService.synthesizePermissionReplyFromToolOutcome(eq(42L), any(StreamMessage.class)))
+                .thenReturn(null);
+
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"userId\":\"user-1\",\"welinkSessionId\":42,\"event\":{\"type\":\"message.part.updated\"}}");
+
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisMessageBroker).publishToUser(eq("user-1"), payloadCaptor.capture());
+        JsonNode published = readPublishedMessage(payloadCaptor.getValue());
+        assertEquals("tool.update", published.path("message").path("type").asText());
     }
 
     private JsonNode readPublishedMessage(String payload) {

@@ -22,6 +22,11 @@ interface BackendMessagePart {
   header?: string | null;
   question?: string | null;
   options?: unknown[] | null;
+  answered?: boolean | null;
+  permissionId?: string | null;
+  permType?: string | null;
+  response?: string | null;
+  metadata?: Record<string, unknown> | null;
   fileName?: string | null;
   fileUrl?: string | null;
   fileMime?: string | null;
@@ -180,10 +185,40 @@ function normalizePart(raw: BackendMessagePart, index: number): MessagePart | nu
         isStreaming: false,
         toolName: raw.toolName ?? 'question',
         toolCallId: raw.toolCallId ?? undefined,
+        toolStatus: (raw.status ?? raw.toolStatus) as MessagePart['toolStatus'] ?? undefined,
+        toolOutput: raw.output ?? raw.toolOutput ?? undefined,
         header: raw.header ?? undefined,
         question: raw.question ?? undefined,
         options: normalizeQuestionOptions(raw.options),
+        answered: raw.answered === true
+          || raw.status === 'completed'
+          || raw.toolStatus === 'completed',
       };
+
+    case 'permission': {
+      const resolved = Boolean(
+        raw.response
+          || raw.status === 'completed'
+          || raw.status === 'resolved'
+          || raw.status === 'approved'
+          || raw.status === 'rejected'
+          || raw.toolStatus === 'completed'
+          || raw.toolStatus === 'resolved'
+          || raw.toolStatus === 'approved'
+          || raw.toolStatus === 'rejected',
+      );
+      return {
+        partId,
+        partSeq,
+        type: 'permission',
+        content: raw.content ?? raw.title ?? '',
+        isStreaming: false,
+        permissionId: raw.permissionId ?? raw.toolCallId ?? partId,
+        permType: raw.permType ?? raw.toolName ?? undefined,
+        permResolved: resolved,
+        permissionResponse: raw.response ?? raw.output ?? raw.toolOutput ?? undefined,
+      };
+    }
 
     case 'tool': {
       const toolStatus = raw.status ?? raw.toolStatus;

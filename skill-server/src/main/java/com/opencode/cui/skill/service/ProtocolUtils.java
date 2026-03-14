@@ -4,12 +4,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 协议相关的通用工具方法。
  * 从 OpenCodeEventTranslator / ProtocolMessageMapper / Controller 中提取的重复逻辑。
  */
 public final class ProtocolUtils {
+
+    private static final Pattern QUESTION_ANSWER_PATTERN = Pattern.compile("\"([^\"]+)\"=\"([^\"]*)\"");
 
     private ProtocolUtils() {
     }
@@ -110,5 +114,41 @@ public final class ProtocolUtils {
             }
         }
         return options.isEmpty() ? null : options;
+    }
+
+    public static String normalizeQuestionAnswerOutput(String rawOutput, JsonNode input) {
+        if (rawOutput == null || rawOutput.isBlank()) {
+            return rawOutput;
+        }
+
+        Matcher matcher = QUESTION_ANSWER_PATTERN.matcher(rawOutput);
+        List<String[]> pairs = new ArrayList<>();
+        while (matcher.find()) {
+            pairs.add(new String[] { matcher.group(1), matcher.group(2) });
+        }
+
+        if (pairs.isEmpty()) {
+            return rawOutput;
+        }
+
+        JsonNode questionNode = resolveQuestionPayload(input);
+        String expectedQuestion = questionNode != null ? questionNode.path("question").asText(null) : null;
+        if (expectedQuestion != null) {
+            for (String[] pair : pairs) {
+                if (expectedQuestion.equals(pair[0])) {
+                    return pair[1];
+                }
+            }
+        }
+
+        if (pairs.size() == 1) {
+            return pairs.get(0)[1];
+        }
+
+        List<String> normalized = new ArrayList<>();
+        for (String[] pair : pairs) {
+            normalized.add(pair[0] + "\n" + pair[1]);
+        }
+        return String.join("\n\n", normalized);
     }
 }

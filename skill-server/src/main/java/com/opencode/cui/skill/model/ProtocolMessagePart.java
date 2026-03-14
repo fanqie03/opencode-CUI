@@ -31,6 +31,7 @@ public class ProtocolMessagePart {
     private String header;
     private String question;
     private List<String> options;
+    private Boolean answered;
 
     private String permissionId;
     private String permType;

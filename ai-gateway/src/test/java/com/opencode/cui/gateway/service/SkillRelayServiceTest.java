@@ -123,6 +123,26 @@ class SkillRelayServiceTest {
     }
 
     @Test
+    @DisplayName("relayToSkill falls back to the only active local source when agent source binding is missing")
+    void relayToSkillFallsBackToSingleActiveLocalSource() throws Exception {
+        when(skillSession.getId()).thenReturn("skill-link");
+        when(skillSession.getAttributes()).thenReturn(Map.of(SkillRelayService.SOURCE_ATTR, SkillRelayService.SKILL_SOURCE));
+        when(skillSession.isOpen()).thenReturn(true);
+        service.registerSkillSession(skillSession);
+
+        GatewayMessage message = GatewayMessage.builder()
+                .type("tool_event")
+                .ak("ak-1")
+                .build();
+        when(redisMessageBroker.getAgentSource("ak-1")).thenReturn(null);
+
+        boolean routed = service.relayToSkill(message);
+
+        assertTrue(routed);
+        verify(skillSession).sendMessage(any(TextMessage.class));
+    }
+
+    @Test
     @DisplayName("handleInvokeFromSkill rejects source mismatch before entering main route")
     void handleInvokeFromSkillRejectsSourceMismatch() throws Exception {
         when(skillSession.getId()).thenReturn("skill-link");
