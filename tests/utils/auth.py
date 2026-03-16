@@ -19,8 +19,8 @@ def generate_nonce() -> str:
 
 
 def current_timestamp() -> str:
-    """当前毫秒时间戳字符串。"""
-    return str(int(time.time() * 1000))
+    """当前秒级时间戳字符串（与 Java Instant.now().getEpochSecond() 一致）。"""
+    return str(int(time.time()))
 
 
 def compute_signature(ak: str, sk: str, timestamp: str, nonce: str) -> str:
@@ -30,9 +30,11 @@ def compute_signature(ak: str, sk: str, timestamp: str, nonce: str) -> str:
     签名算法与 AkSkAuthService.java 一致：
     sign = Base64(HMAC-SHA256(SK, AK + timestamp + nonce))
     """
+    # Java: computeHmacSha256(SK, "{AK}{timestamp}{nonce}")
     message = (ak + timestamp + nonce).encode("utf-8")
     key = sk.encode("utf-8")
     mac = hmac.new(key, message, hashlib.sha256)
+    # Java uses Base64.getEncoder() (standard Base64, not URL-safe)
     return base64.b64encode(mac.digest()).decode("utf-8")
 
 
@@ -50,9 +52,11 @@ def build_auth_subprotocol(ak: str, sk: str, timestamp: str = None,
 
     signature = compute_signature(ak, sk, timestamp, nonce)
 
+    # Java reads: authNode.path("ak"), authNode.path("ts"),
+    #             authNode.path("nonce"), authNode.path("sign")
     payload = {
         "ak": ak,
-        "timestamp": timestamp,
+        "ts": timestamp,
         "nonce": nonce,
         "sign": signature
     }

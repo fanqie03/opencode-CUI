@@ -20,21 +20,20 @@ class TestAgentRegistry:
     """Agent 注册和生命周期测试。"""
 
     @pytest.mark.asyncio
-    async def test_u09_first_registration(self, gateway_ws_url, test_ak, test_sk,
+    async def test_u09_first_registration(self, gateway_ws_url, test_ak_2, test_sk_2,
                                           gateway_api):
-        """TC-GW-U09：首次注册 Agent。"""
-        ws = await connect_agent_ws(gateway_ws_url, test_ak, test_sk)
+        """TC-GW-U09：首次注册 Agent（使用 AK2 避免与 agent_online fixture 冲突）。"""
+        ws = await connect_agent_ws(gateway_ws_url, test_ak_2, test_sk_2)
         try:
             resp = await register_agent(ws, tool_type="OPENCODE", tool_version="1.0")
             assert resp is not None
             assert resp["type"] == "register_ok"
 
             # 通过 REST API 验证 Agent 在线
-            api_resp = gateway_api.list_agents(ak=test_ak)
+            api_resp = gateway_api.list_agents(ak=test_ak_2)
             assert api_resp.status_code == 200
             data = api_resp.json().get("data", [])
-            online_aks = [a.get("ak") or a.get("akId") for a in data]
-            assert test_ak in str(api_resp.text), f"Agent 应在在线列表中: {data}"
+            assert test_ak_2 in str(api_resp.text), f"Agent 应在在线列表中: {data}"
         finally:
             await ws.close()
 
@@ -206,7 +205,7 @@ class TestEventRelay:
         ws2 = await connect_agent_ws(gateway_ws_url, test_ak, test_sk)
         resp2 = await register_agent(ws2)
         assert resp2["type"] == "register_rejected"
-        assert resp2.get("message") == "duplicate_connection"
+        assert resp2.get("reason") == "duplicate_connection"
 
         # 新连接会被关闭
         await asyncio.sleep(0.5)

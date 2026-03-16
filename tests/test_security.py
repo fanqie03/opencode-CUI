@@ -30,7 +30,7 @@ class TestSecurity:
     @pytest.mark.asyncio
     async def test_sec02_expired_timestamp(self, gateway_ws_url, test_ak, test_sk):
         """TC-SEC-02：过期时间戳攻击。"""
-        old_ts = str(int(time.time() * 1000) - 360_000)  # 6 分钟前
+        old_ts = str(int(time.time()) - 360)  # 6 分钟前（超出 300 秒容忍窗口）
         rejected = await connect_agent_ws_expect_failure(
             gateway_ws_url, test_ak, test_sk, timestamp=old_ts
         )
@@ -82,13 +82,13 @@ class TestSecurity:
                 pass  # 预期被拒绝
 
     def test_sec05_cross_user_session_access(
-        self, skill_api, test_user_id, test_user_id_2, test_ak
+        self, skill_api, test_user_id, test_user_id_2, test_ak, agent_online
     ):
         """TC-SEC-05：跨用户会话访问。"""
         # user1 创建会话
         resp = skill_api.create_session(test_user_id, test_ak, "Private Session")
         assert resp.status_code == 200
-        session_id = resp.json().get("data", {}).get("id")
+        session_id = resp.json().get("data", {}).get("welinkSessionId")
 
         try:
             # user2 尝试访问
@@ -108,12 +108,12 @@ class TestSecurity:
         finally:
             skill_api.close_session(session_id, test_user_id)
 
-    def test_sec06_forged_userid_cookie(self, skill_api, test_user_id, test_ak):
+    def test_sec06_forged_userid_cookie(self, skill_api, test_user_id, test_ak, agent_online):
         """TC-SEC-06：userId Cookie 伪造。"""
         # 创建会话
         resp = skill_api.create_session(test_user_id, test_ak, "Cookie Test")
         assert resp.status_code == 200
-        session_id = resp.json().get("data", {}).get("id")
+        session_id = resp.json().get("data", {}).get("welinkSessionId")
 
         try:
             # 伪造 userId 访问
@@ -179,7 +179,7 @@ class TestSecurity:
         # 创建应成功（SQL 被参数化查询处理）或返回合理错误
         assert resp2.status_code in (200, 400)
         if resp2.status_code == 200:
-            sid = resp2.json().get("data", {}).get("id")
+            sid = resp2.json().get("data", {}).get("welinkSessionId")
             if sid:
                 skill_api.close_session(sid, test_user_id)
 

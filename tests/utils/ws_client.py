@@ -81,14 +81,27 @@ async def connect_skill_stream_ws(
     """
     建立 Skill Stream WebSocket 连接（Cookie 认证）。
     """
-    ws = await asyncio.wait_for(
-        websockets.connect(
-            ws_url,
-            additional_headers={"Cookie": f"userId={user_id}"},
-            open_timeout=timeout,
-        ),
-        timeout=timeout,
-    )
+    headers = {"Cookie": f"userId={user_id}"}
+    try:
+        # websockets >= 14.x uses additional_headers
+        ws = await asyncio.wait_for(
+            websockets.connect(
+                ws_url,
+                additional_headers=headers,
+                open_timeout=timeout,
+            ),
+            timeout=timeout,
+        )
+    except TypeError:
+        # websockets < 14.x uses extra_headers
+        ws = await asyncio.wait_for(
+            websockets.connect(
+                ws_url,
+                extra_headers=headers,
+                open_timeout=timeout,
+            ),
+            timeout=timeout,
+        )
     return ws
 
 
@@ -122,6 +135,7 @@ async def recv_json_all(ws: WebSocketClientProtocol, timeout: float = 3.0,
 
 async def register_agent(ws: WebSocketClientProtocol,
                          device_name: str = "TestPC",
+                         mac_address: str = "AA:BB:CC:DD:EE:FF",
                          os_name: str = "Windows",
                          tool_type: str = "OPENCODE",
                          tool_version: str = "1.0") -> dict:
@@ -129,6 +143,7 @@ async def register_agent(ws: WebSocketClientProtocol,
     await send_json(ws, {
         "type": "register",
         "deviceName": device_name,
+        "macAddress": mac_address,
         "os": os_name,
         "toolType": tool_type,
         "toolVersion": tool_version,

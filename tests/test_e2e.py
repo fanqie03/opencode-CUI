@@ -20,7 +20,7 @@ class TestEndToEnd:
     @pytest.mark.asyncio
     async def test_e2e01_full_conversation(
         self, gateway_ws_url, test_ak, test_sk,
-        skill_ws_url, test_user_id, skill_api
+        skill_ws_url, test_user_id, skill_api, agent_online
     ):
         """TC-E2E-01：新用户完整对话流程。"""
         # 查看在线 Agent
@@ -32,7 +32,7 @@ class TestEndToEnd:
             test_user_id, test_ak, "E2E Full Test"
         )
         assert create_resp.status_code == 200
-        session_id = create_resp.json().get("data", {}).get("id")
+        session_id = create_resp.json().get("data", {}).get("welinkSessionId")
         assert session_id is not None
 
         try:
@@ -89,12 +89,12 @@ class TestEndToEnd:
 
     @pytest.mark.asyncio
     async def test_e2e06_agent_offline_notification(
-        self, gateway_ws_url, test_ak, test_sk,
+        self, gateway_ws_url, test_ak_2, test_sk_2,
         skill_ws_url, test_user_id
     ):
         """TC-E2E-06：Agent 离线通知。"""
         # 1. Agent 上线
-        ws_agent = await connect_agent_ws(gateway_ws_url, test_ak, test_sk)
+        ws_agent = await connect_agent_ws(gateway_ws_url, test_ak_2, test_sk_2)
         resp = await register_agent(ws_agent)
         assert resp["type"] == "register_ok"
 
@@ -125,14 +125,14 @@ class TestEndToEnd:
 
     @pytest.mark.asyncio
     async def test_e2e07_multi_session_switch(
-        self, skill_ws_url, test_user_id, skill_api, test_ak
+        self, skill_ws_url, test_user_id, skill_api, test_ak, agent_online
     ):
         """TC-E2E-07：多会话切换。"""
         # 创建两个会话
         r1 = skill_api.create_session(test_user_id, test_ak, "Session A")
         r2 = skill_api.create_session(test_user_id, test_ak, "Session B")
-        sid_a = r1.json().get("data", {}).get("id")
-        sid_b = r2.json().get("data", {}).get("id")
+        sid_a = r1.json().get("data", {}).get("welinkSessionId")
+        sid_b = r2.json().get("data", {}).get("welinkSessionId")
 
         try:
             # 各自发消息

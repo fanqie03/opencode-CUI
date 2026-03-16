@@ -18,8 +18,8 @@ class TestSkillSessionCrud:
         resp = skill_api.create_session(test_user_id, test_ak, "Test Session")
         assert resp.status_code == 200, f"创建会话失败: {resp.text}"
         data = resp.json()
-        session_id = data.get("data", {}).get("id") or data.get("id")
-        assert session_id is not None, f"返回数据缺少 id: {data}"
+        session_id = data.get("data", {}).get("welinkSessionId") or data.get("data", {}).get("id")
+        assert session_id is not None, f"返回数据缺少 welinkSessionId: {data}"
 
         # 清理
         skill_api.close_session(session_id, test_user_id)
@@ -33,8 +33,14 @@ class TestSkillSessionCrud:
     def test_u03_get_session_not_found(self, skill_api, test_user_id):
         """TC-SK-U03：获取会话（不存在）。"""
         resp = skill_api.get_session(999999999, test_user_id)
-        assert resp.status_code in (404, 400), \
-            f"不存在的会话应返回 404，实际: {resp.status_code}"
+        # GlobalExceptionHandler 对 IllegalArgumentException 返回 HTTP 200 + ApiResponse.error(400)
+        if resp.status_code == 200:
+            body = resp.json()
+            assert body.get("code") != 0, \
+                f"不存在的会话应返回错误，实际: {body}"
+        else:
+            assert resp.status_code in (400, 404), \
+                f"不存在的会话应返回 404，实际: {resp.status_code}"
 
     def test_u04_close_session(self, create_skill_session, skill_api):
         """TC-SK-U04/U57：关闭会话。"""
@@ -56,8 +62,8 @@ class TestSkillSessionCrud:
         # 创建两个会话
         r1 = skill_api.create_session(test_user_id, test_ak, "Session 1")
         r2 = skill_api.create_session(test_user_id, test_ak, "Session 2")
-        s1 = r1.json().get("data", {}).get("id") or r1.json().get("id")
-        s2 = r2.json().get("data", {}).get("id") or r2.json().get("id")
+        s1 = r1.json().get("data", {}).get("welinkSessionId") or r1.json().get("data", {}).get("id")
+        s2 = r2.json().get("data", {}).get("welinkSessionId") or r2.json().get("data", {}).get("id")
 
         try:
             resp = skill_api.list_sessions(test_user_id)
