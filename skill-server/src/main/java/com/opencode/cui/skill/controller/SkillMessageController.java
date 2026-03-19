@@ -186,7 +186,7 @@ public class SkillMessageController {
 
         String chatId = request.getChatId();
         if (chatId == null || chatId.isBlank()) {
-            chatId = session.getImGroupId();
+            chatId = session.getBusinessSessionId();
         }
 
         if (chatId == null || chatId.isBlank()) {

@@ -15,6 +15,7 @@ Thumbs.db
 
 # Claude Code / OMC internal state
 .claude/
+.opencode/
 .omc/
 
 # Environment
@@ -27,3 +28,4 @@ Thumbs.db
 # Agent config
 .agent/
 .agents/
+.planning/

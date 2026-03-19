@@ -48,7 +48,7 @@ class SkillSessionControllerTest {
         session.setId(1L);
         session.setStatus(SkillSession.Status.ACTIVE);
         when(accessControlService.requireUserId("1")).thenReturn("1");
-        when(sessionService.createSession(any(), any(), any(), any())).thenReturn(session);
+        when(sessionService.createSession(any(), any(), any(), any(), any(), any(), any())).thenReturn(session);
 
         var request = new SkillSessionController.CreateSessionRequest();
         request.setAk("3");

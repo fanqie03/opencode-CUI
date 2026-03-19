@@ -231,7 +231,7 @@ class SkillMessageControllerTest {
     void sendToIm200() {
         SkillSession session = new SkillSession();
         session.setId(1L);
-        session.setImGroupId("chat-123");
+        session.setBusinessSessionId("chat-123");
         when(accessControlService.requireSessionAccess(1L, "1")).thenReturn(session);
         when(imMessageService.sendMessage("chat-123", "Hello IM")).thenReturn(true);
 

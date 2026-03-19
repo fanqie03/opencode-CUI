@@ -30,19 +30,24 @@ public interface SkillSessionRepository {
 
         List<SkillSession> findByUserIdFiltered(@Param("userId") String userId,
                         @Param("ak") String ak,
-                        @Param("imGroupId") String imGroupId,
+                        @Param("businessSessionId") String businessSessionId,
                         @Param("statuses") List<String> statuses,
                         @Param("offset") int offset,
                         @Param("limit") int limit);
 
         long countByUserIdFiltered(@Param("userId") String userId,
                         @Param("ak") String ak,
-                        @Param("imGroupId") String imGroupId,
+                        @Param("businessSessionId") String businessSessionId,
                         @Param("statuses") List<String> statuses);
 
         List<SkillSession> findByAk(@Param("ak") String ak);
 
         SkillSession findByToolSessionId(@Param("toolSessionId") String toolSessionId);
+
+        SkillSession findByBusinessSession(@Param("businessSessionDomain") String businessSessionDomain,
+                        @Param("businessSessionType") String businessSessionType,
+                        @Param("businessSessionId") String businessSessionId,
+                        @Param("ak") String ak);
 
         List<SkillSession> findByStatus(@Param("status") String status);
 

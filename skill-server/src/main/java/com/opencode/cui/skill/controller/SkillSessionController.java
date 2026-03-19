@@ -62,7 +62,10 @@ public class SkillSessionController {
                 resolvedUserId,
                 request.getAk(),
                 request.getTitle(),
-                request.getImGroupId());
+                SkillSession.DOMAIN_MINIAPP,
+                null,
+                request.getImGroupId(),
+                null);
 
         if (request.getAk() != null) {
             gatewayRelayService.sendInvokeToGateway(

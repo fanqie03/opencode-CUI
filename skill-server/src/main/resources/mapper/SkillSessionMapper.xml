@@ -13,14 +13,20 @@
         <result property="status"            column="status"
                 typeHandler="org.apache.ibatis.type.EnumTypeHandler"
                 javaType="com.opencode.cui.skill.model.SkillSession$Status"/>
-        <result property="imGroupId"         column="im_group_id"/>
+        <result property="businessSessionDomain" column="business_session_domain"/>
+        <result property="businessSessionType"   column="business_session_type"/>
+        <result property="businessSessionId"     column="business_session_id"/>
+        <result property="assistantAccount"      column="assistant_account"/>
         <result property="createdAt"         column="created_at"/>
         <result property="lastActiveAt"      column="last_active_at"/>
     </resultMap>
 
     <sql id="selectAllColumns">
         SELECT id, user_id, ak, tool_session_id,
-               title, status, im_group_id, created_at, last_active_at
+               title, status,
+               business_session_domain, business_session_type,
+               business_session_id, assistant_account,
+               created_at, last_active_at
         FROM skill_session
     </sql>
 
@@ -77,6 +83,15 @@
         WHERE tool_session_id = #{toolSessionId}
     </select>
 
+    <select id="findByBusinessSession" resultMap="SkillSessionResultMap">
+        <include refid="selectAllColumns"/>
+        WHERE business_session_domain = #{businessSessionDomain}
+          AND business_session_type = #{businessSessionType}
+          AND business_session_id = #{businessSessionId}
+          AND ak = #{ak}
+        LIMIT 1
+    </select>
+
     <select id="findByStatus" resultMap="SkillSessionResultMap">
         <include refid="selectAllColumns"/>
         WHERE status = #{status}
@@ -88,8 +103,8 @@
         <if test="ak != null and ak != ''">
             AND ak = #{ak}
         </if>
-        <if test="imGroupId != null and imGroupId != ''">
-            AND im_group_id = #{imGroupId}
+        <if test="businessSessionId != null and businessSessionId != ''">
+            AND business_session_id = #{businessSessionId}
         </if>
         <if test="statuses != null and statuses.size() > 0">
             AND status IN
@@ -107,8 +122,8 @@
         <if test="ak != null and ak != ''">
             AND ak = #{ak}
         </if>
-        <if test="imGroupId != null and imGroupId != ''">
-            AND im_group_id = #{imGroupId}
+        <if test="businessSessionId != null and businessSessionId != ''">
+            AND business_session_id = #{businessSessionId}
         </if>
         <if test="statuses != null and statuses.size() > 0">
             AND status IN
@@ -119,10 +134,15 @@
     </select>
     <insert id="insert">
         INSERT INTO skill_session
-            (id, user_id, ak, tool_session_id, title, status, im_group_id, created_at, last_active_at)
+            (id, user_id, ak, tool_session_id, title, status,
+             business_session_domain, business_session_type,
+             business_session_id, assistant_account,
+             created_at, last_active_at)
         VALUES
             (#{id}, #{userId}, #{ak}, #{toolSessionId}, #{title},
-             #{status}, #{imGroupId}, NOW(), NOW())
+             #{status}, #{businessSessionDomain}, #{businessSessionType},
+             #{businessSessionId}, #{assistantAccount},
+             NOW(), NOW())
     </insert>
 
     <update id="updateStatus">

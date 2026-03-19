@@ -44,6 +44,10 @@ class GatewayRelayServiceTest {
     @Mock
     private SessionRebuildService rebuildService;
     @Mock
+    private ImInteractionStateService interactionStateService;
+    @Mock
+    private ImOutboundService imOutboundService;
+    @Mock
     private GatewayRelayService.GatewayRelayTarget gatewayRelayTarget;
 
     private GatewayMessageRouter messageRouter;
@@ -59,7 +63,9 @@ class GatewayRelayServiceTest {
                 translator,
                 persistenceService,
                 bufferService,
-                rebuildService);
+                rebuildService,
+                interactionStateService,
+                imOutboundService);
         service = new GatewayRelayService(
                 new ObjectMapper(),
                 messageRouter,
@@ -87,6 +93,82 @@ class GatewayRelayServiceTest {
         assertEquals(123L, published.path("message").path("welinkSessionId").asLong());
         verify(bufferService).accumulate(eq("123"), any(StreamMessage.class));
         verify(persistenceService).persistIfFinal(eq(123L), any(StreamMessage.class));
+    }
+
+    @Test
+    @DisplayName("IM direct assistant message routes to outbound service and persists")
+    void imDirectAssistantMessageRoutesToOutbound() {
+        SkillSession session = new SkillSession();
+        session.setId(42L);
+        session.setBusinessSessionDomain("im");
+        session.setBusinessSessionType("direct");
+        session.setBusinessSessionId("dm-001");
+        session.setAssistantAccount("assist-001");
+        when(sessionService.findByIdSafe(42L)).thenReturn(session);
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.TEXT_DONE)
+                .content("Agent reply")
+                .build());
+
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"welinkSessionId\":42,\"event\":{\"type\":\"message.part.updated\"}}");
+
+        verify(imOutboundService).sendTextToIm("direct", "dm-001", "Agent reply", "assist-001");
+        verify(persistenceService).persistIfFinal(eq(42L), any(StreamMessage.class));
+        verify(redisMessageBroker, never()).publishToUser(any(), contains("Agent reply"));
+    }
+
+    @Test
+    @DisplayName("IM group assistant message routes to outbound service without persistence")
+    void imGroupAssistantMessageSkipsPersistence() {
+        SkillSession session = new SkillSession();
+        session.setId(42L);
+        session.setBusinessSessionDomain("im");
+        session.setBusinessSessionType("group");
+        session.setBusinessSessionId("grp-001");
+        session.setAssistantAccount("assist-001");
+        when(sessionService.findByIdSafe(42L)).thenReturn(session);
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.TEXT_DONE)
+                .content("Group reply")
+                .build());
+
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"welinkSessionId\":42,\"event\":{\"type\":\"message.part.updated\"}}");
+
+        verify(imOutboundService).sendTextToIm("group", "grp-001", "Group reply", "assist-001");
+        verify(persistenceService, never()).persistIfFinal(eq(42L), any(StreamMessage.class));
+    }
+
+    @Test
+    @DisplayName("IM question message stores pending interaction state")
+    void imQuestionMessageStoresPendingInteractionState() {
+        SkillSession session = new SkillSession();
+        session.setId(42L);
+        session.setBusinessSessionDomain("im");
+        session.setBusinessSessionType("direct");
+        session.setBusinessSessionId("dm-001");
+        session.setAssistantAccount("assist-001");
+        when(sessionService.findByIdSafe(42L)).thenReturn(session);
+        when(translator.translate(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.QUESTION)
+                .status("running")
+                .tool(StreamMessage.ToolInfo.builder()
+                        .toolName("question")
+                        .toolCallId("tool-call-1")
+                        .build())
+                .questionInfo(StreamMessage.QuestionInfo.builder()
+                        .header("Confirm")
+                        .question("Continue?")
+                        .options(java.util.List.of("yes", "no"))
+                        .build())
+                .build());
+
+        service.handleGatewayMessage(
+                "{\"type\":\"tool_event\",\"welinkSessionId\":42,\"event\":{\"type\":\"question.asked\"}}");
+
+        verify(interactionStateService).markQuestion(42L, "tool-call-1");
+        verify(imOutboundService).sendTextToIm(eq("direct"), eq("dm-001"), contains("Continue?"), eq("assist-001"));
     }
 
     @Test
@@ -210,6 +292,34 @@ class GatewayRelayServiceTest {
         JsonNode published = readPublishedMessage(payloadCaptor.getValue());
         assertEquals("permission.ask", published.path("message").path("type").asText());
         assertEquals(42L, published.path("message").path("welinkSessionId").asLong());
+    }
+
+    @Test
+    @DisplayName("IM permission request stores pending interaction state")
+    void imPermissionRequestStoresPendingInteractionState() {
+        SkillSession session = new SkillSession();
+        session.setId(42L);
+        session.setBusinessSessionDomain("im");
+        session.setBusinessSessionType("group");
+        session.setBusinessSessionId("grp-001");
+        session.setAssistantAccount("assist-001");
+        when(sessionService.findByIdSafe(42L)).thenReturn(session);
+        when(translator.translatePermissionFromGateway(any())).thenReturn(StreamMessage.builder()
+                .type(StreamMessage.Types.PERMISSION_ASK)
+                .title("Need approval")
+                .permission(StreamMessage.PermissionInfo.builder().permissionId("perm-1").build())
+                .build());
+
+        service.handleGatewayMessage(
+                "{\"type\":\"permission_request\",\"welinkSessionId\":42,\"permissionId\":\"perm-1\"}");
+
+        verify(interactionStateService).markPermission(42L, "perm-1");
+        verify(imOutboundService).sendTextToIm(
+                eq("group"),
+                eq("grp-001"),
+                contains("once / always / reject"),
+                eq("assist-001"));
+        verify(redisMessageBroker, never()).publishToUser(any(), any());
     }
 
     @Test

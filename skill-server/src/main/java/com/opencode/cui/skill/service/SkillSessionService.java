@@ -35,19 +35,63 @@ public class SkillSessionService {
      */
     @Transactional
     public SkillSession createSession(String userId, String ak,
-            String title, String imGroupId) {
+            String title,
+            String businessDomain,
+            String sessionType,
+            String sessionId,
+            String assistantAccount) {
         SkillSession session = SkillSession.builder()
                 .id(snowflakeIdGenerator.nextId())
                 .userId(userId)
                 .ak(ak)
                 .title(title)
-                .imGroupId(imGroupId)
+                .businessSessionDomain(
+                        businessDomain != null && !businessDomain.isBlank()
+                                ? businessDomain
+                                : SkillSession.DOMAIN_MINIAPP)
+                .businessSessionType(sessionType)
+                .businessSessionId(sessionId)
+                .assistantAccount(assistantAccount)
                 .status(SkillSession.Status.ACTIVE)
                 .build();
 
         sessionRepository.insert(session);
-        log.info("Created skill session: id={}, userId={}, ak={}", session.getId(), userId, ak);
+        log.info("Created skill session: id={}, userId={}, ak={}, domain={}, bizSessionId={}",
+                session.getId(), userId, ak, session.getBusinessSessionDomain(), session.getBusinessSessionId());
         return session;
+    }
+
+    @Transactional(readOnly = true)
+    public SkillSession findByIdSafe(Long sessionId) {
+        if (sessionId == null) {
+            return null;
+        }
+        return sessionRepository.findById(sessionId);
+    }
+
+    @Transactional(readOnly = true)
+    public SkillSession findByBusinessSession(String businessDomain, String sessionType, String sessionId, String ak) {
+        if (businessDomain == null || businessDomain.isBlank()
+                || sessionType == null || sessionType.isBlank()
+                || sessionId == null || sessionId.isBlank()
+                || ak == null || ak.isBlank()) {
+            return null;
+        }
+        return sessionRepository.findByBusinessSession(businessDomain, sessionType, sessionId, ak);
+    }
+
+    @Transactional
+    public SkillSession createSessionSafely(String userId, String ak,
+            String title,
+            String businessDomain,
+            String sessionType,
+            String sessionId,
+            String assistantAccount) {
+        SkillSession existing = findByBusinessSession(businessDomain, sessionType, sessionId, ak);
+        if (existing != null) {
+            return existing;
+        }
+        return createSession(userId, ak, title, businessDomain, sessionType, sessionId, assistantAccount);
     }
 
     /**
@@ -80,7 +124,7 @@ public class SkillSessionService {
      */
     @Transactional(readOnly = true)
     public SkillSession getSession(Long sessionId) {
-        SkillSession session = sessionRepository.findById(sessionId);
+        SkillSession session = findByIdSafe(sessionId);
         if (session == null) {
             throw new IllegalArgumentException("Session not found: " + sessionId);
         }

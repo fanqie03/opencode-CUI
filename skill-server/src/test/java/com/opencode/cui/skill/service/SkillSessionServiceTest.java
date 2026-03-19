@@ -37,10 +37,12 @@ class SkillSessionServiceTest {
     @Test
     @DisplayName("createSession inserts and returns session")
     void createSessionInsertsAndReturns() {
-        SkillSession result = service.createSession("1", "ak-3", "Test", "chat-1");
+        SkillSession result = service.createSession("1", "ak-3", "Test", "miniapp", null, "chat-1", null);
         assertNotNull(result);
         assertEquals(42L, result.getId());
         assertEquals(SkillSession.Status.ACTIVE, result.getStatus());
+        assertEquals("miniapp", result.getBusinessSessionDomain());
+        assertEquals("chat-1", result.getBusinessSessionId());
         verify(sessionRepository).insert(any(SkillSession.class));
     }
 
@@ -127,5 +129,18 @@ class SkillSessionServiceTest {
         PageResult<SkillSession> result = service.listSessions(
                 new SessionListQuery("1", null, null, "ACTIVE", 0, 10));
         assertNotNull(result);
+    }
+
+    @Test
+    @DisplayName("findByBusinessSession delegates to repository")
+    void findByBusinessSessionDelegates() {
+        SkillSession session = new SkillSession();
+        session.setId(55L);
+        when(sessionRepository.findByBusinessSession("im", "group", "chat-1", "ak-1")).thenReturn(session);
+
+        SkillSession result = service.findByBusinessSession("im", "group", "chat-1", "ak-1");
+
+        assertNotNull(result);
+        assertEquals(55L, result.getId());
     }
 }

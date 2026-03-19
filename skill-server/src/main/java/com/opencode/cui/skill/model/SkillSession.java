@@ -15,6 +15,11 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class SkillSession {
 
+    public static final String DOMAIN_MINIAPP = "miniapp";
+    public static final String DOMAIN_IM = "im";
+    public static final String SESSION_TYPE_GROUP = "group";
+    public static final String SESSION_TYPE_DIRECT = "direct";
+
     @JsonProperty("welinkSessionId")
     @JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     private Long id;
@@ -26,7 +31,11 @@ public class SkillSession {
     @Builder.Default
     private Status status = Status.ACTIVE;
 
-    private String imGroupId;
+    @Builder.Default
+    private String businessSessionDomain = DOMAIN_MINIAPP;
+    private String businessSessionType;
+    private String businessSessionId;
+    private String assistantAccount;
     private LocalDateTime createdAt;
     @JsonProperty("updatedAt")
     private LocalDateTime lastActiveAt;
@@ -40,5 +49,21 @@ public class SkillSession {
      */
     public void touch() {
         this.lastActiveAt = LocalDateTime.now();
+    }
+
+    public boolean isMiniappDomain() {
+        return DOMAIN_MINIAPP.equalsIgnoreCase(businessSessionDomain);
+    }
+
+    public boolean isImDomain() {
+        return DOMAIN_IM.equalsIgnoreCase(businessSessionDomain);
+    }
+
+    public boolean isImGroupSession() {
+        return isImDomain() && SESSION_TYPE_GROUP.equalsIgnoreCase(businessSessionType);
+    }
+
+    public boolean isImDirectSession() {
+        return isImDomain() && SESSION_TYPE_DIRECT.equalsIgnoreCase(businessSessionType);
     }
 }

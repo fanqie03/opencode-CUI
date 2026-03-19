@@ -59,11 +59,24 @@ skill:
   im:
     # IM platform API base URL for sending messages
     api-url: ${IM_API_URL:http://localhost:8080/api/im}
+    token: ${IM_TOKEN:}
+    inbound-token: ${IM_INBOUND_TOKEN:}
+    reply-state-ttl-minutes: 30
+  assistant:
+    resolve-url: ${ASSISTANT_RESOLVE_URL:http://localhost:8080/assistant-api/integration/v4-1/we-crew/instance/query}
+    resolve-token: ${ASSISTANT_RESOLVE_TOKEN:}
+    cache-ttl-minutes: 30
+  context:
+    injection-enabled: ${SKILL_CONTEXT_INJECTION_ENABLED:true}
+    templates:
+      group-chat: ${SKILL_CONTEXT_GROUP_CHAT_TEMPLATE:classpath:templates/group-chat-prompt.txt}
+    max-history-messages: ${SKILL_CONTEXT_MAX_HISTORY_MESSAGES:20}
   session:
     # Idle timeout in minutes before a session is marked IDLE
     idle-timeout-minutes: 30
     # Cleanup interval in minutes for scheduled IDLE session cleanup
     cleanup-interval-minutes: 10
+    auto-create-timeout-seconds: ${SKILL_SESSION_AUTO_CREATE_TIMEOUT_SECONDS:30}
 
 opencode:
   logging:

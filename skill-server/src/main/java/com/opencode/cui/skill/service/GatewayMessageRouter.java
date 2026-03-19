@@ -15,17 +15,18 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Iterator;
+import java.util.Set;
 
-/**
- * Routes upstream messages from AI-Gateway to their respective handlers.
- *
- * Extracted from GatewayRelayService to separate concerns:
- * - GatewayRelayService: downstream (Skill → Gateway) + dispatch coordination
- * - GatewayMessageRouter: upstream (Gateway → Skill) message handling logic
- */
 @Slf4j
 @Component
 public class GatewayMessageRouter {
+
+    private static final String CONTEXT_RESET_MESSAGE = "对话上下文已超出限制，已自动重置，请稍后重试。";
+    private static final Set<String> EMITTED_AT_EXCLUDED_TYPES = Set.of(
+            StreamMessage.Types.PERMISSION_REPLY,
+            StreamMessage.Types.AGENT_ONLINE,
+            StreamMessage.Types.AGENT_OFFLINE,
+            StreamMessage.Types.ERROR);
 
     private final ObjectMapper objectMapper;
     private final SkillMessageService messageService;
@@ -35,25 +36,13 @@ public class GatewayMessageRouter {
     private final MessagePersistenceService persistenceService;
     private final StreamBufferService bufferService;
     private final SessionRebuildService rebuildService;
-
-    /**
-     * 记录已完成（tool_done）的 sessionId，用于抑制 tool_done 后到达的乱序 tool_event。
-     * TTL 5 秒后自动过期，不影响同一 session 的后续正常对话。
-     */
+    private final ImInteractionStateService interactionStateService;
+    private final ImOutboundService imOutboundService;
     private final Cache<String, Instant> completedSessions = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofSeconds(5))
             .maximumSize(1_000)
             .build();
 
-    private static final java.util.Set<String> EMITTED_AT_EXCLUDED_TYPES = java.util.Set.of(
-            StreamMessage.Types.PERMISSION_REPLY,
-            StreamMessage.Types.AGENT_ONLINE,
-            StreamMessage.Types.AGENT_OFFLINE,
-            StreamMessage.Types.ERROR);
-
-    /**
-     * 下行发送委托：由 GatewayRelayService 提供实现。
-     */
     public interface DownstreamSender {
         void sendInvokeToGateway(InvokeCommand command);
     }
@@ -67,7 +56,9 @@ public class GatewayMessageRouter {
             OpenCodeEventTranslator translator,
             MessagePersistenceService persistenceService,
             StreamBufferService bufferService,
-            SessionRebuildService rebuildService) {
+            SessionRebuildService rebuildService,
+            ImInteractionStateService interactionStateService,
+            ImOutboundService imOutboundService) {
         this.objectMapper = objectMapper;
         this.messageService = messageService;
         this.sessionService = sessionService;
@@ -76,26 +67,20 @@ public class GatewayMessageRouter {
         this.persistenceService = persistenceService;
         this.bufferService = bufferService;
         this.rebuildService = rebuildService;
+        this.interactionStateService = interactionStateService;
+        this.imOutboundService = imOutboundService;
     }
 
     public void setDownstreamSender(DownstreamSender sender) {
         this.downstreamSender = sender;
     }
 
-    /**
-     * 新对话开始时清除已完成标记，防止新一轮对话的 tool_event 被误拦截。
-     */
     public void clearCompletionMark(String sessionId) {
         if (sessionId != null) {
             completedSessions.invalidate(sessionId);
         }
     }
 
-    // ==================== Dispatch ====================
-
-    /**
-     * Route a parsed gateway message to the appropriate handler.
-     */
     public void route(String type, String ak, String userId, JsonNode node) {
         String sessionId = requiresSessionAffinity(type) ? resolveSessionId(type, node) : null;
 
@@ -114,30 +99,20 @@ public class GatewayMessageRouter {
         }
     }
 
-    // ==================== Message Handlers ====================
-
     private void handleToolEvent(String sessionId, String userId, JsonNode node) {
         if (sessionId == null) {
             log.warn("tool_event missing sessionId, agentId={}, raw keys={}",
                     node.path("agentId").asText(null), node.fieldNames());
             return;
         }
-        activateIdleSession(sessionId, userId);
 
+        activateIdleSession(sessionId, userId);
+        SkillSession session = resolveSession(sessionId);
         StreamMessage msg = translateEvent(node, sessionId);
         if (msg == null) {
             return;
         }
 
-        // Suppress stale assistant-side events that arrive after tool_done,
-        // but NEVER suppress:
-        // - QUESTION events (the completed/error update for a question often
-        //   arrives after tool_done due to event ordering)
-        // - PERMISSION events (permission resolved updates can also arrive after
-        //   tool_done)
-        // - USER messages (OpenCode may emit the user's text echo slightly
-        //   after tool_done; dropping it would make the message disappear from
-        //   ws and history)
         if (completedSessions.getIfPresent(sessionId) != null
                 && !StreamMessage.Types.QUESTION.equals(msg.getType())
                 && !StreamMessage.Types.PERMISSION_ASK.equals(msg.getType())
@@ -148,20 +123,25 @@ public class GatewayMessageRouter {
             return;
         }
 
-        if ("user".equals(msg.getRole())) {
-            handleUserToolEvent(sessionId, userId, msg);
+        if (isContextOverflowEvent(node.get("event")) && session != null && !isMiniappSession(session)) {
+            handleContextOverflow(sessionId, userId, session);
+            return;
+        }
+
+        if ("user".equals(ProtocolUtils.normalizeRole(msg.getRole()))) {
+            handleUserToolEvent(sessionId, userId, msg, session);
         } else {
-            handleAssistantToolEvent(sessionId, userId, msg);
+            handleAssistantToolEvent(sessionId, userId, msg, session);
         }
     }
 
     private void activateIdleSession(String sessionId, String userId) {
         Long numericId = ProtocolUtils.parseSessionId(sessionId);
-        if (numericId != null) {
-            boolean activated = sessionService.activateSession(numericId);
-            if (activated) {
-                broadcastStreamMessage(sessionId, userId, StreamMessage.sessionStatus("busy"));
-            }
+        if (numericId == null) {
+            return;
+        }
+        if (sessionService.activateSession(numericId)) {
+            broadcastStreamMessage(sessionId, userId, StreamMessage.sessionStatus("busy"));
         }
     }
 
@@ -174,65 +154,69 @@ public class GatewayMessageRouter {
         return msg;
     }
 
-    private void handleUserToolEvent(String sessionId, String userId, StreamMessage msg) {
+    private void handleUserToolEvent(String sessionId, String userId, StreamMessage msg, SkillSession session) {
         if (!StreamMessage.Types.TEXT_DONE.equals(msg.getType())) {
-            log.debug("Skipping non-text user event for session {}: type={}", sessionId, msg.getType());
             return;
         }
         String content = msg.getContent() != null ? msg.getContent() : "";
         if (content.isBlank()) {
-            log.debug("Skipping blank user TEXT_DONE for session {}", sessionId);
             return;
         }
+
         Long numericSessionId = ProtocolUtils.parseSessionId(sessionId);
         if (numericSessionId == null) {
             log.warn("Cannot process user message: invalid sessionId={}", sessionId);
             return;
         }
+
+        if (session != null && !isMiniappSession(session)) {
+            persistenceService.consumePendingUserMessage(numericSessionId);
+            return;
+        }
+
         try {
             if (persistenceService.consumePendingUserMessage(numericSessionId)) {
                 log.debug("Skipping miniapp user message echo for session {}", sessionId);
                 return;
             }
             messageService.saveUserMessage(numericSessionId, content);
-            log.info("Persisted user message from opencode CLI: sessionId={}, len={}",
-                    sessionId, content.length());
         } catch (Exception e) {
-            log.error("Failed to persist CLI user message for session {}: {}",
-                    sessionId, e.getMessage(), e);
+            log.error("Failed to persist user tool event for session {}: {}", sessionId, e.getMessage(), e);
         }
         broadcastStreamMessage(sessionId, userId, msg);
     }
 
-    private void handleAssistantToolEvent(String sessionId, String userId, StreamMessage msg) {
+    private void handleAssistantToolEvent(String sessionId, String userId, StreamMessage msg, SkillSession session) {
         Long numericId = ProtocolUtils.parseSessionId(sessionId);
         StreamMessage permissionReply = numericId != null
                 ? persistenceService.synthesizePermissionReplyFromToolOutcome(numericId, msg)
                 : null;
+
         if (permissionReply != null) {
-            broadcastStreamMessage(sessionId, userId, permissionReply);
-            bufferService.accumulate(sessionId, permissionReply);
-            try {
-                persistenceService.persistIfFinal(numericId, permissionReply);
-                if (completedSessions.getIfPresent(sessionId) != null) {
-                    persistenceService.finalizeActiveAssistantTurn(numericId);
-                }
-            } catch (Exception e) {
-                log.error("Failed to persist synthesized permission reply for session {}: {}",
-                        sessionId, e.getMessage(), e);
-            }
+            routeAssistantMessage(sessionId, userId, permissionReply, session, numericId);
             String response = permissionReply.getPermission() != null
                     ? permissionReply.getPermission().getResponse()
                     : null;
-            log.info("Synthesized permission.reply from tool outcome: sessionId={}, permissionId={}, response={}",
-                    sessionId,
-                    permissionReply.getPermission() != null
-                            ? permissionReply.getPermission().getPermissionId()
-                            : null,
-                    response);
+            if (numericId != null && completedSessions.getIfPresent(sessionId) != null) {
+                try {
+                    persistenceService.finalizeActiveAssistantTurn(numericId);
+                } catch (Exception e) {
+                    log.warn("Cannot finalize synthesized permission reply for session {}", sessionId);
+                }
+            }
             if ("reject".equals(response)) {
                 return;
             }
+        }
+
+        routeAssistantMessage(sessionId, userId, msg, session, numericId);
+    }
+
+    private void routeAssistantMessage(String sessionId, String userId, StreamMessage msg,
+            SkillSession session, Long numericId) {
+        if (session != null && !isMiniappSession(session)) {
+            handleImAssistantMessage(session, msg, numericId);
+            return;
         }
 
         broadcastStreamMessage(sessionId, userId, msg);
@@ -246,6 +230,26 @@ public class GatewayMessageRouter {
         }
     }
 
+    private void handleImAssistantMessage(SkillSession session, StreamMessage msg, Long numericId) {
+        syncPendingImInteraction(session, msg);
+        String outboundText = buildImText(msg);
+        if (outboundText != null && !outboundText.isBlank()) {
+            imOutboundService.sendTextToIm(
+                    session.getBusinessSessionType(),
+                    session.getBusinessSessionId(),
+                    outboundText,
+                    session.getAssistantAccount());
+        }
+
+        if (session.isImDirectSession() && numericId != null) {
+            try {
+                persistenceService.persistIfFinal(numericId, msg);
+            } catch (Exception e) {
+                log.error("Failed to persist IM direct message for session {}: {}", session.getId(), e.getMessage());
+            }
+        }
+    }
+
     private void handleToolDone(String sessionId, String userId, JsonNode node) {
         if (sessionId == null) {
             log.warn("tool_done missing sessionId, agentId={}", node.path("agentId").asText(null));
@@ -255,32 +259,42 @@ public class GatewayMessageRouter {
         completedSessions.put(sessionId, Instant.now());
 
         StreamMessage msg = StreamMessage.sessionStatus("idle");
-        broadcastStreamMessage(sessionId, userId, msg);
-        bufferService.accumulate(sessionId, msg);
-
+        SkillSession session = resolveSession(sessionId);
         Long numericId = ProtocolUtils.parseSessionId(sessionId);
-        if (numericId != null) {
+
+        if (isMiniappSession(session)) {
+            broadcastStreamMessage(sessionId, userId, msg);
+            bufferService.accumulate(sessionId, msg);
+        }
+
+        if (numericId != null && (isMiniappSession(session) || (session != null && session.isImDirectSession()))) {
             try {
                 persistenceService.persistIfFinal(numericId, msg);
             } catch (Exception e) {
                 log.error("Failed to persist tool_done for session {}: {}", sessionId, e.getMessage(), e);
             }
         }
-
-        log.info("Tool done for session {}", sessionId);
     }
 
     private void handleToolError(String sessionId, String userId, JsonNode node) {
         String error = node.path("error").asText("Unknown error");
         String reason = node.path("reason").asText("");
 
-        if (sessionId != null) {
-            if ("session_not_found".equals(reason) || isSessionInvalidError(error)) {
-                rebuildService.handleSessionNotFound(sessionId, userId, rebuildCallback());
-                return;
-            }
+        if (sessionId == null) {
+            log.error("Tool error without session: {}", error);
+            return;
+        }
 
-            Long numericId = ProtocolUtils.parseSessionId(sessionId);
+        if ("session_not_found".equals(reason) || isSessionInvalidError(error)) {
+            clearPendingImInteractionState(sessionId);
+            rebuildService.handleSessionNotFound(sessionId, userId, rebuildCallback());
+            return;
+        }
+
+        SkillSession session = resolveSession(sessionId);
+        Long numericId = ProtocolUtils.parseSessionId(sessionId);
+
+        if (isMiniappSession(session)) {
             if (numericId != null) {
                 try {
                     messageService.saveSystemMessage(numericId, "Error: " + error);
@@ -288,17 +302,30 @@ public class GatewayMessageRouter {
                     log.error("Failed to persist tool_error for session {}: {}", sessionId, e.getMessage());
                 }
             }
-            StreamMessage msg = StreamMessage.builder()
+            broadcastStreamMessage(sessionId, userId, StreamMessage.builder()
                     .type(StreamMessage.Types.ERROR)
                     .error(error)
-                    .build();
-            broadcastStreamMessage(sessionId, userId, msg);
-            if (numericId != null) {
+                    .build());
+        } else if (session != null) {
+            imOutboundService.sendTextToIm(
+                    session.getBusinessSessionType(),
+                    session.getBusinessSessionId(),
+                    "Error: " + error,
+                    session.getAssistantAccount());
+            if (session.isImDirectSession() && numericId != null) {
                 try {
-                    persistenceService.finalizeActiveAssistantTurn(numericId);
+                    messageService.saveSystemMessage(numericId, "Error: " + error);
                 } catch (Exception e) {
-                    log.warn("Cannot finalize active message after tool_error: sessionId={}", sessionId);
+                    log.error("Failed to persist IM tool_error for session {}: {}", sessionId, e.getMessage());
                 }
+            }
+        }
+
+        if (numericId != null) {
+            try {
+                persistenceService.finalizeActiveAssistantTurn(numericId);
+            } catch (Exception e) {
+                log.warn("Cannot finalize active message after tool_error: sessionId={}", sessionId);
             }
         }
 
@@ -310,25 +337,27 @@ public class GatewayMessageRouter {
         String toolVersion = node.path("toolVersion").asText("UNKNOWN");
         log.info("Agent online: ak={}, toolType={}, toolVersion={}", ak, toolType, toolVersion);
 
-        if (ak != null) {
-            StreamMessage msg = StreamMessage.agentOnline();
-            sessionService.findByAk(ak).forEach(
-                    session -> broadcastStreamMessage(session.getId().toString(),
-                            userId != null && !userId.isBlank() ? userId : session.getUserId(),
-                            msg));
+        if (ak == null) {
+            return;
         }
+        StreamMessage msg = StreamMessage.agentOnline();
+        sessionService.findByAk(ak).forEach(session -> broadcastStreamMessage(
+                session.getId().toString(),
+                userId != null && !userId.isBlank() ? userId : session.getUserId(),
+                msg));
     }
 
     private void handleAgentOffline(String ak, String userId) {
         log.warn("Agent offline: ak={}", ak);
 
-        if (ak != null) {
-            StreamMessage msg = StreamMessage.agentOffline();
-            sessionService.findByAk(ak).forEach(
-                    session -> broadcastStreamMessage(session.getId().toString(),
-                            userId != null && !userId.isBlank() ? userId : session.getUserId(),
-                            msg));
+        if (ak == null) {
+            return;
         }
+        StreamMessage msg = StreamMessage.agentOffline();
+        sessionService.findByAk(ak).forEach(session -> broadcastStreamMessage(
+                session.getId().toString(),
+                userId != null && !userId.isBlank() ? userId : session.getUserId(),
+                msg));
     }
 
     private void handleSessionCreated(String ak, String userId, JsonNode node) {
@@ -337,7 +366,7 @@ public class GatewayMessageRouter {
 
         if (sessionId == null || toolSessionId == null) {
             log.warn("session_created missing fields: sessionId={}, toolSessionId={}, ak={}, raw={}",
-                    sessionId, toolSessionId, ak, node.toString());
+                    sessionId, toolSessionId, ak, node);
             return;
         }
 
@@ -348,8 +377,6 @@ public class GatewayMessageRouter {
                 return;
             }
             sessionService.updateToolSessionId(numericId, toolSessionId);
-            log.info("Tool session created: sessionId={}, toolSessionId={}", sessionId, toolSessionId);
-
             retryPendingMessage(sessionId, ak, userId, toolSessionId);
         } catch (Exception e) {
             log.error("Failed to update tool session ID: sessionId={}, error={}", sessionId, e.getMessage());
@@ -362,8 +389,6 @@ public class GatewayMessageRouter {
         if (pendingText == null) {
             return;
         }
-        log.info("Retrying pending message after rebuild: sessionId={}, text='{}'",
-                sessionId, pendingText.substring(0, Math.min(50, pendingText.length())));
 
         ObjectNode chatPayload = objectMapper.createObjectNode();
         chatPayload.put("text", pendingText);
@@ -379,7 +404,6 @@ public class GatewayMessageRouter {
         if (sender != null) {
             sender.sendInvokeToGateway(new InvokeCommand(ak, userId, sessionId, GatewayActions.CHAT, payloadStr));
         }
-        log.info("Pending message re-sent after rebuild: sessionId={}", sessionId);
         broadcastStreamMessage(sessionId, userId, StreamMessage.sessionStatus("busy"));
     }
 
@@ -390,17 +414,27 @@ public class GatewayMessageRouter {
         }
 
         StreamMessage msg = translator.translatePermissionFromGateway(node);
-        broadcastStreamMessage(sessionId, userId, msg);
+        SkillSession session = resolveSession(sessionId);
+        if (session != null && !isMiniappSession(session)) {
+            if (session.getId() != null && msg.getPermission() != null) {
+                interactionStateService.markPermission(
+                        session.getId(),
+                        msg.getPermission().getPermissionId());
+            }
+            String text = formatPermissionPrompt(msg);
+            if (text != null && !text.isBlank()) {
+                imOutboundService.sendTextToIm(
+                        session.getBusinessSessionType(),
+                        session.getBusinessSessionId(),
+                        text,
+                        session.getAssistantAccount());
+            }
+            return;
+        }
 
-        log.info("Permission request broadcast to session {}: permId={}",
-                sessionId, msg.getPermission() != null ? msg.getPermission().getPermissionId() : null);
+        broadcastStreamMessage(sessionId, userId, msg);
     }
 
-    // ==================== Broadcast ====================
-
-    /**
-     * Broadcast a StreamMessage via Redis pub/sub for multi-instance delivery.
-     */
     public void broadcastStreamMessage(String sessionId, String userIdHint, StreamMessage msg) {
         try {
             enrichStreamMessage(sessionId, msg);
@@ -410,29 +444,22 @@ public class GatewayMessageRouter {
                         sessionId, msg.getType());
                 return;
             }
+
             ObjectNode envelope = objectMapper.createObjectNode();
             envelope.put("sessionId", sessionId);
             envelope.put("userId", userId);
             envelope.set("message", objectMapper.valueToTree(msg));
-
-            String messageText = objectMapper.writeValueAsString(envelope);
-            redisMessageBroker.publishToUser(userId, messageText);
+            redisMessageBroker.publishToUser(userId, objectMapper.writeValueAsString(envelope));
         } catch (Exception e) {
             log.error("Failed to broadcast StreamMessage to session {}: type={}, error={}",
                     sessionId, msg.getType(), e.getMessage());
         }
     }
 
-    /**
-     * Publish a protocol message and buffer it (used by controllers for ad-hoc
-     * push).
-     */
     public void publishProtocolMessage(String sessionId, StreamMessage msg) {
         broadcastStreamMessage(sessionId, null, msg);
         bufferService.accumulate(sessionId, msg);
     }
-
-    // ==================== Internal Helpers ====================
 
     private String resolveSessionId(String messageType, JsonNode node) {
         String sessionId = node.path("welinkSessionId").asText(null);
@@ -445,13 +472,10 @@ public class GatewayMessageRouter {
             try {
                 SkillSession session = sessionService.findByToolSessionId(toolSessionId);
                 if (session != null) {
-                    log.debug("Resolved session affinity: type={}, toolSessionId={} -> welinkSessionId={}",
-                            messageType, toolSessionId, session.getId());
                     return session.getId().toString();
-                } else {
-                    log.warn("Dropping upstream message: type={}, toolSessionId={}, reason=session_not_found",
-                            messageType, toolSessionId);
                 }
+                log.warn("Dropping upstream message: type={}, toolSessionId={}, reason=session_not_found",
+                        messageType, toolSessionId);
             } catch (Exception e) {
                 log.error("Failed to resolve upstream session affinity: type={}, toolSessionId={}, reason={}",
                         messageType, toolSessionId, e.getMessage());
@@ -484,7 +508,8 @@ public class GatewayMessageRouter {
             if (numericId == null) {
                 return null;
             }
-            return sessionService.getSession(numericId).getUserId();
+            SkillSession session = sessionService.getSession(numericId);
+            return session.getUserId();
         } catch (Exception e) {
             log.warn("Failed to resolve userId for session {}: {}", sessionId, e.getMessage());
             return null;
@@ -507,8 +532,9 @@ public class GatewayMessageRouter {
     }
 
     private boolean isSessionInvalidError(String error) {
-        if (error == null)
+        if (error == null) {
             return false;
+        }
         String lower = error.toLowerCase();
         return lower.contains("not found")
                 || lower.contains("session_not_found")
@@ -518,6 +544,131 @@ public class GatewayMessageRouter {
 
     private boolean isEmittedAtExcluded(String type) {
         return type != null && EMITTED_AT_EXCLUDED_TYPES.contains(type);
+    }
+
+    private SkillSession resolveSession(String sessionId) {
+        Long numericId = ProtocolUtils.parseSessionId(sessionId);
+        return numericId != null ? sessionService.findByIdSafe(numericId) : null;
+    }
+
+    private boolean isMiniappSession(SkillSession session) {
+        return session == null || session.isMiniappDomain();
+    }
+
+    private boolean isContextOverflowEvent(JsonNode eventNode) {
+        if (eventNode == null || eventNode.isNull()) {
+            return false;
+        }
+        if (!"session.error".equals(eventNode.path("type").asText(""))) {
+            return false;
+        }
+        return "ContextOverflowError".equals(
+                eventNode.path("properties").path("error").path("name").asText(""));
+    }
+
+    private void handleContextOverflow(String sessionId, String userId, SkillSession session) {
+        clearPendingImInteractionState(sessionId);
+        rebuildService.handleContextOverflow(sessionId, userId, rebuildCallback());
+        imOutboundService.sendTextToIm(
+                session.getBusinessSessionType(),
+                session.getBusinessSessionId(),
+                CONTEXT_RESET_MESSAGE,
+                session.getAssistantAccount());
+        if (session.isImDirectSession()) {
+            Long numericId = ProtocolUtils.parseSessionId(sessionId);
+            if (numericId != null) {
+                try {
+                    messageService.saveSystemMessage(numericId, CONTEXT_RESET_MESSAGE);
+                } catch (Exception e) {
+                    log.warn("Failed to persist context reset message for session {}", sessionId);
+                }
+            }
+        }
+    }
+
+    private String buildImText(StreamMessage msg) {
+        if (msg == null) {
+            return null;
+        }
+        return switch (msg.getType()) {
+            case StreamMessage.Types.TEXT_DONE -> msg.getContent();
+            case StreamMessage.Types.ERROR, StreamMessage.Types.SESSION_ERROR -> msg.getError();
+            case StreamMessage.Types.PERMISSION_ASK ->
+                msg.getTitle() != null && !msg.getTitle().isBlank()
+                        ? "Permission required: " + msg.getTitle()
+                        : null;
+            case StreamMessage.Types.QUESTION -> formatQuestionMessage(msg);
+            default -> null;
+        };
+    }
+
+    private void syncPendingImInteraction(SkillSession session, StreamMessage msg) {
+        if (session == null || session.getId() == null || msg == null) {
+            return;
+        }
+
+        if (StreamMessage.Types.QUESTION.equals(msg.getType())) {
+            String toolCallId = msg.getTool() != null ? msg.getTool().getToolCallId() : null;
+            if (toolCallId == null || toolCallId.isBlank()) {
+                return;
+            }
+            if ("running".equals(msg.getStatus()) || "pending".equals(msg.getStatus())) {
+                interactionStateService.markQuestion(session.getId(), toolCallId);
+            } else {
+                interactionStateService.clearIfMatches(
+                        session.getId(),
+                        ImInteractionStateService.TYPE_QUESTION,
+                        toolCallId);
+            }
+            return;
+        }
+
+        if (StreamMessage.Types.PERMISSION_REPLY.equals(msg.getType())) {
+            String permissionId = msg.getPermission() != null ? msg.getPermission().getPermissionId() : null;
+            interactionStateService.clearIfMatches(
+                    session.getId(),
+                    ImInteractionStateService.TYPE_PERMISSION,
+                    permissionId);
+        }
+    }
+
+    private void clearPendingImInteractionState(String sessionId) {
+        Long numericId = ProtocolUtils.parseSessionId(sessionId);
+        if (numericId != null) {
+            interactionStateService.clear(numericId);
+        }
+    }
+
+    private String formatPermissionPrompt(StreamMessage msg) {
+        if (msg == null || msg.getTitle() == null || msg.getTitle().isBlank()) {
+            return null;
+        }
+        return msg.getTitle() + "\n请回复: once / always / reject";
+    }
+
+    private String formatQuestionMessage(StreamMessage msg) {
+        if (msg.getQuestionInfo() == null) {
+            return null;
+        }
+        String status = msg.getStatus();
+        if (status != null && !"running".equals(status) && !"pending".equals(status)) {
+            return null;
+        }
+
+        StringBuilder text = new StringBuilder();
+        if (msg.getQuestionInfo().getHeader() != null && !msg.getQuestionInfo().getHeader().isBlank()) {
+            text.append(msg.getQuestionInfo().getHeader()).append('\n');
+        }
+        if (msg.getQuestionInfo().getQuestion() != null && !msg.getQuestionInfo().getQuestion().isBlank()) {
+            text.append(msg.getQuestionInfo().getQuestion());
+        }
+        if (msg.getQuestionInfo().getOptions() != null && !msg.getQuestionInfo().getOptions().isEmpty()) {
+            if (text.length() > 0) {
+                text.append('\n');
+            }
+            text.append("选项: ").append(String.join(" / ", msg.getQuestionInfo().getOptions()));
+        }
+        return text.toString();
     }
 
     private String fieldNames(JsonNode node) {
@@ -532,7 +683,6 @@ public class GatewayMessageRouter {
         return names.toString();
     }
 
-    /** 缓存单例，避免每次 tool_error 都创建新的匿名类实例。 */
     private final SessionRebuildService.RebuildCallback rebuildCallback = new SessionRebuildService.RebuildCallback() {
         @Override
         public void broadcast(String sessionId, String userId, StreamMessage msg) {
