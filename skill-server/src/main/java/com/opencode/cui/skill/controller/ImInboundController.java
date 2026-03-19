@@ -2,6 +2,7 @@ package com.opencode.cui.skill.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.ApiResponse;
+import com.opencode.cui.skill.model.AssistantResolveResult;
 import com.opencode.cui.skill.model.ImMessageRequest;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
@@ -58,10 +59,12 @@ public class ImInboundController {
             return ResponseEntity.badRequest().body(ApiResponse.error(400, validationError));
         }
 
-        String ak = resolverService.resolveAk(request.assistantAccount());
-        if (ak == null || ak.isBlank()) {
+        AssistantResolveResult resolveResult = resolverService.resolve(request.assistantAccount());
+        if (resolveResult == null) {
             return ResponseEntity.ok(ApiResponse.error(404, "Invalid assistant account"));
         }
+        String ak = resolveResult.ak();
+        String ownerWelinkId = resolveResult.ownerWelinkId();
 
         String prompt = contextInjectionService.resolvePrompt(
                 request.sessionType(),
@@ -80,6 +83,7 @@ public class ImInboundController {
                     request.sessionType(),
                     request.sessionId(),
                     ak,
+                    ownerWelinkId,
                     request.assistantAccount(),
                     prompt);
             return ResponseEntity.ok(ApiResponse.ok(null));
@@ -101,7 +105,7 @@ public class ImInboundController {
         payloadFields.put("toolSessionId", session.getToolSessionId());
         gatewayRelayService.sendInvokeToGateway(new InvokeCommand(
                 session.getAk(),
-                session.getUserId(),
+                ownerWelinkId,
                 String.valueOf(session.getId()),
                 GatewayActions.CHAT,
                 PayloadBuilder.buildPayload(objectMapper, payloadFields)));

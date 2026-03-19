@@ -1,6 +1,7 @@
 package com.opencode.cui.skill.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.AssistantResolveResult;
 import com.opencode.cui.skill.model.ImMessageRequest;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
@@ -60,12 +61,12 @@ class ImInboundControllerTest {
         }
 
         @Test
-        @DisplayName("direct message persists user input and sends gateway invoke")
+        @DisplayName("direct message persists user input and sends gateway invoke with ownerWelinkId")
         void directMessagePersistsAndInvokes() {
                 SkillSession session = new SkillSession();
                 session.setId(101L);
                 session.setAk("ak-001");
-                session.setUserId("assist-001");
+                session.setUserId("owner-welink-001");
                 session.setBusinessSessionDomain("im");
                 session.setBusinessSessionType("direct");
                 session.setToolSessionId("tool-001");
@@ -80,7 +81,8 @@ class ImInboundControllerTest {
                                 null,
                                 null);
 
-                when(resolverService.resolveAk("assist-001")).thenReturn("ak-001");
+                when(resolverService.resolve("assist-001"))
+                                .thenReturn(new AssistantResolveResult("ak-001", "owner-welink-001"));
                 when(sessionManager.findSession("im", "direct", "dm-001", "ak-001"))
                                 .thenReturn(session);
                 when(contextInjectionService.resolvePrompt("direct", "hello", null)).thenReturn("hello");
@@ -94,6 +96,7 @@ class ImInboundControllerTest {
                 ArgumentCaptor<InvokeCommand> captor = ArgumentCaptor.forClass(InvokeCommand.class);
                 verify(gatewayRelayService).sendInvokeToGateway(captor.capture());
                 assertEquals("ak-001", captor.getValue().ak());
+                assertEquals("owner-welink-001", captor.getValue().userId());
                 assertEquals("chat", captor.getValue().action());
                 assertTrue(captor.getValue().payload().contains("tool-001"));
         }
@@ -104,7 +107,7 @@ class ImInboundControllerTest {
                 SkillSession session = new SkillSession();
                 session.setId(102L);
                 session.setAk("ak-001");
-                session.setUserId("assist-001");
+                session.setUserId("owner-welink-001");
                 session.setBusinessSessionDomain("im");
                 session.setBusinessSessionType("group");
                 session.setToolSessionId("tool-002");
@@ -119,7 +122,8 @@ class ImInboundControllerTest {
                                 null,
                                 List.of(new ImMessageRequest.ChatMessage("user-1", "Alice", "history", 1710000000L)));
 
-                when(resolverService.resolveAk("assist-001")).thenReturn("ak-001");
+                when(resolverService.resolve("assist-001"))
+                                .thenReturn(new AssistantResolveResult("ak-001", "owner-welink-001"));
                 when(sessionManager.findSession("im", "group", "grp-001", "ak-001"))
                                 .thenReturn(session);
                 when(contextInjectionService.resolvePrompt(eq("group"), eq("summarize this"), any()))
@@ -134,7 +138,7 @@ class ImInboundControllerTest {
         }
 
         @Test
-        @DisplayName("no session triggers async creation and returns OK immediately")
+        @DisplayName("no session triggers async creation with ownerWelinkId and returns OK immediately")
         void noSessionTriggersAsyncCreation() {
                 ImMessageRequest request = new ImMessageRequest(
                                 "im",
@@ -146,7 +150,8 @@ class ImInboundControllerTest {
                                 null,
                                 null);
 
-                when(resolverService.resolveAk("assist-001")).thenReturn("ak-001");
+                when(resolverService.resolve("assist-001"))
+                                .thenReturn(new AssistantResolveResult("ak-001", "owner-welink-001"));
                 when(sessionManager.findSession("im", "direct", "dm-new", "ak-001"))
                                 .thenReturn(null);
                 when(contextInjectionService.resolvePrompt("direct", "first message", null))
@@ -156,7 +161,8 @@ class ImInboundControllerTest {
 
                 assertEquals(HttpStatus.OK, response.getStatusCode());
                 verify(sessionManager).createSessionAsync(
-                                "im", "direct", "dm-new", "ak-001", "assist-001", "first message");
+                                "im", "direct", "dm-new", "ak-001",
+                                "owner-welink-001", "assist-001", "first message");
                 verify(gatewayRelayService, never()).sendInvokeToGateway(any());
         }
 
@@ -166,7 +172,7 @@ class ImInboundControllerTest {
                 SkillSession session = new SkillSession();
                 session.setId(105L);
                 session.setAk("ak-001");
-                session.setUserId("assist-001");
+                session.setUserId("owner-welink-001");
                 session.setBusinessSessionDomain("im");
                 session.setBusinessSessionType("direct");
                 session.setToolSessionId(null);
@@ -181,7 +187,8 @@ class ImInboundControllerTest {
                                 null,
                                 null);
 
-                when(resolverService.resolveAk("assist-001")).thenReturn("ak-001");
+                when(resolverService.resolve("assist-001"))
+                                .thenReturn(new AssistantResolveResult("ak-001", "owner-welink-001"));
                 when(sessionManager.findSession("im", "direct", "dm-005", "ak-001"))
                                 .thenReturn(session);
                 when(contextInjectionService.resolvePrompt("direct", "waiting message", null))

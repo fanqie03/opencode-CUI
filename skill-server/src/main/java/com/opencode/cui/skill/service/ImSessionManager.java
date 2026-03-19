@@ -60,8 +60,8 @@ public class ImSessionManager {
      * {@link GatewayMessageRouter#retryPendingMessage}.
      */
     public void createSessionAsync(String businessDomain, String sessionType,
-            String sessionId, String ak, String assistantAccount,
-            String pendingMessage) {
+            String sessionId, String ak, String ownerWelinkId,
+            String assistantAccount, String pendingMessage) {
         String lockKey = buildCreateLockKey(businessDomain, sessionType, sessionId, ak);
         String lockValue = UUID.randomUUID().toString();
         boolean locked = false;
@@ -83,7 +83,7 @@ public class ImSessionManager {
             }
 
             SkillSession created = sessionService.createSession(
-                    assistantAccount,
+                    ownerWelinkId,
                     ak,
                     buildTitle(businessDomain, sessionType, sessionId),
                     businessDomain,
@@ -113,7 +113,7 @@ public class ImSessionManager {
      * Blocks until toolSessionId is available.
      */
     public SkillSession findOrCreateSession(String businessDomain, String sessionType,
-            String sessionId, String ak, String assistantAccount) {
+            String sessionId, String ak, String ownerWelinkId, String assistantAccount) {
         SkillSession existing = sessionService.findByBusinessSession(businessDomain, sessionType, sessionId, ak);
         if (existing != null) {
             sessionService.touchSession(existing.getId());
@@ -138,7 +138,7 @@ public class ImSessionManager {
                     }
 
                     SkillSession created = sessionService.createSession(
-                            assistantAccount,
+                            ownerWelinkId,
                             ak,
                             buildTitle(businessDomain, sessionType, sessionId),
                             businessDomain,
