@@ -1,29 +1,29 @@
-# External Integrations
+# 外部集成地图
 
-## Overview
+## 概览
 
-The system integrates several internal and external boundaries to move messages between an OpenCode runtime, a gateway, a skill backend, and user-facing chat surfaces.
+系统通过多个内部与外部边界协作，把消息从本地 OpenCode 运行时传到网关、Skill 后端以及用户界面。
 
-## Internal Service Boundaries
+## 内部服务边界
 
 ### AI Gateway
 
-Relevant files:
+关键文件：
 - `ai-gateway/src/main/java/com/opencode/cui/gateway/ws/AgentWebSocketHandler.java`
 - `ai-gateway/src/main/java/com/opencode/cui/gateway/ws/SkillWebSocketHandler.java`
 - `ai-gateway/src/main/java/com/opencode/cui/gateway/service/SkillRelayService.java`
 - `ai-gateway/src/main/java/com/opencode/cui/gateway/service/EventRelayService.java`
 - `ai-gateway/src/main/java/com/opencode/cui/gateway/controller/AgentController.java`
 
-Responsibilities:
-- Accept WebSocket agent connections
-- Accept WebSocket connections from `skill-server`
-- Authenticate agents with AK/SK signatures
-- Route invoke and event payloads across online components
+职责：
+- 接收 Agent WebSocket 连接
+- 接收 `skill-server` 的 WebSocket 连接
+- 使用 AK/SK 对 Agent 鉴权
+- 在在线组件之间路由 invoke 与 event 消息
 
 ### Skill Server
 
-Relevant files:
+关键文件：
 - `skill-server/src/main/java/com/opencode/cui/skill/ws/GatewayWSClient.java`
 - `skill-server/src/main/java/com/opencode/cui/skill/ws/SkillStreamHandler.java`
 - `skill-server/src/main/java/com/opencode/cui/skill/service/GatewayRelayService.java`
@@ -31,35 +31,35 @@ Relevant files:
 - `skill-server/src/main/java/com/opencode/cui/skill/controller/SkillSessionController.java`
 - `skill-server/src/main/java/com/opencode/cui/skill/controller/SkillMessageController.java`
 
-Responsibilities:
-- Maintain outbound WebSocket connection to `ai-gateway`
-- Serve session and message APIs to the frontend
-- Fan out stream events to browser clients
-- Persist and rebuild session/message history
+职责：
+- 维护到 `ai-gateway` 的出站 WebSocket 连接
+- 向前端提供会话与消息 REST API
+- 向浏览器流式推送事件
+- 持久化与重建会话/消息历史
 
-## Frontend Integration
+## 前端集成
 
-The miniapp consumes REST and WebSocket APIs.
+Miniapp 同时消费 REST 和 WebSocket API。
 
-Relevant files:
+关键文件：
 - `skill-miniapp/src/utils/api.ts`
 - `skill-miniapp/src/hooks/useSkillSession.ts`
 - `skill-miniapp/src/hooks/useSkillStream.ts`
 - `skill-miniapp/src/hooks/useAgentSelector.ts`
 
-Observed API shapes:
-- list online agents
-- create/list/get/close sessions
-- send chat messages
-- fetch message history
-- reply to permissions
-- send selected content to IM
+可见 API 能力：
+- 查询在线 Agent
+- 创建 / 列表 / 获取 / 关闭会话
+- 发送聊天消息
+- 拉取消息历史
+- 回复 permission 请求
+- 将选中文本发送到 IM
 
-## OpenCode Plugin Integration
+## OpenCode 插件集成
 
-The plugin package bridges local OpenCode and the remote gateway.
+插件包负责连接本地 OpenCode 与远端网关。
 
-Relevant files:
+关键文件：
 - `plugins/message-bridge/src/index.ts`
 - `plugins/message-bridge/src/runtime/BridgeRuntime.ts`
 - `plugins/message-bridge/src/connection/GatewayConnection.ts`
@@ -67,60 +67,60 @@ Relevant files:
 - `plugins/message-bridge/src/protocol/downstream/DownstreamMessageNormalizer.ts`
 - `plugins/message-bridge/src/protocol/upstream/UpstreamEventExtractor.ts`
 
-Integration contract highlights from `plugins/message-bridge/README.md`:
-- downstream message types: `invoke`, `status_query`
-- invoke actions: `chat`, `create_session`, `close_session`, `permission_reply`, `abort_session`, `question_reply`
-- upstream events include session, message, permission, and question updates
+根据 `plugins/message-bridge/README.md`，当前协议包括：
+- downstream message types：`invoke`、`status_query`
+- invoke actions：`chat`、`create_session`、`close_session`、`permission_reply`、`abort_session`、`question_reply`
+- upstream events：覆盖 session、message、permission、question 等状态更新
 
-## Persistence And Shared Infrastructure
+## 持久化与共享基础设施
 
 ### MySQL
 
-Migration directories:
+Migration 目录：
 - `ai-gateway/src/main/resources/db/migration/`
 - `skill-server/src/main/resources/db/migration/`
 
-Mapper files:
+Mapper 文件：
 - `ai-gateway/src/main/resources/mapper/*.xml`
 - `skill-server/src/main/resources/mapper/*.xml`
 
 ### Redis
 
-Config files:
+配置文件：
 - `ai-gateway/src/main/java/com/opencode/cui/gateway/config/RedisConfig.java`
 - `skill-server/src/main/java/com/opencode/cui/skill/config/RedisConfig.java`
 
-Used for:
-- pub/sub style relay
-- heartbeat and route ownership
-- transient coordination between gateway instances and skill routing
+使用场景：
+- pub/sub 中继
+- 心跳与路由归属状态
+- 网关实例与 Skill 路由之间的临时协调
 
-## Authentication And Security Boundaries
+## 认证与安全边界
 
-- AK/SK signature validation in `ai-gateway/src/main/java/com/opencode/cui/gateway/service/AkSkAuthService.java`
-- internal skill-to-gateway token configured via `skill.gateway.internal-token` in both service configs
-- plugin auth payload construction in `plugins/message-bridge/src/connection/AkSkAuth.ts`
+- AK/SK 签名校验位于 `ai-gateway/src/main/java/com/opencode/cui/gateway/service/AkSkAuthService.java`
+- Skill 到 Gateway 的内部 token 通过两个服务的 `application.yml` 配置
+- 插件端鉴权负载生成位于 `plugins/message-bridge/src/connection/AkSkAuth.ts`
 
-## IM Integration
+## IM 集成
 
-The skill server can forward content to an IM backend.
+Skill Server 支持将内容转发到 IM 后端。
 
-Relevant files:
+关键文件：
 - `skill-server/src/main/java/com/opencode/cui/skill/service/ImMessageService.java`
 - `skill-server/src/main/resources/application.yml`
 - `skill-miniapp/src/hooks/useSendToIm.ts`
 
-Configured endpoint:
-- `skill.im.api-url` in `skill-server/src/main/resources/application.yml`
+配置项：
+- `skill.im.api-url`
 
-## Operations And Logging
+## 运维与日志
 
-- file logging configured in both backend `application.yml` files
-- plugin runtime logs through `client.app.log()` or debug fallback per `plugins/message-bridge/README.md`
-- plugin scripts support local stack start/stop, log fetching, and E2E debugging under `plugins/message-bridge/scripts/`
+- 两个后端都通过 `application.yml` 配置文件日志输出
+- 插件运行时优先走 `client.app.log()`，失败时退回本地 debug 输出，说明见 `plugins/message-bridge/README.md`
+- 插件脚本目录 `plugins/message-bridge/scripts/` 提供本地堆栈启动、日志抓取、E2E 调试等工具
 
-## Integration Risks To Remember
+## 集成风险
 
-- default credentials and tokens are present in checked-in config files
-- multiple protocol translations exist across plugin, gateway, skill server, and miniapp
-- any transport shape change likely requires synchronized updates across at least three modules
+- 配置文件中存在默认凭据与默认 token
+- 插件、网关、Skill Server、前端之间存在多层协议转换
+- 任何 transport shape 变化，通常都需要至少三个模块同步修改

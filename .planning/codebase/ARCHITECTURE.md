@@ -1,115 +1,115 @@
-# Architecture
+# 架构地图
 
-## System Shape
+## 系统形态
 
-This is a distributed, message-oriented application rather than a single deployable unit.
-The architecture centers on routing chat and tool events across four layers:
+这不是单体应用，而是一个以消息与流式事件为中心的分布式系统。
+整体链路主要分为四层：
 
-1. OpenCode host plugin in `plugins/message-bridge/`
-2. gateway service in `ai-gateway/`
-3. session/persistence service in `skill-server/`
-4. chat UI in `skill-miniapp/`
+1. `plugins/message-bridge/`：本地 OpenCode Host 插件
+2. `ai-gateway/`：消息网关
+3. `skill-server/`：会话与持久化后端
+4. `skill-miniapp/`：聊天 UI
 
-## High-Level Flow
+## 高层数据流
 
-Representative path:
-- user selects an agent and starts a session in `skill-miniapp/src/app.tsx`
-- frontend calls REST helpers in `skill-miniapp/src/utils/api.ts`
-- `skill-server` creates or loads session state through controller/service/repository layers
-- `skill-server` relays invoke commands to `ai-gateway` using `skill-server/src/main/java/com/opencode/cui/skill/ws/GatewayWSClient.java`
-- `ai-gateway` routes messages to a connected agent through `ai-gateway/src/main/java/com/opencode/cui/gateway/ws/AgentWebSocketHandler.java`
-- local OpenCode plugin executes actions and emits upstream events through `plugins/message-bridge/src/runtime/BridgeRuntime.ts`
-- events return through gateway and skill server, then stream to the frontend via `skill-server/src/main/java/com/opencode/cui/skill/ws/SkillStreamHandler.java`
+一条典型路径如下：
+- 用户在 `skill-miniapp/src/app.tsx` 中选择 Agent 并发起会话
+- 前端通过 `skill-miniapp/src/utils/api.ts` 调用 REST API
+- `skill-server` 通过 controller / service / repository 创建或读取会话
+- `skill-server` 使用 `skill-server/src/main/java/com/opencode/cui/skill/ws/GatewayWSClient.java` 将 invoke 命令转发给 `ai-gateway`
+- `ai-gateway` 使用 `ai-gateway/src/main/java/com/opencode/cui/gateway/ws/AgentWebSocketHandler.java` 将消息路由给在线 Agent
+- 本地 OpenCode 插件通过 `plugins/message-bridge/src/runtime/BridgeRuntime.ts` 执行动作并产生上游事件
+- 事件再经过 gateway 与 skill server 返回，并通过 `skill-server/src/main/java/com/opencode/cui/skill/ws/SkillStreamHandler.java` 推送给前端
 
-## Backend Architectural Pattern
+## 后端架构模式
 
-Both Java services follow a layered Spring Boot style:
-- controller layer for HTTP APIs
-- WebSocket handler/client layer for streaming transport
-- service layer for business logic
-- repository layer backed by MyBatis mappers
-- model/config classes for typed payloads and properties
+两个 Java 服务都采用典型的分层 Spring Boot 架构：
+- controller 层：HTTP API
+- ws 层：WebSocket 入口或客户端
+- service 层：业务逻辑
+- repository 层：MyBatis 接口
+- model / config：DTO、实体、配置类
 
-Evidence:
-- controllers under `ai-gateway/src/main/java/com/opencode/cui/gateway/controller/` and `skill-server/src/main/java/com/opencode/cui/skill/controller/`
-- services under each module's `service/`
-- repositories under each module's `repository/`
-- XML mappers under `src/main/resources/mapper/`
+对应证据：
+- controller 位于 `ai-gateway/.../controller/` 与 `skill-server/.../controller/`
+- service 位于各自模块的 `service/`
+- repository 位于各自模块的 `repository/`
+- XML mapper 位于 `src/main/resources/mapper/`
 
-## Gateway Role
+## Gateway 角色
 
-`ai-gateway/` acts as the central traffic hub.
+`ai-gateway/` 是系统消息中枢。
 
-Key responsibilities:
-- authenticate agents with AK/SK
-- track online agents and device bindings
-- maintain relay state and ownership
-- route messages between skill server and agents
-- expose agent query APIs
+核心职责：
+- 对 Agent 做 AK/SK 鉴权
+- 跟踪在线 Agent 与设备绑定
+- 维护中继状态与归属
+- 在 Skill Server 与 Agent 之间路由消息
+- 提供 Agent 查询 API
 
-Key files:
+关键文件：
 - `ai-gateway/src/main/java/com/opencode/cui/gateway/service/AgentRegistryService.java`
 - `ai-gateway/src/main/java/com/opencode/cui/gateway/service/SkillRelayService.java`
 - `ai-gateway/src/main/java/com/opencode/cui/gateway/service/EventRelayService.java`
 - `ai-gateway/src/main/java/com/opencode/cui/gateway/service/RedisMessageBroker.java`
 
-## Skill Server Role
+## Skill Server 角色
 
-`skill-server/` is the conversation-domain backend.
+`skill-server/` 是会话域后端。
 
-Key responsibilities:
-- manage skill sessions and messages
-- persist message parts and rebuild snapshots
-- translate OpenCode events to stream-friendly payloads
-- maintain browser WebSocket subscriptions
-- optionally forward content to IM systems
+核心职责：
+- 管理 skill session 与 message
+- 持久化 message part，并支持 snapshot / rebuild
+- 将 OpenCode event 翻译成前端可消费的 stream message
+- 维护浏览器 WebSocket 订阅
+- 可选地向 IM 系统发送消息
 
-Key files:
+关键文件：
 - `skill-server/src/main/java/com/opencode/cui/skill/service/SkillSessionService.java`
 - `skill-server/src/main/java/com/opencode/cui/skill/service/SkillMessageService.java`
 - `skill-server/src/main/java/com/opencode/cui/skill/service/MessagePersistenceService.java`
 - `skill-server/src/main/java/com/opencode/cui/skill/service/OpenCodeEventTranslator.java`
 - `skill-server/src/main/java/com/opencode/cui/skill/service/SnapshotService.java`
 
-## Frontend Pattern
+## 前端模式
 
-`skill-miniapp/` follows a hook-driven React architecture:
-- API wrappers in `src/utils/api.ts`
-- stateful domain hooks in `src/hooks/`
-- stream parsing and normalization in `src/protocol/`
-- presentational components in `src/components/`
-- page assemblies in `src/pages/`
+`skill-miniapp/` 使用以 hooks 为核心的 React 组织方式：
+- `src/utils/api.ts`：API 封装
+- `src/hooks/`：领域状态与副作用
+- `src/protocol/`：流式消息解析、历史归一化、tool 渲染
+- `src/components/`：展示组件
+- `src/pages/`：页面装配
 
-The root app composes hooks rather than introducing a global state library.
+根组件主要通过 hooks 组合能力，没有引入全局状态库。
 
-## Plugin Pattern
+## 插件模式
 
-`plugins/message-bridge/` is organized by boundary and runtime responsibilities:
-- `contracts/` for public message contracts
-- `protocol/` for normalization and extraction
-- `connection/` for WebSocket/auth transport
-- `action/` for downstream action execution
-- `runtime/` for orchestration lifecycle
-- `error/` and `utils/` for shared support
+`plugins/message-bridge/` 明确按边界与职责分层：
+- `contracts/`：外部契约定义
+- `protocol/`：消息归一化与提取
+- `connection/`：WebSocket 与鉴权传输
+- `action/`：下行动作执行
+- `runtime/`：运行时编排
+- `error/`、`utils/`：通用支持
 
-This is a layered boundary architecture explicitly described in `plugins/message-bridge/README.md`.
+这一点也在 `plugins/message-bridge/README.md` 中被直接描述为 layered boundary architecture。
 
-## Scheduling, Caching, And State
+## 调度、缓存与状态
 
-- scheduling is enabled in `ai-gateway/src/main/java/com/opencode/cui/gateway/GatewayApplication.java`
-- scheduling is enabled via `skill-server/src/main/java/com/opencode/cui/skill/config/SkillConfig.java`
-- `skill-server` uses Caffeine-backed cache patterns and trackers such as `TranslatorSessionCache.java` and `ActiveMessageTracker.java`
-- Redis supplements in-memory state for cross-process coordination
+- `ai-gateway/src/main/java/com/opencode/cui/gateway/GatewayApplication.java` 启用了调度
+- `skill-server/src/main/java/com/opencode/cui/skill/config/SkillConfig.java` 启用了调度
+- `skill-server` 使用 `TranslatorSessionCache.java`、`ActiveMessageTracker.java` 等组件维护进程内状态
+- Redis 进一步承担跨进程状态协调
 
-## Architectural Strengths
+## 架构优势
 
-- clear subsystem boundaries
-- strong transport-centric decomposition
-- comprehensive protocol-focused test coverage
-- explicit separation between persistence, relay, and UI concerns
+- 子系统边界清晰
+- 传输层、持久化层、UI 层分工明确
+- 协议相关测试覆盖明显较强
+- 两个后端服务结构相似，降低认知负担
 
-## Architectural Fragility
+## 架构脆弱点
 
-- transport contracts are duplicated across modules
-- no single monorepo build orchestrator coordinates all runtimes
-- cross-service changes likely require careful synchronized updates
+- 多模块重复维护协议概念，变更成本高
+- 没有统一的 monorepo 编排器来串起全部运行时
+- 一次跨服务改动通常需要严格联动验证

@@ -1,81 +1,81 @@
-# Repository Structure
+# 仓库结构地图
 
-## Top-Level Layout
+## 顶层结构
 
-- `ai-gateway/` - Java gateway service
-- `skill-server/` - Java skill/session service
-- `skill-miniapp/` - React frontend
-- `plugins/message-bridge/` - OpenCode message bridge plugin
-- `tests/` - Python system-level tests
-- `.agent/` - local agent-related workspace data
+- `ai-gateway/`：Java 网关服务
+- `skill-server/`：Java skill / session 服务
+- `skill-miniapp/`：React 前端
+- `plugins/message-bridge/`：OpenCode 消息桥插件
+- `tests/`：Python 系统级测试
+- `.agent/`：本地 agent 相关工作目录
 
-## AI Gateway Layout
+## AI Gateway 结构
 
-Main source root:
+主源码根目录：
 - `ai-gateway/src/main/java/com/opencode/cui/gateway/`
 
-Subareas:
-- `config/` - Spring config and typed properties
-- `controller/` - REST API endpoints
-- `model/` - DTOs and persisted entities
-- `repository/` - MyBatis mapper interfaces
-- `service/` - auth, registry, relay, broker, and ID generation logic
-- `ws/` - WebSocket handlers for agent and skill connections
+子目录职责：
+- `config/`：Spring 配置与 `ConfigurationProperties`
+- `controller/`：REST API
+- `model/`：DTO 与持久化模型
+- `repository/`：MyBatis mapper 接口
+- `service/`：鉴权、注册、中继、Broker、ID 生成等逻辑
+- `ws/`：Agent 与 Skill 的 WebSocket 处理器
 
-Resources:
+资源文件：
 - `ai-gateway/src/main/resources/application.yml`
 - `ai-gateway/src/main/resources/db/migration/`
 - `ai-gateway/src/main/resources/mapper/`
 
-Tests:
+测试目录：
 - `ai-gateway/src/test/java/com/opencode/cui/gateway/`
 
-## Skill Server Layout
+## Skill Server 结构
 
-Main source root:
+主源码根目录：
 - `skill-server/src/main/java/com/opencode/cui/skill/`
 
-Subareas:
-- `config/` - CORS, Redis, RestTemplate, scheduling, exception handling
-- `controller/` - session, message, and agent query endpoints
-- `model/` - sessions, messages, parts, views, commands
-- `repository/` - MyBatis mapper interfaces
-- `service/` - session/message logic, relay, translation, buffering, snapshots
-- `ws/` - inbound stream handler and outbound gateway client
+子目录职责：
+- `config/`：CORS、Redis、RestTemplate、调度、异常处理
+- `controller/`：session、message、agent query API
+- `model/`：session、message、part、view、command 等模型
+- `repository/`：MyBatis mapper 接口
+- `service/`：会话逻辑、消息逻辑、中继、翻译、buffer、snapshot
+- `ws/`：前端 stream handler 与 gateway client
 
-Resources:
+资源文件：
 - `skill-server/src/main/resources/application.yml`
 - `skill-server/src/main/resources/db/migration/`
 - `skill-server/src/main/resources/mapper/`
 
-Tests:
+测试目录：
 - `skill-server/src/test/java/com/opencode/cui/skill/`
 
-## Miniapp Layout
+## Miniapp 结构
 
-Source root:
+源码根目录：
 - `skill-miniapp/src/`
 
-Subareas:
-- `components/` - reusable UI components such as `ConversationView.tsx` and `MessageBubble.tsx`
-- `hooks/` - domain hooks such as `useSkillStream.ts` and `useSkillSession.ts`
-- `pages/` - assembled screens like `SkillMain.tsx` and `SkillMiniBar.tsx`
-- `protocol/` - stream parsing, history normalization, tool rendering
-- `utils/` - API client and dev auth utilities
+子目录职责：
+- `components/`：如 `ConversationView.tsx`、`MessageBubble.tsx` 这类复用 UI 组件
+- `hooks/`：如 `useSkillStream.ts`、`useSkillSession.ts` 这类领域 hooks
+- `pages/`：如 `SkillMain.tsx`、`SkillMiniBar.tsx`
+- `protocol/`：stream 解析、history 归一化、tool 渲染
+- `utils/`：API 客户端、dev auth 工具
 
-Supporting files:
+支撑文件：
 - `skill-miniapp/src/app.tsx`
 - `skill-miniapp/src/main.tsx`
 - `skill-miniapp/src/index.css`
 - `skill-miniapp/vite.config.ts`
 - `skill-miniapp/tsconfig.json`
 
-## Plugin Layout
+## 插件结构
 
-Source root:
+源码根目录：
 - `plugins/message-bridge/src/`
 
-Subareas:
+主要子目录：
 - `action/`
 - `config/`
 - `connection/`
@@ -88,14 +88,14 @@ Subareas:
 - `types/`
 - `utils/`
 
-Supporting directories:
+配套目录：
 - `plugins/message-bridge/tests/`
 - `plugins/message-bridge/scripts/`
 - `plugins/message-bridge/docs/`
 
-## Test Layout
+## 测试结构
 
-Top-level Python test suite:
+顶层 Python 测试：
 - `tests/test_gateway_auth.py`
 - `tests/test_gateway_agent.py`
 - `tests/test_gateway_ws_skill.py`
@@ -108,15 +108,15 @@ Top-level Python test suite:
 - `tests/test_performance.py`
 - `tests/test_ha.py`
 
-Shared helpers:
+共享辅助：
 - `tests/conftest.py`
 - `tests/utils/api_client.py`
 - `tests/utils/ws_client.py`
 - `tests/utils/auth.py`
 
-## Structural Observations
+## 结构观察
 
-- Naming is mostly domain-oriented and consistent across modules.
-- The two Java services mirror each other structurally, which helps onboarding.
-- The plugin package is the most documentation-rich area of the repository.
-- There are both `skill-miniapp/src/app.tsx` and page components such as `skill-miniapp/src/pages/SkillMain.tsx`, so frontend entry composition may have some overlap.
+- 命名大多以领域语义组织，整体一致性较好。
+- 两个 Java 服务的目录分层非常接近，便于并行理解。
+- `plugins/message-bridge/` 是当前文档化程度最高的子模块。
+- 前端同时存在 `skill-miniapp/src/app.tsx` 与 `skill-miniapp/src/pages/SkillMain.tsx` 两套聊天装配入口，后续值得确认是否有职责重叠。
