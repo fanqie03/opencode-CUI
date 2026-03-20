@@ -8,6 +8,7 @@ target/
 build/
 dist/
 node_modules/
+.planning/
 
 # OS
 .DS_Store
@@ -28,4 +29,5 @@ Thumbs.db
 # Agent config
 .agent/
 .agents/
-.planning/
+CLAUDE.md
+AGENTS.md
