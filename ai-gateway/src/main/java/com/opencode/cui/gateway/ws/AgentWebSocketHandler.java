@@ -7,6 +7,10 @@ import com.opencode.cui.gateway.service.AgentRegistryService;
 import com.opencode.cui.gateway.service.AkSkAuthService;
 import com.opencode.cui.gateway.service.DeviceBindingService;
 import com.opencode.cui.gateway.service.EventRelayService;
+import com.opencode.cui.gateway.service.GatewayInstanceRegistry;
+import com.opencode.cui.gateway.service.RedisMessageBroker;
+
+import java.time.Duration;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.server.ServerHttpRequest;
@@ -66,7 +70,11 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
     private final AgentRegistryService agentRegistryService;
     private final DeviceBindingService deviceBindingService;
     private final EventRelayService eventRelayService;
+    private final RedisMessageBroker redisMessageBroker;
+    private final GatewayInstanceRegistry gatewayInstanceRegistry;
     private final ObjectMapper objectMapper;
+
+    private static final Duration CONN_AK_TTL = Duration.ofSeconds(120);
 
     @Value("${gateway.agent.register-timeout-seconds:10}")
     private int registerTimeoutSeconds;
@@ -84,11 +92,15 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             AgentRegistryService agentRegistryService,
             DeviceBindingService deviceBindingService,
             EventRelayService eventRelayService,
+            RedisMessageBroker redisMessageBroker,
+            GatewayInstanceRegistry gatewayInstanceRegistry,
             ObjectMapper objectMapper) {
         this.akSkAuthService = akSkAuthService;
         this.agentRegistryService = agentRegistryService;
         this.deviceBindingService = deviceBindingService;
         this.eventRelayService = eventRelayService;
+        this.redisMessageBroker = redisMessageBroker;
+        this.gatewayInstanceRegistry = gatewayInstanceRegistry;
         this.objectMapper = objectMapper;
     }
 
@@ -251,6 +263,9 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             // Remove from relay service (uses ak)
             eventRelayService.removeAgentSession(ak);
 
+            // v3: 条件删除 conn:ak（仅删本实例注册的，防误删已重连到其他 GW 的 Agent）
+            redisMessageBroker.conditionalRemoveConnAk(ak, gatewayInstanceRegistry.getInstanceId());
+
             // Notify Skill Server that agent went offline (uses ak)
             GatewayMessage offlineMsg = GatewayMessage.agentOffline(ak);
             eventRelayService.relayToSkillServer(ak, offlineMsg);
@@ -309,6 +324,9 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         // Register WebSocket session in relay service (keyed by ak)
         eventRelayService.registerAgentSession(akId, userId, session);
 
+        // v3: 注册 conn:ak → gatewayInstanceId（Source 服务查询用于下行精确投递）
+        redisMessageBroker.bindConnAk(akId, gatewayInstanceRegistry.getInstanceId(), CONN_AK_TTL);
+
         // Send register_ok to client
         try {
             String okJson = objectMapper.writeValueAsString(GatewayMessage.registerOk());
@@ -333,6 +351,12 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             agentRegistryService.heartbeat(agentId);
         } else {
             log.warn("Heartbeat from unregistered session: sessionId={}", session.getId());
+        }
+
+        // v3: 刷新 conn:ak TTL
+        String ak = sessionAkMap.get(session.getId());
+        if (ak != null) {
+            redisMessageBroker.refreshConnAkTtl(ak, CONN_AK_TTL);
         }
     }
 

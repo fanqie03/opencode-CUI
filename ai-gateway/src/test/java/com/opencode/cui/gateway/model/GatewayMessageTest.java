@@ -190,4 +190,50 @@ class GatewayMessageTest {
         assertEquals("status_query", msg.getType());
         assertNull(msg.getAgentId());
     }
+
+    // ==================== gatewayInstanceId 相关测试 ====================
+
+    @Test
+    void testWithGatewayInstanceIdCreatesNewInstance() {
+        GatewayMessage original = GatewayMessage.toolEvent("sess-42", null);
+        GatewayMessage withGw = original.withGatewayInstanceId("gw-az1-1");
+
+        assertNull(original.getGatewayInstanceId());
+        assertEquals("gw-az1-1", withGw.getGatewayInstanceId());
+        assertEquals("sess-42", withGw.getToolSessionId());
+    }
+
+    @Test
+    void testWithoutRoutingContextStripsGatewayInstanceId() {
+        GatewayMessage original = GatewayMessage.toolEvent("sess-42", null)
+                .withUserId("user-1")
+                .withSource("skill-server")
+                .withGatewayInstanceId("gw-az1-1");
+
+        GatewayMessage stripped = original.withoutRoutingContext();
+
+        assertNull(stripped.getUserId());
+        assertNull(stripped.getSource());
+        assertNull(stripped.getGatewayInstanceId());
+        assertEquals("sess-42", stripped.getToolSessionId());
+    }
+
+    @Test
+    void testGatewayInstanceIdSerializationRoundTrip() throws Exception {
+        GatewayMessage msg = GatewayMessage.toolEvent("sess-42", null)
+                .withGatewayInstanceId("gw-az1-1");
+
+        String json = objectMapper.writeValueAsString(msg);
+        GatewayMessage deserialized = objectMapper.readValue(json, GatewayMessage.class);
+
+        assertEquals("gw-az1-1", deserialized.getGatewayInstanceId());
+    }
+
+    @Test
+    void testGatewayInstanceIdNullNotSerialized() throws Exception {
+        GatewayMessage msg = GatewayMessage.heartbeat();
+        String json = objectMapper.writeValueAsString(msg);
+
+        assertFalse(json.contains("gatewayInstanceId"));
+    }
 }

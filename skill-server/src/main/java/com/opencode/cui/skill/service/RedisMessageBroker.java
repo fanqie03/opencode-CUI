@@ -3,13 +3,17 @@ package com.opencode.cui.skill.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
@@ -127,5 +131,47 @@ public class RedisMessageBroker {
     public boolean isUserSubscribed(String userId) {
         String channel = "user-stream:" + userId;
         return activeListeners.containsKey(channel);
+    }
+
+    // ==================== Gateway 实例发现（v3 新增） ====================
+
+    /**
+     * 扫描 Redis 中所有 Gateway 实例注册 key。
+     *
+     * @return key → value 映射（key 格式: gw:instance:{id}，value: JSON）
+     */
+    private static final String GW_INSTANCE_KEY_PREFIX = "gw:instance:";
+
+    public Map<String, String> scanGatewayInstances() {
+        Map<String, String> result = new HashMap<>();
+        ScanOptions options = ScanOptions.scanOptions()
+                .match(GW_INSTANCE_KEY_PREFIX + "*")
+                .count(100)
+                .build();
+        try (Cursor<String> cursor = redisTemplate.scan(options)) {
+            while (cursor.hasNext()) {
+                String key = cursor.next();
+                String value = redisTemplate.opsForValue().get(key);
+                if (value != null) {
+                    String instanceId = key.substring(GW_INSTANCE_KEY_PREFIX.length());
+                    result.put(instanceId, value);
+                }
+            }
+        }
+        return result;
+    }
+
+    // ==================== conn:ak 查询（v3 新增） ====================
+
+    /**
+     * 查询 AK 连接在哪个 Gateway 实例上。
+     *
+     * @return gatewayInstanceId，不存在返回 null
+     */
+    public String getConnAk(String ak) {
+        if (ak == null || ak.isBlank()) {
+            return null;
+        }
+        return redisTemplate.opsForValue().get("conn:ak:" + ak);
     }
 }

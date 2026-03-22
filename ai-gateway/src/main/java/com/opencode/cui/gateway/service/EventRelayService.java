@@ -74,7 +74,6 @@ public class EventRelayService {
             pending.complete(false);
         }
         redisMessageBroker.removeAgentUser(ak);
-        redisMessageBroker.removeAgentSource(ak);
         redisMessageBroker.unsubscribeFromAgent(ak);
         log.debug("Removed agent session: ak={}", ak);
     }
@@ -84,20 +83,20 @@ public class EventRelayService {
         return session != null && session.isOpen();
     }
 
+    /**
+     * 上行消息路由到 Source 服务。
+     * v3: 注入 ak/userId/traceId 后直接交给 SkillRelayService 路由。
+     * Source 解析由 SkillRelayService 的路由缓存处理，不再查 Redis gw:agent:source:{ak}。
+     */
     public void relayToSkillServer(String ak, GatewayMessage message) {
         GatewayMessage tracedMessage = message.ensureTraceId();
         String userId = redisMessageBroker.getAgentUser(ak);
-        String source = tracedMessage.getSource();
-        if (source == null || source.isBlank()) {
-            source = redisMessageBroker.getAgentSource(ak);
-        }
         GatewayMessage forwarded = tracedMessage.withAk(ak)
-                .withUserId(userId)
-                .withSource(source);
+                .withUserId(userId);
 
-        log.debug("Routing upstream message: traceId={}, source={}, ak={}, userId={}, type={}, routeDecision=to_upstream, fallbackUsed=false, welinkSessionId={}, toolSessionId={}",
-                forwarded.getTraceId(), source, ak, userId, tracedMessage.getType(),
-                forwarded.getWelinkSessionId(), forwarded.getToolSessionId());
+        log.debug("Routing upstream message: traceId={}, ak={}, userId={}, type={}, toolSessionId={}, welinkSessionId={}",
+                forwarded.getTraceId(), ak, userId, tracedMessage.getType(),
+                forwarded.getToolSessionId(), forwarded.getWelinkSessionId());
 
         try {
             boolean routed = skillRelayService.relayToSkill(forwarded);

@@ -95,7 +95,7 @@ class SkillWebSocketHandlerTest {
     void connectionEstablishedRegistersSkillSession() throws Exception {
         handler.onOpen(session);
 
-        verify(skillRelayService).registerSkillSession(session);
+        verify(skillRelayService).registerSourceSession(session);
         verify(session, never()).close(org.mockito.ArgumentMatchers.any());
     }
 
@@ -145,8 +145,63 @@ class SkillWebSocketHandlerTest {
         }
     }
 
+    // ==================== v3 新增测试 ====================
+
+    @Test
+    @DisplayName("handshake 解析 instanceId 到 session attributes")
+    void handshakeExtractsInstanceId() {
+        HttpHeaders headers = new HttpHeaders();
+        String protocol = authProtocolWithInstanceId("secret-token", "skill-server", "ss-az1-2");
+        headers.set("Sec-WebSocket-Protocol", protocol);
+        when(request.getHeaders()).thenReturn(headers);
+        when(response.getHeaders()).thenReturn(new HttpHeaders());
+        Map<String, Object> attributes = new HashMap<>();
+
+        boolean accepted = handler.beforeHandshake(request, response, wsHandler, attributes);
+
+        org.junit.jupiter.api.Assertions.assertTrue(accepted);
+        org.junit.jupiter.api.Assertions.assertEquals("ss-az1-2",
+                attributes.get(SkillRelayService.INSTANCE_ID_ATTR));
+    }
+
+    @Test
+    @DisplayName("handshake 无 instanceId 时 attribute 不设置（兼容旧客户端）")
+    void handshakeWithoutInstanceIdStillWorks() {
+        HttpHeaders headers = new HttpHeaders();
+        String protocol = authProtocol("secret-token", "skill-server");
+        headers.set("Sec-WebSocket-Protocol", protocol);
+        when(request.getHeaders()).thenReturn(headers);
+        when(response.getHeaders()).thenReturn(new HttpHeaders());
+        Map<String, Object> attributes = new HashMap<>();
+
+        boolean accepted = handler.beforeHandshake(request, response, wsHandler, attributes);
+
+        org.junit.jupiter.api.Assertions.assertTrue(accepted);
+        org.junit.jupiter.api.Assertions.assertNull(attributes.get(SkillRelayService.INSTANCE_ID_ATTR));
+    }
+
+    @Test
+    @DisplayName("invoke 消息经过时调用 learnRoute 提取路由信息")
+    void invokeMessageTriggersLearnRoute() throws Exception {
+        handler.handle(session,
+                "{\"type\":\"invoke\",\"source\":\"skill-server\",\"ak\":\"ak_test_001\","
+                + "\"welinkSessionId\":\"42\",\"action\":\"chat\",\"userId\":\"user-1\","
+                + "\"payload\":{\"toolSessionId\":\"T1\",\"text\":\"hello\"}}");
+
+        verify(skillRelayService).handleInvokeFromSkill(eq(session),
+                argThat(message -> "invoke".equals(message.getType())));
+        // handleInvokeFromSkill 内部会调用 learnRoute，这里验证 invoke 被正确分发
+    }
+
     private static String authProtocol(String token, String source) {
         String json = "{\"token\":\"" + token + "\",\"source\":\"" + source + "\"}";
+        return "auth." + Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String authProtocolWithInstanceId(String token, String source, String instanceId) {
+        String json = "{\"token\":\"" + token + "\",\"source\":\"" + source
+                + "\",\"instanceId\":\"" + instanceId + "\"}";
         return "auth." + Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(json.getBytes(StandardCharsets.UTF_8));
     }

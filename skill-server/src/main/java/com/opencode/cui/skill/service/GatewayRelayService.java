@@ -26,22 +26,41 @@ public class GatewayRelayService {
 
     /** Gateway WebSocket 通信接口（由 WebSocket Handler 注入） */
     public interface GatewayRelayTarget {
-        boolean sendToGateway(String message); // 发送消息到 Gateway
+        boolean sendToGateway(String message); // 发送消息到 Gateway（兼容旧接口）
 
         boolean hasActiveConnection(); // 是否有活跃的 WebSocket 连接
+
+        /**
+         * v3: 精确发送到指定 Gateway 实例。
+         * 默认 fallback 到 sendToGateway（兼容旧实现）。
+         */
+        default boolean sendToGateway(String gwInstanceId, String message) {
+            return sendToGateway(message);
+        }
+
+        /**
+         * v3: 广播到所有 Gateway 连接。
+         * 默认 fallback 到 sendToGateway（兼容旧实现）。
+         */
+        default boolean broadcastToAllGateways(String message) {
+            return sendToGateway(message);
+        }
     }
 
-    private final ObjectMapper objectMapper; // JSON 序列化
-    private final GatewayMessageRouter messageRouter; // 上行消息路由器
-    private final SessionRebuildService rebuildService; // toolSession 重建服务
-    private volatile GatewayRelayTarget gatewayRelayTarget; // 当前 WebSocket 连接
+    private final ObjectMapper objectMapper;
+    private final GatewayMessageRouter messageRouter;
+    private final SessionRebuildService rebuildService;
+    private final RedisMessageBroker redisMessageBroker;
+    private volatile GatewayRelayTarget gatewayRelayTarget;
 
     public GatewayRelayService(ObjectMapper objectMapper,
             GatewayMessageRouter messageRouter,
-            SessionRebuildService rebuildService) {
+            SessionRebuildService rebuildService,
+            RedisMessageBroker redisMessageBroker) {
         this.objectMapper = objectMapper;
         this.messageRouter = messageRouter;
         this.rebuildService = rebuildService;
+        this.redisMessageBroker = redisMessageBroker;
 
         // 向 MessageRouter 注入下行发送能力，避免循环依赖
         messageRouter.setDownstreamSender(this::sendInvokeToGateway);
@@ -78,15 +97,30 @@ public class GatewayRelayService {
             return;
         }
 
-        boolean sent = relayTarget.sendToGateway(messageText);
+        // v3: 查 conn:ak 精确投递到目标 Gateway 实例
+        String gwInstanceId = redisMessageBroker.getConnAk(command.ak());
+        boolean sent;
+        if (gwInstanceId != null && !gwInstanceId.isBlank()) {
+            sent = relayTarget.sendToGateway(gwInstanceId, messageText);
+            if (!sent) {
+                // 精确投递失败 → fallback 广播
+                log.warn("Precise delivery failed, fallback to broadcast: ak={}, gwInstanceId={}, action={}",
+                        command.ak(), gwInstanceId, action);
+                sent = relayTarget.broadcastToAllGateways(messageText);
+            }
+        } else {
+            // conn:ak 未注册（Agent 可能不在线）→ 广播到所有 GW
+            sent = relayTarget.broadcastToAllGateways(messageText);
+        }
+
         if (!sent) {
-            log.warn("Failed to send invoke through Gateway WS: ak={}, userId={}, action={}",
+            log.warn("Failed to send invoke to any Gateway: ak={}, userId={}, action={}",
                     command.ak(), command.userId(), action);
             return;
         }
 
-        log.debug("Invoke sent via Gateway WS: ak={}, userId={}, action={}",
-                command.ak(), command.userId(), action);
+        log.debug("Invoke sent via Gateway WS: ak={}, userId={}, action={}, gwInstanceId={}",
+                command.ak(), command.userId(), action, gwInstanceId);
     }
 
     /**

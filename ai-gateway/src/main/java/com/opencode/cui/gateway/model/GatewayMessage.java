@@ -121,6 +121,9 @@ public class GatewayMessage {
     /** Sequence number for message ordering (multi-instance coordination) */
     private Long sequenceNumber;
 
+    /** Gateway instance identifier (internal routing, stripped before sending to Agent) */
+    private String gatewayInstanceId;
+
     // ==================== Register 消息字段 ====================
 
     private String deviceName;
@@ -294,10 +297,17 @@ public class GatewayMessage {
                 .build();
     }
 
+    public GatewayMessage withGatewayInstanceId(String gatewayInstanceId) {
+        return this.toBuilder()
+                .gatewayInstanceId(gatewayInstanceId)
+                .build();
+    }
+
     public GatewayMessage withoutRoutingContext() {
         return this.toBuilder()
                 .userId(null)
                 .source(null)
+                .gatewayInstanceId(null)
                 .build();
     }
 

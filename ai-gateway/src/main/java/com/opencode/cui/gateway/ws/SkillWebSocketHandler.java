@@ -48,6 +48,9 @@ public class SkillWebSocketHandler extends TextWebSocketHandler implements Hands
         }
 
         attributes.put(SkillRelayService.SOURCE_ATTR, handshakeAuth.source());
+        if (handshakeAuth.instanceId() != null && !handshakeAuth.instanceId().isBlank()) {
+            attributes.put(SkillRelayService.INSTANCE_ID_ATTR, handshakeAuth.instanceId());
+        }
         response.getHeaders().set("Sec-WebSocket-Protocol", handshakeAuth.protocol());
         return true;
     }
@@ -60,7 +63,7 @@ public class SkillWebSocketHandler extends TextWebSocketHandler implements Hands
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        skillRelayService.registerSkillSession(session);
+        skillRelayService.registerSourceSession(session);
         log.info("Skill internal WebSocket connected: sessionId={}, remoteAddr={}",
                 session.getId(), session.getRemoteAddress());
     }
@@ -87,14 +90,14 @@ public class SkillWebSocketHandler extends TextWebSocketHandler implements Hands
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
-        skillRelayService.removeSkillSession(session);
+        skillRelayService.removeSourceSession(session);
         log.info("Skill internal WebSocket disconnected: sessionId={}, status={}",
                 session.getId(), status);
     }
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
-        skillRelayService.removeSkillSession(session);
+        skillRelayService.removeSourceSession(session);
         log.error("Skill internal WebSocket transport error: sessionId={}, error={}",
                 session.getId(), exception.getMessage(), exception);
     }
@@ -131,13 +134,14 @@ public class SkillWebSocketHandler extends TextWebSocketHandler implements Hands
             if (!internalToken.equals(token) || source == null || source.isBlank()) {
                 return null;
             }
-            return new HandshakeAuth(protocol, source);
+            String instanceId = authNode.path("instanceId").asText(null);
+            return new HandshakeAuth(protocol, source, instanceId);
         } catch (Exception e) {
             log.warn("Failed to decode skill auth subprotocol: {}", e.getMessage());
             return null;
         }
     }
 
-    private record HandshakeAuth(String protocol, String source) {
+    private record HandshakeAuth(String protocol, String source, String instanceId) {
     }
 }

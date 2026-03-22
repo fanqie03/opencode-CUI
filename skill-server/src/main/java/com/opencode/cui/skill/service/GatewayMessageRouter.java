@@ -49,6 +49,9 @@ public class GatewayMessageRouter {
 
     private volatile DownstreamSender downstreamSender;
 
+    /** v3: 会话路由服务（可选注入，null 时跳过 ownership 检查） */
+    private volatile SessionRouteService sessionRouteService;
+
     public GatewayMessageRouter(ObjectMapper objectMapper,
             SkillMessageService messageService,
             SkillSessionService sessionService,
@@ -75,6 +78,13 @@ public class GatewayMessageRouter {
         this.downstreamSender = sender;
     }
 
+    /**
+     * v3: 注入会话路由服务，用于广播降级时的 ownership 检查。
+     */
+    public void setSessionRouteService(SessionRouteService sessionRouteService) {
+        this.sessionRouteService = sessionRouteService;
+    }
+
     public void clearCompletionMark(String sessionId) {
         if (sessionId != null) {
             completedSessions.invalidate(sessionId);
@@ -83,6 +93,14 @@ public class GatewayMessageRouter {
 
     public void route(String type, String ak, String userId, JsonNode node) {
         String sessionId = requiresSessionAffinity(type) ? resolveSessionId(type, node) : null;
+
+        // v3: 广播降级时的 ownership 检查
+        // 如果 sessionRouteService 已注入且 sessionId 已解析，检查该会话是否属于本实例
+        if (sessionId != null && sessionRouteService != null && !sessionRouteService.isMySession(sessionId)) {
+            log.debug("Ignoring broadcast message: sessionId={} not owned by this instance, type={}",
+                    sessionId, type);
+            return;
+        }
 
         log.debug("Gateway message dispatch: type={}, sessionId={}, ak={}, userId={}",
                 type, sessionId, ak, userId);

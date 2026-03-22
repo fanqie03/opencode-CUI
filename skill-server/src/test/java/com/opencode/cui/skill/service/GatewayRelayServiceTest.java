@@ -69,7 +69,8 @@ class GatewayRelayServiceTest {
         service = new GatewayRelayService(
                 new ObjectMapper(),
                 messageRouter,
-                rebuildService);
+                rebuildService,
+                redisMessageBroker);
         service.setGatewayRelayTarget(gatewayRelayTarget);
     }
 
@@ -375,29 +376,42 @@ class GatewayRelayServiceTest {
     }
 
     @Test
-    @DisplayName("sendInvokeToGateway uses active WS connection")
-    void sendInvokeUsesGatewayWs() {
+    @DisplayName("sendInvokeToGateway 查 conn:ak 精确投递到目标 GW")
+    void sendInvokeUsesConnAkForPreciseDelivery() {
         when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-        when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
+        when(redisMessageBroker.getConnAk("agent-1")).thenReturn("gw-az1-1");
+        when(gatewayRelayTarget.sendToGateway(eq("gw-az1-1"), any())).thenReturn(true);
 
         service.sendInvokeToGateway(
                 new InvokeCommand("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}"));
 
-        verify(gatewayRelayTarget).sendToGateway(contains("invoke"));
-        verify(redisMessageBroker, never()).publishToUser(any(), any());
+        verify(gatewayRelayTarget).sendToGateway(eq("gw-az1-1"), contains("invoke"));
+    }
+
+    @Test
+    @DisplayName("sendInvokeToGateway conn:ak miss 时广播到所有 GW")
+    void sendInvokeBroadcastsWhenConnAkMiss() {
+        when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+        when(redisMessageBroker.getConnAk("agent-1")).thenReturn(null);
+        when(gatewayRelayTarget.broadcastToAllGateways(any())).thenReturn(true);
+
+        service.sendInvokeToGateway(
+                new InvokeCommand("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}"));
+
+        verify(gatewayRelayTarget).broadcastToAllGateways(contains("invoke"));
     }
 
     @Test
     @DisplayName("sendInvokeToGateway serializes string welinkSessionId for create_session")
     void sendInvokeSerializesNumericWelinkSessionId() {
         when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-        when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
+        when(redisMessageBroker.getConnAk("agent-1")).thenReturn(null);
+        when(gatewayRelayTarget.broadcastToAllGateways(any())).thenReturn(true);
 
         service.sendInvokeToGateway(
                 new InvokeCommand("agent-1", "user-1", "42", "create_session", "{\"title\":\"demo\"}"));
 
-        // welinkSessionId 应作为字符串序列化，防止 JavaScript IEEE 754 大数精度丢失
-        verify(gatewayRelayTarget).sendToGateway(contains("\"welinkSessionId\":\"42\""));
+        verify(gatewayRelayTarget).broadcastToAllGateways(contains("\"welinkSessionId\":\"42\""));
     }
 
     @Test
@@ -409,20 +423,21 @@ class GatewayRelayServiceTest {
                 new InvokeCommand("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}"));
 
         verify(gatewayRelayTarget, never()).sendToGateway(any());
-        verifyNoInteractions(redisMessageBroker);
     }
 
     @Test
-    @DisplayName("sendInvokeToGateway logs failed send without redis fallback")
-    void sendInvokeDoesNotFallbackToRedis() {
+    @DisplayName("sendInvokeToGateway 精确投递失败时 fallback 广播")
+    void sendInvokeFallbacksToBroadcastOnPreciseFailure() {
         when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-        when(gatewayRelayTarget.sendToGateway(any())).thenReturn(false);
+        when(redisMessageBroker.getConnAk("agent-1")).thenReturn("gw-dead");
+        when(gatewayRelayTarget.sendToGateway(eq("gw-dead"), any())).thenReturn(false);
+        when(gatewayRelayTarget.broadcastToAllGateways(any())).thenReturn(true);
 
         service.sendInvokeToGateway(
                 new InvokeCommand("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}"));
 
-        verify(gatewayRelayTarget).sendToGateway(contains("invoke"));
-        verifyNoInteractions(redisMessageBroker);
+        verify(gatewayRelayTarget).sendToGateway(eq("gw-dead"), contains("invoke"));
+        verify(gatewayRelayTarget).broadcastToAllGateways(contains("invoke"));
     }
 
     @Test
@@ -533,7 +548,8 @@ class GatewayRelayServiceTest {
         // Step 2: user sends a new message → sendInvokeToGateway("chat") clears the
         // mark
         when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-        when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
+        when(redisMessageBroker.getConnAk("test-ak")).thenReturn(null);
+        when(gatewayRelayTarget.broadcastToAllGateways(any())).thenReturn(true);
         service.sendInvokeToGateway(new InvokeCommand("test-ak", "user-1", "42", "chat", "{\"text\":\"hello\"}"));
 
         // Step 3: new tool_event arrives → should NOT be suppressed
