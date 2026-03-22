@@ -31,6 +31,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+/** ImInboundController 单元测试：验证 IM 入站消息的接收和处理逻辑。 */
 class ImInboundControllerTest {
 
         @Mock

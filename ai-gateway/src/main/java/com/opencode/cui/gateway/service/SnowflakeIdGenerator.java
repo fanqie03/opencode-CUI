@@ -5,6 +5,14 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.locks.LockSupport;
 
+/**
+ * 雪花算法 ID 生成器。
+ * 基于 {@link SnowflakeProperties} 配置的位分配，生成全局唯一且单调递增的 64 位 ID。
+ *
+ * <p>
+ * 线程安全：通过 synchronized 保证同一实例内的 ID 唯一性。
+ * </p>
+ */
 @Component
 public class SnowflakeIdGenerator {
 

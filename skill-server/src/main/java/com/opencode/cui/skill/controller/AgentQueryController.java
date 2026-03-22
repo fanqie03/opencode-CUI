@@ -15,8 +15,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * Proxy endpoint for querying online agents from AI-Gateway.
- * Miniapp calls this instead of querying Gateway directly.
+ * Agent 查询代理控制器。
+ * MiniApp 通过本接口查询在线 Agent，而不是直接访问 AI-Gateway。
  */
 @Slf4j
 @RestController
@@ -34,7 +34,7 @@ public class AgentQueryController {
 
     /**
      * GET /api/skill/agents
-     * Returns online agents belonging to the cookie-authenticated user.
+     * 返回当前 Cookie 认证用户的在线 Agent 列表。
      */
     @GetMapping
     public ResponseEntity<ApiResponse<List<AgentSummary>>> getOnlineAgents(

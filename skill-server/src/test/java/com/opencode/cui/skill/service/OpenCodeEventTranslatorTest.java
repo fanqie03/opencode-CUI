@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/** OpenCodeEventTranslator 单元测试：验证 Gateway 事件到 Skill 协议消息的翻译。 */
 class OpenCodeEventTranslatorTest {
 
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -406,37 +407,38 @@ class OpenCodeEventTranslatorTest {
         """);
     translator.translate(questionAsked);
 
-    var toolCompleted = objectMapper.readTree("""
-        {
-          "type": "message.part.updated",
-          "properties": {
-            "part": {
-              "id": "part-tool-raw-answer",
-              "sessionID": "sess-q",
-              "messageID": "msg-q",
-              "type": "tool",
-              "callID": "call-q-raw-answer",
-              "tool": "question",
-              "state": {
-                "status": "completed",
-                "input": {
-                  "questions": [
-                    {
-                      "header": "实现方案选择",
-                      "question": "实现方案选 A 还是 B？",
-                      "options": [
-                        { "label": "A", "description": "只改最小范围" },
-                        { "label": "B", "description": "做完整重构" }
+    var toolCompleted = objectMapper.readTree(
+        """
+            {
+              "type": "message.part.updated",
+              "properties": {
+                "part": {
+                  "id": "part-tool-raw-answer",
+                  "sessionID": "sess-q",
+                  "messageID": "msg-q",
+                  "type": "tool",
+                  "callID": "call-q-raw-answer",
+                  "tool": "question",
+                  "state": {
+                    "status": "completed",
+                    "input": {
+                      "questions": [
+                        {
+                          "header": "实现方案选择",
+                          "question": "实现方案选 A 还是 B？",
+                          "options": [
+                            { "label": "A", "description": "只改最小范围" },
+                            { "label": "B", "description": "做完整重构" }
+                          ]
+                        }
                       ]
-                    }
-                  ]
-                },
-                "output": "User has answered your questions: \\"实现方案选 A 还是 B？\\"=\\"123\\". You can now continue with the user's answers in mind."
+                    },
+                    "output": "User has answered your questions: \\"实现方案选 A 还是 B？\\"=\\"123\\". You can now continue with the user's answers in mind."
+                  }
+                }
               }
             }
-          }
-        }
-        """);
+            """);
 
     StreamMessage translated = translator.translate(toolCompleted);
 

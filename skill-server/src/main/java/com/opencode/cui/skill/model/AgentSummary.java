@@ -16,7 +16,7 @@ import lombok.NoArgsConstructor;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class AgentSummary {
 
-    /** Agent Access Key */
+    /** Agent 应用密钥（AK） */
     private String ak;
     /** 状态，如 ONLINE */
     private String status;

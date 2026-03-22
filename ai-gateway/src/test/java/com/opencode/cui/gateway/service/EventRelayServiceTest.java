@@ -15,7 +15,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Tests for EventRelayService — agent sessions keyed by AK.
+ * EventRelayService 单元测试：验证 Agent 会话的注册/移除、上行路由和下行消息分发。
  */
 @ExtendWith(MockitoExtension.class)
 class EventRelayServiceTest {

@@ -29,6 +29,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+/** AssistantAccountResolverService 单元测试：验证助手账号解析逻辑。 */
 class AssistantAccountResolverServiceTest {
 
     @Mock

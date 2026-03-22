@@ -9,35 +9,33 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 /**
- * Redis configuration for multi-instance coordination.
- * Configures message listener container with thread pool and error handling.
+ * Redis 配置类（多实例协调）。
+ * 配置 Redis 消息监听容器的线程池、错误处理和恢复策略。
  */
 @Slf4j
 @Configuration
 public class RedisConfig {
 
+    /** 消息处理线程池核心线程数 */
     @Value("${skill.redis.listener.core-pool-size:5}")
     private int corePoolSize;
 
+    /** 消息处理线程池最大线程数 */
     @Value("${skill.redis.listener.max-pool-size:50}")
     private int maxPoolSize;
 
+    /** 线程空闲保活时间（秒） */
     @Value("${skill.redis.listener.keep-alive-seconds:60}")
     private int keepAliveSeconds;
 
+    /** 消息处理线程池队列容量 */
     @Value("${skill.redis.listener.queue-capacity:200}")
     private int queueCapacity;
 
     /**
-     * Configure Redis message listener container for pub/sub.
-     *
-     * Thread pool settings:
-     * - max-active: 50 (maximum concurrent listeners)
-     * - max-idle: 20 (idle connections to keep)
-     * - min-idle: 5 (minimum idle connections)
-     *
-     * Error handling: log and continue (don't stop container)
-     * Recovery interval: 5000ms with exponential backoff
+     * 配置 Redis 消息监听容器（Pub/Sub）。
+     * 错误处理策略：记录日志后继续运行，不停止容器。
+     * 恢复间隔：5000ms。
      */
     @Bean
     public RedisMessageListenerContainer redisMessageListenerContainer(
@@ -46,7 +44,7 @@ public class RedisConfig {
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
 
-        // Configure task executor for message processing
+        // 配置消息处理线程池
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(corePoolSize);
         executor.setMaxPoolSize(maxPoolSize);
@@ -56,7 +54,7 @@ public class RedisConfig {
         executor.initialize();
         container.setTaskExecutor(executor);
 
-        // Configure subscription executor for managing subscriptions
+        // 配置订阅管理线程池
         ThreadPoolTaskExecutor subscriptionExecutor = new ThreadPoolTaskExecutor();
         subscriptionExecutor.setCorePoolSize(2);
         subscriptionExecutor.setMaxPoolSize(10);
@@ -65,12 +63,12 @@ public class RedisConfig {
         subscriptionExecutor.initialize();
         container.setSubscriptionExecutor(subscriptionExecutor);
 
-        // Error handling: log and continue
+        // 错误处理：记录日志后继续运行
         container.setErrorHandler(throwable -> {
             log.error("Redis listener error (continuing): {}", throwable.getMessage(), throwable);
         });
 
-        // Recovery interval with exponential backoff (5000ms)
+        // 连接恢复间隔
         container.setRecoveryInterval(5000L);
 
         log.info("Redis message listener container configured with thread pool " +

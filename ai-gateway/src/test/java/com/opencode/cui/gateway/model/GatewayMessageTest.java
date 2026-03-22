@@ -7,10 +7,9 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * GatewayMessage JSON serialization/deserialization tests.
+ * GatewayMessage JSON 序列化/反序列化测试。
  *
- * Verifies that messages can round-trip through Jackson and that
- * factory methods produce correct output.
+ * 验证消息可通过 Jackson 完成往返转换，以及工厂方法产生正确的输出。
  */
 class GatewayMessageTest {
 

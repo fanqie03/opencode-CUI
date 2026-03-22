@@ -19,6 +19,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+/** AgentQueryController 单元测试：验证 Agent 代理查询接口的逻辑。 */
 class AgentQueryControllerTest {
 
     @Mock

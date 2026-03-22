@@ -11,11 +11,12 @@ import org.springframework.web.client.RestTemplate;
 import java.util.Map;
 
 /**
- * Validates AK binding to a specific device (MAC address) and tool type.
- * Calls a third-party service for validation.
+ * AK 设备绑定校验服务。
+ * 校验 AK 是否绑定到指定设备（MAC 地址）和工具类型，通过第三方服务进行验证。
  *
- * Fail-open strategy: if the third-party service is unavailable,
- * the connection is allowed and a warning is logged.
+ * <p>
+ * 失败开放策略：第三方服务不可用时，允许连接并记录警告日志。
+ * </p>
  */
 @Slf4j
 @Service
@@ -37,13 +38,12 @@ public class DeviceBindingService {
     }
 
     /**
-     * Validate that the given AK is bound to the specified MAC address and tool
-     * type.
+     * 校验 AK 是否绑定到指定 MAC 地址和工具类型。
      *
      * @param ak         Access Key ID
-     * @param macAddress Device MAC address
-     * @param toolType   Tool type (e.g. OPENCODE)
-     * @return true if validation passes or service is unavailable (fail-open)
+     * @param macAddress 设备 MAC 地址
+     * @param toolType   工具类型（如 OPENCODE）
+     * @return 校验通过或服务不可用（失败开放）时返回 true
      */
     public boolean validate(String ak, String macAddress, String toolType) {
         if (!enabled) {
@@ -87,7 +87,7 @@ public class DeviceBindingService {
         } catch (Exception e) {
             log.warn("Device binding service unavailable, fail-open: ak={}, error={}",
                     ak, e.getMessage());
-            return true; // Fail-open: allow connection when service is down
+            return true; // 失败开放：服务不可用时允许连接
         }
     }
 }

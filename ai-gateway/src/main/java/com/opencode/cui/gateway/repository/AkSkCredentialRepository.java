@@ -5,23 +5,22 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 /**
- * MyBatis mapper for the ak_sk_credential table (REQ-26).
- *
- * Used by AkSkAuthService for database-backed credential lookup.
+ * AK/SK 凭证的 MyBatis Mapper。
+ * 对应数据库 ak_sk_credential 表，供 AkSkAuthService 进行凭证查询和管理。
  */
 @Mapper
 public interface AkSkCredentialRepository {
 
-    /** Find an active credential by Access Key */
+    /** 按 AK 查询启用状态的凭证 */
     AkSkCredential findActiveByAk(@Param("ak") String ak);
 
-    /** Find credential by primary key */
+    /** 按主键查询凭证 */
     AkSkCredential findById(@Param("id") Long id);
 
-    /** Insert a new credential */
+    /** 插入新凭证 */
     int insert(AkSkCredential credential);
 
-    /** Update credential status (ACTIVE/DISABLED) */
+    /** 更新凭证状态（ACTIVE/DISABLED） */
     int updateStatus(@Param("id") Long id,
             @Param("status") AkSkCredential.CredentialStatus status);
 }

@@ -14,6 +14,15 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 会话管理服务。
+ * 提供会话的创建、查询、关闭、激活、状态转换等操作，
+ * 支持分页查询、备用多条件筛选、及定时空闲清理。
+ *
+ * <p>
+ * 会话状态转换：ACTIVE → IDLE（超时）→ CLOSED（手动）。
+ * </p>
+ */
 @Slf4j
 @Service
 public class SkillSessionService {
@@ -30,9 +39,7 @@ public class SkillSessionService {
         this.snowflakeIdGenerator = snowflakeIdGenerator;
     }
 
-    /**
-     * Create a new skill session.
-     */
+    /** 创建新的 Skill 会话。 */
     @Transactional
     public SkillSession createSession(String userId, String ak,
             String title,
@@ -94,9 +101,7 @@ public class SkillSessionService {
         return createSession(userId, ak, title, businessDomain, sessionType, sessionId, assistantAccount);
     }
 
-    /**
-     * List sessions for a user with pagination and optional filters.
-     */
+    /** 分页查询用户的会话列表，支持可选筛选条件。 */
     @Transactional(readOnly = true)
     public PageResult<SkillSession> listSessions(SessionListQuery query) {
         int offset = query.page() * query.size();
@@ -119,9 +124,7 @@ public class SkillSessionService {
         return new PageResult<>(content, total, query.page(), query.size());
     }
 
-    /**
-     * Get a single session by ID.
-     */
+    /** 按 ID 获取单个会话，不存在则抛异常。 */
     @Transactional(readOnly = true)
     public SkillSession getSession(Long sessionId) {
         SkillSession session = findByIdSafe(sessionId);
@@ -132,17 +135,15 @@ public class SkillSessionService {
     }
 
     /**
-     * Find all ACTIVE sessions for a user. Used by the protocol-level stream
-     * endpoint to resume all live sessions on connect.
+     * 查询用户的所有 ACTIVE 会话。
+     * 用于协议层 stream 端点连接时恢复所有活跃会话。
      */
     @Transactional(readOnly = true)
     public List<SkillSession> findActiveByUserId(String userId) {
         return sessionRepository.findActiveByUserId(userId);
     }
 
-    /**
-     * Close a session (set status to CLOSED).
-     */
+    /** 关闭会话（设置状态为 CLOSED）。 */
     @Transactional
     public SkillSession closeSession(Long sessionId) {
         sessionRepository.updateStatus(sessionId, SkillSession.Status.CLOSED.name());
@@ -152,8 +153,8 @@ public class SkillSessionService {
     }
 
     /**
-     * Activate an IDLE session (IDLE → ACTIVE).
-     * Called when a successful tool_event is received for an IDLE session.
+     * 激活 IDLE 会话（IDLE → ACTIVE）。
+     * 当 IDLE 会话收到成功的 tool_event 时调用。
      */
     @Transactional
     public boolean activateSession(Long sessionId) {
@@ -165,76 +166,63 @@ public class SkillSessionService {
         return false;
     }
 
-    /**
-     * Clear the toolSessionId for a session (when the tool session becomes
-     * invalid).
-     */
+    /** 清除会话的 toolSessionId（工具会话失效时调用）。 */
     @Transactional
     public void clearToolSessionId(Long sessionId) {
         sessionRepository.clearToolSessionId(sessionId);
         log.info("Cleared toolSessionId for session: id={}", sessionId);
     }
 
-    /**
-     * Update the last_active_at timestamp for a session.
-     */
+    /** 刷新会话的 last_active_at 时间戳。 */
     @Transactional
     public void touchSession(Long sessionId) {
         sessionRepository.updateLastActiveAt(sessionId, LocalDateTime.now());
     }
 
-    /**
-     * Update the tool_session_id on a session (set when OpenCode session is
-     * created).
-     */
+    /** 更新会话的 tool_session_id（OpenCode 会话创建时设置）。 */
     @Transactional
     public SkillSession updateToolSessionId(Long sessionId, String toolSessionId) {
         sessionRepository.updateToolSessionId(sessionId, toolSessionId, LocalDateTime.now());
         return getSession(sessionId);
     }
 
-    /**
-     * Find sessions by AK (used when agent goes offline).
-     */
+    /** 按 AK 查询会话（Agent 离线时使用）。 */
     @Transactional(readOnly = true)
     public List<SkillSession> findByAk(String ak) {
         return sessionRepository.findByAk(ak);
     }
 
     /**
-     * Find a session by its OpenCode tool session ID.
-     * Used to route upstream messages from Gateway to the correct welink session.
+     * 按 OpenCode 工具会话 ID 查询会话。
+     * 用于将 Gateway 上行消息路由到正确的 welink 会话。
      */
     @Transactional(readOnly = true)
     public SkillSession findByToolSessionId(String toolSessionId) {
         return sessionRepository.findByToolSessionId(toolSessionId);
     }
 
-    /**
-     * Find sessions by status (used at startup for Redis channel recovery).
-     */
+    /** 按状态查询会话（启动时用于 Redis 频道恢复）。 */
     @Transactional(readOnly = true)
     public List<SkillSession> findByStatus(SkillSession.Status status) {
         return sessionRepository.findByStatus(status.name());
     }
 
     /**
-     * Scheduled cleanup: mark ACTIVE sessions as IDLE if they have been inactive
-     * beyond the configured idle timeout.
+     * 定时清理：将超过空闲超时时间的 ACTIVE 会话标记为 IDLE。
      */
     @Scheduled(fixedDelayString = "${skill.session.cleanup-interval-minutes:10}", timeUnit = TimeUnit.MINUTES)
     @Transactional
     public void cleanupIdleSessions() {
         LocalDateTime cutoff = LocalDateTime.now().minusMinutes(idleTimeoutMinutes);
 
-        // First, find which sessions will be marked idle
+        // 查找将要标记为 IDLE 的会话
         List<Long> idleSessionIds = sessionRepository.findIdleSessionIds(cutoff);
 
         if (idleSessionIds.isEmpty()) {
             return;
         }
 
-        // Mark them as IDLE in DB
+        // 在数据库中标记为 IDLE
         int count = sessionRepository.markIdleSessions(SkillSession.Status.IDLE.name(), cutoff);
         log.info("Marked {} sessions as IDLE (inactive since before {})", count, cutoff);
 

@@ -13,11 +13,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Skill Server -> frontend WebSocket message DTO.
+ * Skill Server → 前端 WebSocket 消息 DTO。
+ *
  * <p>
  * 字段按语义分为 5 个嵌套组（ToolInfo / PermissionInfo / QuestionInfo / UsageInfo /
- * FileInfo），
- * 通过 {@code @JsonUnwrapped} 保持 JSON 平铺格式不变。
+ * FileInfo），通过 {@code @JsonUnwrapped} 保持 JSON 平铺格式不变。
+ * </p>
  */
 @Data
 @Builder

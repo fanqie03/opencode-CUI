@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+/** SkillMessageService 单元测试：验证消息保存、历史查询等逻辑。 */
 class SkillMessageServiceTest {
 
     @Mock

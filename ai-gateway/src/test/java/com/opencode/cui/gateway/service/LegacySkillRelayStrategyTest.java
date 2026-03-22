@@ -28,6 +28,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/** LegacySkillRelayStrategy 单元测试：验证连接管理、上行路由、invoke 处理和心跳逻辑。 */
 @ExtendWith(MockitoExtension.class)
 class LegacySkillRelayStrategyTest {
 

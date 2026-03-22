@@ -15,9 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Routes messages between PC Agent WebSocket sessions and Skill Server.
- * Agent sessions are keyed by AK (access key) for consistent routing
- * across the entire system (Gateway ↔ Skill Server).
+ * PC Agent WebSocket 会话与 Skill Server 之间的消息路由服务。
+ * Agent 会话以 AK（Access Key）为标识，保证整个系统（Gateway ↔ Skill Server）中一致的路由。
  */
 @Slf4j
 @Service
@@ -26,7 +25,7 @@ public class EventRelayService {
     /** 状态查询等待超时（毫秒） */
     private static final long STATUS_QUERY_TIMEOUT_MS = 1500L;
 
-    /** Map of ak → WebSocket session for connected agents */
+    /** 已连接 Agent 的 WebSocket 会话映射：ak → session */
     private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMap<>();
     private final Map<String, Boolean> opencodeStatusCache = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<Boolean>> pendingStatusQueries = new ConcurrentHashMap<>();
@@ -151,9 +150,8 @@ public class EventRelayService {
     }
 
     /**
-     * Send a status_query message to the agent identified by ak.
-     * The PC Agent will respond with a status_response containing OpenCode health
-     * info.
+     * 向指定 AK 的 Agent 发送 status_query 消息。
+     * PC Agent 将返回包含 OpenCode 健康信息的 status_response。
      */
     public void sendStatusQuery(String ak) {
         GatewayMessage query = GatewayMessage.statusQuery();
@@ -162,8 +160,8 @@ public class EventRelayService {
     }
 
     /**
-     * Request the latest OpenCode health from an agent and wait briefly for a
-     * status_response. Falls back to the last cached value on timeout.
+     * 请求 Agent 的最新 OpenCode 健康状态，短暂等待 status_response。
+     * 超时后降级使用上次缓存的值。
      */
     public Boolean requestAgentStatus(String ak) {
         if (!hasAgentSession(ak)) {
@@ -200,9 +198,7 @@ public class EventRelayService {
         }
     }
 
-    /**
-     * Send status_query to all currently connected agents.
-     */
+    /** 向所有当前连接的 Agent 发送 status_query。 */
     public void sendStatusQueryToAll() {
         agentSessions.forEach((ak, session) -> {
             if (session.isOpen()) {

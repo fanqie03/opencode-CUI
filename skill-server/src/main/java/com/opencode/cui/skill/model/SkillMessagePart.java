@@ -8,11 +8,13 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * Represents a structured part within a message.
- * Maps to the skill_message_part table.
+ * 消息分片持久化实体。
+ * 对应数据库 skill_message_part 表。
+ *
  * <p>
- * A single assistant message may contain multiple parts:
- * text blocks, reasoning blocks, tool calls, file references, etc.
+ * 一条助手消息可能包含多个分片：
+ * 文本块、推理块、工具调用、文件引用等。
+ * </p>
  */
 @Data
 @Builder
@@ -20,36 +22,80 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class SkillMessagePart {
 
+    /** 数据库主键 */
     private Long id;
-    private Long messageId;
-    private Long sessionId;
-    private String partId;
-    private Integer seq;
-    private String partType; // text / reasoning / tool / file / step-start / step-finish
 
-    // Content (text / reasoning)
+    /** 所属消息 ID */
+    private Long messageId;
+
+    /** 所属会话 ID */
+    private Long sessionId;
+
+    /** 分片唯一标识 */
+    private String partId;
+
+    /** 分片序号 */
+    private Integer seq;
+
+    /** 分片类型（text/reasoning/tool/file/step-start/step-finish） */
+    private String partType;
+
+    // ==================== 文本/推理内容 ====================
+
+    /** 文本内容 */
     private String content;
 
-    // Tool fields
+    // ==================== 工具调用字段 ====================
+
+    /** 工具名称 */
     private String toolName;
+
+    /** 工具调用 ID */
     private String toolCallId;
-    private String toolStatus; // pending / running / completed / error
-    private String toolInput; // JSON string
+
+    /** 工具执行状态（pending/running/completed/error） */
+    private String toolStatus;
+
+    /** 工具输入参数（JSON 字符串） */
+    private String toolInput;
+
+    /** 工具输出结果 */
     private String toolOutput;
+
+    /** 工具执行错误信息 */
     private String toolError;
+
+    /** 工具标题 */
     private String toolTitle;
 
-    // File fields
+    // ==================== 文件字段 ====================
+
+    /** 文件名 */
     private String fileName;
+
+    /** 文件 URL */
     private String fileUrl;
+
+    /** 文件 MIME 类型 */
     private String fileMime;
 
-    // Step finish fields
+    // ==================== step.done 统计字段 ====================
+
+    /** 输入 Token 数 */
     private Integer tokensIn;
+
+    /** 输出 Token 数 */
     private Integer tokensOut;
+
+    /** 费用（美元） */
     private Double cost;
+
+    /** 结束原因 */
     private String finishReason;
 
+    /** 创建时间 */
     private LocalDateTime createdAt;
+
+    /** 最后更新时间 */
     private LocalDateTime updatedAt;
 }

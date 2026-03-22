@@ -15,6 +15,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+/** GatewayDiscoveryService 单元测试：验证从 Redis 发现 Gateway 实例的逻辑。 */
 class GatewayDiscoveryServiceTest {
 
     @Mock

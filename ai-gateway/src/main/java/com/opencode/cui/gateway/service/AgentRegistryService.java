@@ -13,14 +13,17 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Agent lifecycle management: registration, heartbeat, online/offline
- * transitions.
+ * Agent 生命周期管理服务：注册、心跳、上线/下线状态转换。
  *
- * Key behaviors:
- * - Same AK + same toolType -> reuse existing record (identity persistence)
- * - Duplicate active connection check is done BEFORE calling register
- * - Heartbeat updates last_seen_at
- * - Scheduled task marks stale agents offline
+ * <p>
+ * 核心行为：
+ * </p>
+ * <ul>
+ * <li>相同 AK + 相同 toolType → 复用已有记录（身份持久化）</li>
+ * <li>调用 register 之前应先检查是否存在重复的活跃连接</li>
+ * <li>心跳更新 last_seen_at</li>
+ * <li>定时任务检测超时 Agent 并标记为离线</li>
+ * </ul>
  */
 @Slf4j
 @Service
@@ -42,23 +45,21 @@ public class AgentRegistryService {
     }
 
     /**
-     * Register an agent connection. Reuses existing record for the same
-     * AK + toolType (identity persistence) or creates a new one.
+     * 注册 Agent 连接。相同 AK + toolType 复用已有记录（身份持久化），否则创建新记录。
+     * 调用此方法之前应先检查是否存在重复的活跃连接。
      *
-     * Duplicate active connection check should be done BEFORE calling this method.
-     *
-     * @return the AgentConnection (reused or newly created)
+     * @return AgentConnection（复用或新建）
      */
     @Transactional
     public AgentConnection register(String userId, String akId, String deviceName,
             String macAddress, String os, String toolType, String toolVersion) {
         String effectiveToolType = toolType != null ? toolType : "channel";
 
-        // Look for existing record with same AK + toolType (any status)
+        // 查找相同 AK + toolType 的已有记录（任意状态）
         AgentConnection existing = repository.findByAkIdAndToolType(akId, effectiveToolType);
 
         if (existing != null) {
-            // Reuse existing record: update to ONLINE with fresh metadata
+            // 复用已有记录：更新为 ONLINE 并刷新元数据
             existing.setStatus(AgentStatus.ONLINE);
             existing.setDeviceName(deviceName);
             existing.setMacAddress(macAddress);
@@ -72,7 +73,7 @@ public class AgentRegistryService {
             return existing;
         }
 
-        // First-time registration: create new record
+        // 首次注册：创建新记录
         AgentConnection agent = AgentConnection.builder()
                 .id(snowflakeIdGenerator.nextId())
                 .userId(userId)
@@ -93,56 +94,43 @@ public class AgentRegistryService {
         return agent;
     }
 
-    /**
-     * Update heartbeat timestamp for an agent.
-     */
+    /** 更新 Agent 心跳时间戳。 */
     @Transactional
     public void heartbeat(Long agentId) {
         repository.updateLastSeenAt(agentId, LocalDateTime.now());
         log.debug("Heartbeat received: agentId={}", agentId);
     }
 
-    /**
-     * Mark an agent as offline.
-     */
+    /** 将 Agent 标记为离线。 */
     @Transactional
     public void markOffline(Long agentId) {
         repository.updateStatus(agentId, AgentStatus.OFFLINE);
         log.info("Agent marked offline: agentId={}", agentId);
     }
 
-    /**
-     * Find all online agents.
-     */
+    /** 查询所有在线 Agent。 */
     public List<AgentConnection> findOnlineAgents() {
         return repository.findByStatus(AgentStatus.ONLINE);
     }
 
-    /**
-     * Find all online agents for a specific user.
-     */
+    /** 查询指定用户的所有在线 Agent。 */
     public List<AgentConnection> findOnlineByUserId(String userId) {
         return repository.findByUserIdAndStatus(userId, AgentStatus.ONLINE);
     }
 
-    /**
-     * Get agent by ID.
-     */
+    /** 按 ID 查询 Agent。 */
     public AgentConnection findById(Long agentId) {
         return repository.findById(agentId);
     }
 
-    /**
-     * Get the latest known connection record for an AK.
-     */
+    /** 获取指定 AK 最近的连接记录。 */
     public AgentConnection findLatestByAk(String ak) {
         return repository.findLatestByAkId(ak);
     }
 
     /**
-     * Scheduled task: check for timed-out agents and mark them offline.
-     * Runs at the interval configured by
-     * gateway.agent.heartbeat-check-interval-seconds.
+     * 定时任务：检测心跳超时的 Agent 并标记为离线。
+     * 执行间隔由 gateway.agent.heartbeat-check-interval-seconds 配置。
      */
     @Scheduled(fixedDelayString = "${gateway.agent.heartbeat-check-interval-seconds:30}000")
     @Transactional

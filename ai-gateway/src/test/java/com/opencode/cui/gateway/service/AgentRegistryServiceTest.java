@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/** AgentRegistryService 单元测试：验证 Agent 注册、复用已有身份等逻辑。 */
 @ExtendWith(MockitoExtension.class)
 class AgentRegistryServiceTest {
 

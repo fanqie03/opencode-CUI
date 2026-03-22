@@ -14,16 +14,26 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * IM 出站消息服务。
+ * 通过 WeLink IM REST API 向群聊或单聊发送文本消息，
+ * 支持分 Bot 账号发送（assistantAccount）。
+ */
 @Slf4j
 @Service
 public class ImOutboundService {
 
+    /** IM 消息内容类型：文本 */
     private static final int CONTENT_TYPE_TEXT = 13;
+    /** 群聊消息发送端点 */
     private static final String GROUP_ENDPOINT = "/v1/welinkim/im-service/chat/app-group-chat";
+    /** 单聊消息发送端点 */
     private static final String DIRECT_ENDPOINT = "/v1/welinkim/im-service/chat/app-user-chat";
 
     private final RestTemplate restTemplate;
+    /** IM 平台 API 根地址 */
     private final String imApiUrl;
+    /** IM 平台认证令牌 */
     private final String imToken;
 
     public ImOutboundService(
@@ -35,6 +45,15 @@ public class ImOutboundService {
         this.imToken = imToken;
     }
 
+    /**
+     * 向 IM 发送文本消息。
+     *
+     * @param sessionType      会话类型（group / direct）
+     * @param sessionId        IM 会话 ID
+     * @param content          消息内容
+     * @param assistantAccount 发送方 Bot 账号
+     * @return 发送成功返回 true
+     */
     public boolean sendTextToIm(String sessionType, String sessionId, String content, String assistantAccount) {
         log.info("Sending IM outbound: sessionType={}, sessionId={}, assistant={}, contentLength={}",
                 sessionType, sessionId, assistantAccount, content != null ? content.length() : 0);
@@ -52,6 +71,7 @@ public class ImOutboundService {
             return false;
         }
 
+        // 构建请求体
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("appMsgId", UUID.randomUUID().toString());
         body.put("senderAccount", assistantAccount);
@@ -79,9 +99,11 @@ public class ImOutboundService {
                         sessionId, response.getStatusCode(), elapsedMs);
                 return false;
             }
+            // 检查业务错误码
             JsonNode errorNode = respBody.path("error");
             if (!errorNode.isMissingNode() && errorNode.has("errorCode")) {
-                log.error("[EXT_CALL] ImOutbound.send business error: sessionId={}, errorCode={}, errorMsg={}, durationMs={}",
+                log.error(
+                        "[EXT_CALL] ImOutbound.send business error: sessionId={}, errorCode={}, errorMsg={}, durationMs={}",
                         sessionId,
                         errorNode.path("errorCode").asText(null),
                         errorNode.path("errorMsg").asText(null),
@@ -99,6 +121,11 @@ public class ImOutboundService {
         }
     }
 
+    /**
+     * 根据会话类型解析 API 路径。
+     *
+     * @return 对应的端点路径，未知类型返回 null
+     */
     private String resolvePath(String sessionType) {
         if (SkillSession.SESSION_TYPE_GROUP.equalsIgnoreCase(sessionType)) {
             return GROUP_ENDPOINT;
@@ -109,6 +136,7 @@ public class ImOutboundService {
         return null;
     }
 
+    /** 安全拼接 URL，避免路径分隔符重复或缺失。 */
     private String joinUrl(String baseUrl, String path) {
         if (baseUrl.endsWith("/") && path.startsWith("/")) {
             return baseUrl.substring(0, baseUrl.length() - 1) + path;

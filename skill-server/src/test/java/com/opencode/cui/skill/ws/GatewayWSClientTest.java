@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/** GatewayWSClient 单元测试：验证 Gateway WebSocket 客户端的消息处理。 */
 class GatewayWSClientTest {
 
     @Test

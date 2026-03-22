@@ -30,6 +30,7 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/** SkillStreamHandler 单元测试：验证 WebSocket 握手、消息推送和连接管理。 */
 class SkillStreamHandlerTest {
 
         private SkillStreamHandler handler;

@@ -26,6 +26,7 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/** SkillRelayService 单元测试：验证缓存路由、广播回退、路由学习、缓存失效等逻辑。 */
 @ExtendWith(MockitoExtension.class)
 class SkillRelayServiceTest {
 

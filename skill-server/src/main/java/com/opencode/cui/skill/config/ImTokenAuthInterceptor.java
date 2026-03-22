@@ -10,10 +10,19 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.util.Map;
 
+/**
+ * IM 入站接口的 Token 认证拦截器。
+ * 拦截 {@code /api/inbound/**} 请求，校验 Authorization header 中的 Bearer Token。
+ *
+ * <p>
+ * Token 通过 {@code skill.im.inbound-token} 配置，未配置时所有请求将被拒绝。
+ * </p>
+ */
 @Slf4j
 @Component
 public class ImTokenAuthInterceptor implements HandlerInterceptor {
 
+    /** 预配置的合法 Token */
     private final String inboundToken;
     private final ObjectMapper objectMapper;
 
@@ -24,12 +33,17 @@ public class ImTokenAuthInterceptor implements HandlerInterceptor {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 请求预处理：校验 Bearer Token。
+     * 校验失败时返回 401 JSON 响应并中断请求链。
+     */
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
         String path = request.getRequestURI();
         String remoteAddr = request.getRemoteAddr();
 
+        // Token 未配置：拒绝所有请求
         if (inboundToken == null || inboundToken.isBlank()) {
             log.warn("[AUTH_FAIL] IM token auth: reason=token_not_configured, path={}, remoteAddr={}",
                     path, remoteAddr);
@@ -37,6 +51,7 @@ public class ImTokenAuthInterceptor implements HandlerInterceptor {
             return false;
         }
 
+        // 缺少 Authorization header
         String auth = request.getHeader("Authorization");
         if (auth == null || !auth.startsWith("Bearer ")) {
             log.warn("[AUTH_FAIL] IM token auth: reason=missing_token, path={}, remoteAddr={}",
@@ -45,6 +60,7 @@ public class ImTokenAuthInterceptor implements HandlerInterceptor {
             return false;
         }
 
+        // Token 不匹配
         String token = auth.substring(7);
         if (!inboundToken.equals(token)) {
             log.warn("[AUTH_FAIL] IM token auth: reason=invalid_token, path={}, remoteAddr={}",
@@ -57,6 +73,7 @@ public class ImTokenAuthInterceptor implements HandlerInterceptor {
         return true;
     }
 
+    /** 写入 401 Unauthorized JSON 响应 */
     private void writeUnauthorized(HttpServletResponse response, String message) throws Exception {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);

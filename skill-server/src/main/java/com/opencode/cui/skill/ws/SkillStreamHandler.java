@@ -31,11 +31,11 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 
 /**
- * WebSocket handler for Skill miniapp streaming.
+ * Skill MiniApp 流式推送 WebSocket 处理器。
  *
- * Protocol endpoint:
- * - /ws/skill/stream : one stream per user, authenticated by Cookie userId
- *
+ * <p>
+ * 协议端点：/ws/skill/stream，每个用户一条流，通过 Cookie userId 认证。
+ * </p>
  */
 @Slf4j
 @Component
@@ -49,20 +49,20 @@ public class SkillStreamHandler extends TextWebSocketHandler {
     private final RedisMessageBroker redisMessageBroker;
 
     /**
-     * Protocol subscriptions keyed by userId. Each socket receives events for all
-     * active sessions of that user.
+     * 按 userId 分组的协议订阅者。
+     * 每个 Socket 接收该用户所有活跃会话的事件。
      */
     private final ConcurrentHashMap<String, Set<WebSocketSession>> userSubscribers = new ConcurrentHashMap<>();
 
     /**
-     * Cache for resolving welinkSessionId -> userId.
+     * welinkSessionId → userId 的解析缓存。
      * 使用 Caffeine 防止无限增长，1 小时无访问自动过期。
      */
     private final Cache<String, String> sessionOwners = Caffeine.newBuilder()
             .expireAfterAccess(Duration.ofHours(1)).maximumSize(10_000).build();
 
     /**
-     * Per-session transport sequence counter.
+     * 每会话的传输层序列号计数器。
      * 使用 Caffeine 防止已关闭 session 的计数器永久驻留。
      */
     private final Cache<String, AtomicLong> seqCounters = Caffeine.newBuilder()
@@ -128,8 +128,8 @@ public class SkillStreamHandler extends TextWebSocketHandler {
     }
 
     /**
-     * Push a StreamMessage to subscribers of a given skill session.
-     * Automatically assigns transport seq.
+     * 向指定会话的订阅者推送 StreamMessage。
+     * 自动分配传输层序列号。
      */
     public void pushStreamMessage(String sessionId, StreamMessage msg) {
         Set<WebSocketSession> recipients = resolveRecipients(sessionId);
@@ -142,10 +142,12 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         serializeAndBroadcast(msg, recipients, sessionId);
     }
 
+    /** 获取指定会话的当前订阅者数量。 */
     public int getSubscriberCount(String sessionId) {
         return resolveRecipients(sessionId).size();
     }
 
+    /** 注册用户订阅、预加载会话归属并发送初始状态。 */
     private void registerUserSubscriber(WebSocketSession session, String userId) {
         session.getAttributes().put(ATTR_USER_ID, userId);
         userSubscribers.computeIfAbsent(userId, key -> new CopyOnWriteArraySet<>()).add(session);
@@ -160,9 +162,9 @@ public class SkillStreamHandler extends TextWebSocketHandler {
                 userId, session.getId(), session.getRemoteAddress());
     }
 
+    /** 注销订阅者（幂等操作，传输错误和关闭回调都可能触发）。 */
     private void unregisterSubscriber(WebSocketSession session) {
-        // Both transport error and close callbacks may fire for the same socket.
-        // Remove the marker eagerly so cleanup stays idempotent.
+        // 传输错误和关闭回调可能重复触发，提前移除标记以保证幂等性
         String userId = (String) session.getAttributes().remove(ATTR_USER_ID);
         if (userId != null) {
             Set<WebSocketSession> sessions = userSubscribers.get(userId);
@@ -189,6 +191,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         }
     }
 
+    /** 订阅用户级别的 Redis 消息流。 */
     private void subscribeToUserStream(String userId) {
         if (redisMessageBroker.isUserSubscribed(userId)) {
             return;
@@ -197,11 +200,13 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         log.info("Subscribed to user stream: userId={}", userId);
     }
 
+    /** 取消用户级别的 Redis 消息流订阅。 */
     private void unsubscribeFromUserStream(String userId) {
         redisMessageBroker.unsubscribeFromUser(userId);
         log.info("Unsubscribed from user stream: userId={}", userId);
     }
 
+    /** 处理通过 Redis 接收到的用户级别广播消息。 */
     private void handleUserBroadcast(String userId, String rawMessage) {
         try {
             JsonNode node = objectMapper.readTree(rawMessage);
@@ -234,6 +239,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         }
     }
 
+    /** 向指定用户的所有 WebSocket 订阅者推送 StreamMessage。 */
     public void pushStreamMessageToUser(String userId, StreamMessage msg) {
         Set<WebSocketSession> recipients = new CopyOnWriteArraySet<>(userSubscribers.getOrDefault(userId, Set.of()));
         if (recipients.isEmpty()) {
@@ -249,6 +255,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         serializeAndBroadcast(msg, recipients, "user:" + userId);
     }
 
+    /** 发送初始流式状态（快照 + 当前状态）给新连接的订阅者。 */
     private void sendInitialStreamingState(WebSocketSession session, String userId) {
         List<SkillSession> activeSessions = snapshotService.getActiveSessionsForUser(userId);
         for (SkillSession skillSession : activeSessions) {
@@ -259,6 +266,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         }
     }
 
+    /** 发送会话快照。 */
     private void sendSnapshot(WebSocketSession session, String sessionId) {
         sendToSession(session, sessionId,
                 () -> snapshotService.buildSnapshot(sessionId, nextTransportSeq(sessionId)),
@@ -266,12 +274,14 @@ public class SkillStreamHandler extends TextWebSocketHandler {
                         + (msg.getMessages() != null ? msg.getMessages().size() : 0));
     }
 
+    /** 发送会话当前流式状态。 */
     private void sendStreamingState(WebSocketSession session, String sessionId) {
         sendToSession(session, sessionId,
                 () -> snapshotService.buildStreamingState(sessionId, nextTransportSeq(sessionId)),
                 msg -> "Streaming state sent: sessionId=" + sessionId + ", status=" + msg.getSessionStatus());
     }
 
+    /** 根据 sessionId 解析目标接收者（查找会话所属用户的 WebSocket 连接）。 */
     private Set<WebSocketSession> resolveRecipients(String sessionId) {
         String ownerUserId = sessionOwners.get(sessionId, this::resolveOwnerUserId);
         if (ownerUserId != null) {
@@ -283,6 +293,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         return Set.of();
     }
 
+    /** 从数据库反查会话所属用户。 */
     private String resolveOwnerUserId(String sessionId) {
         try {
             SkillSession session = sessionService.getSession(Long.valueOf(sessionId));
@@ -293,6 +304,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         }
     }
 
+    /** 预加载用户所有活跃会话的归属关系到缓存。 */
     private void preloadActiveSessionOwners(String userId) {
         for (SkillSession session : sessionService.findActiveByUserId(userId)) {
             if (session.getId() != null && session.getUserId() != null) {
@@ -301,7 +313,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         }
     }
 
-    // ==================== Shared helpers ====================
+    // ==================== 公共辅助方法 ====================
 
     /**
      * 序列化 StreamMessage 并广播到一组 WebSocket 会话。
@@ -339,9 +351,8 @@ public class SkillStreamHandler extends TextWebSocketHandler {
     }
 
     /**
-     * Broadcast a pre-serialized TextMessage to a set of WebSocket sessions.
-     * Handles synchronized sending and automatic unregistration of closed/failed
-     * sessions.
+     * 广播预序列化的 TextMessage 到一组 WebSocket 会话。
+     * 处理同步发送，自动注销已关闭/失败的会话。
      */
     private void broadcastText(TextMessage textMessage, Set<WebSocketSession> recipients, String context) {
         for (WebSocketSession ws : recipients) {
@@ -361,10 +372,12 @@ public class SkillStreamHandler extends TextWebSocketHandler {
         }
     }
 
+    /** 获取下一个传输层序列号。 */
     private long nextTransportSeq(String sessionId) {
         return seqCounters.get(sessionId, key -> new AtomicLong(0)).incrementAndGet();
     }
 
+    /** 从 Cookie 中提取 userId。 */
     private String extractUserIdFromCookie(WebSocketSession session) {
         List<String> cookieHeaders = session.getHandshakeHeaders().get("Cookie");
         if (cookieHeaders == null || cookieHeaders.isEmpty()) {
@@ -378,6 +391,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
                 .orElse(null);
     }
 
+    /** 解析 Cookie header 中的 userId 值。 */
     private String parseUserIdCookie(String cookieHeader) {
         String[] cookies = cookieHeader.split(";");
         for (String cookie : cookies) {

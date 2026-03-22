@@ -12,6 +12,15 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
+/**
+ * 协议消息映射工具类。
+ * 负责将内部存储模型（SkillMessage / SkillMessagePart / StreamMessage）
+ * 转换为前端协议视图对象（ProtocolMessageView / ProtocolMessagePart）。
+ *
+ * <p>
+ * 处理各类消息 Part 类型的规范化和字段映射：text、tool、question、permission、file。
+ * </p>
+ */
 public final class ProtocolMessageMapper {
 
     private static final Logger log = LoggerFactory.getLogger(ProtocolMessageMapper.class);

@@ -28,6 +28,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+/** SkillWebSocketHandler 单元测试：验证握手认证、连接注册、消息处理等逻辑。 */
 class SkillWebSocketHandlerTest {
 
     @Mock
@@ -185,8 +186,8 @@ class SkillWebSocketHandlerTest {
     void invokeMessageTriggersLearnRoute() throws Exception {
         handler.handle(session,
                 "{\"type\":\"invoke\",\"source\":\"skill-server\",\"ak\":\"ak_test_001\","
-                + "\"welinkSessionId\":\"42\",\"action\":\"chat\",\"userId\":\"user-1\","
-                + "\"payload\":{\"toolSessionId\":\"T1\",\"text\":\"hello\"}}");
+                        + "\"welinkSessionId\":\"42\",\"action\":\"chat\",\"userId\":\"user-1\","
+                        + "\"payload\":{\"toolSessionId\":\"T1\",\"text\":\"hello\"}}");
 
         verify(skillRelayService).handleInvokeFromSkill(eq(session),
                 argThat(message -> "invoke".equals(message.getType())));

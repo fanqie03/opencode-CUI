@@ -11,6 +11,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 消息管理服务。
+ * 提供消息的保存、查询、更新、分页等操作，
+ * 支持多种消息角色（user / assistant / tool / system）和内容类型。
+ *
+ * <p>
+ * 消息 seq 在每个 session 内自增，保存时同步刷新会话的 last_active_at。
+ * </p>
+ */
 @Slf4j
 @Service
 public class SkillMessageService {
@@ -34,8 +43,8 @@ public class SkillMessageService {
     }
 
     /**
-     * Save a message with auto-incrementing seq per session.
-     * Also touches the parent session to refresh last_active_at.
+     * 保存消息，session 内 seq 自动递增。
+     * 同时刷新父会话的 last_active_at。
      */
     @Transactional
     SkillMessage saveMessage(SaveMessageCommand cmd) {
@@ -65,8 +74,8 @@ public class SkillMessageService {
     }
 
     /**
-     * Save a message with auto-incrementing seq per session.
-     * Also touches the parent session to refresh last_active_at.
+     * 保存消息（重载方法），session 内 seq 自动递增。
+     * 同时刷新父会话的 last_active_at。
      */
     @Transactional
     SkillMessage saveMessage(Long sessionId, SkillMessage.Role role, String content,
@@ -74,45 +83,35 @@ public class SkillMessageService {
         return saveMessage(new SaveMessageCommand(sessionId, role, content, contentType, meta));
     }
 
-    /**
-     * Save a user message.
-     */
+    /** 保存用户消息。 */
     @Transactional
     public SkillMessage saveUserMessage(Long sessionId, String content) {
         return saveMessage(sessionId, SkillMessage.Role.USER, content,
                 SkillMessage.ContentType.PLAIN, null);
     }
 
-    /**
-     * Save an assistant message (raw OpenCode output, stored as-is).
-     */
+    /** 保存助手消息（OpenCode 原始输出，原样存储）。 */
     @Transactional
     public SkillMessage saveAssistantMessage(Long sessionId, String content, String meta) {
         return saveMessage(sessionId, SkillMessage.Role.ASSISTANT, content,
                 SkillMessage.ContentType.MARKDOWN, meta);
     }
 
-    /**
-     * Save a tool message (OpenCode tool use output, stored as-is).
-     */
+    /** 保存工具消息（OpenCode 工具调用输出，原样存储）。 */
     @Transactional
     public SkillMessage saveToolMessage(Long sessionId, String content, String meta) {
         return saveMessage(sessionId, SkillMessage.Role.TOOL, content,
                 SkillMessage.ContentType.CODE, meta);
     }
 
-    /**
-     * Save a system message.
-     */
+    /** 保存系统消息。 */
     @Transactional
     public SkillMessage saveSystemMessage(Long sessionId, String content) {
         return saveMessage(sessionId, SkillMessage.Role.SYSTEM, content,
                 SkillMessage.ContentType.PLAIN, null);
     }
 
-    /**
-     * Query message history with pagination, ordered by seq ascending.
-     */
+    /** 分页查询消息历史，按 seq 升序排列。 */
     @Transactional(readOnly = true)
     public PageResult<SkillMessage> getMessageHistory(Long sessionId, int page, int size) {
         int offset = page * size;
@@ -121,9 +120,7 @@ public class SkillMessageService {
         return new PageResult<>(content, total, page, size);
     }
 
-    /**
-     * Query message history with attached parts, returning protocol-ready views.
-     */
+    /** 分页查询消息历史（含 Part 附件），返回协议层视图对象。 */
     @Transactional(readOnly = true)
     public PageResult<ProtocolMessageView> getMessageHistoryWithParts(Long sessionId, int page, int size) {
         PageResult<SkillMessage> messages = getMessageHistory(sessionId, page, size);
@@ -137,17 +134,13 @@ public class SkillMessageService {
                 messages.getNumber(), messages.getSize());
     }
 
-    /**
-     * Query all messages for a session in seq order.
-     */
+    /** 查询会话的全部消息，按 seq 排序。 */
     @Transactional(readOnly = true)
     public java.util.List<SkillMessage> getAllMessages(Long sessionId) {
         return messageRepository.findAllBySessionId(sessionId);
     }
 
-    /**
-     * Get the total message count for a session.
-     */
+    /** 获取会话的消息总数。 */
     @Transactional(readOnly = true)
     public long getMessageCount(Long sessionId) {
         return messageRepository.countBySessionId(sessionId);
@@ -169,9 +162,7 @@ public class SkillMessageService {
         return messageRepository.findById(messageId);
     }
 
-    /**
-     * Update token/cost stats for a message (called on step.done).
-     */
+    /** 更新消息的 token 和费用统计（step.done 时调用）。 */
     @Transactional
     public void updateMessageStats(Long messageId, Integer tokensIn, Integer tokensOut, Double cost) {
         messageRepository.updateStats(messageId, tokensIn, tokensOut, cost);
@@ -186,9 +177,7 @@ public class SkillMessageService {
                 messageId, content != null ? content.length() : 0);
     }
 
-    /**
-     * Mark a message as finished (called when session goes idle).
-     */
+    /** 标记消息为已完成（会话进入 IDLE 时调用）。 */
     @Transactional
     public void markMessageFinished(Long messageId) {
         messageRepository.markFinished(messageId);

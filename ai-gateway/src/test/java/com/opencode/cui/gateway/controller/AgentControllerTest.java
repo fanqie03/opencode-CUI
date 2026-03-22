@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/** AgentController 单元测试：验证在线 Agent 查询接口。 */
 @ExtendWith(MockitoExtension.class)
 class AgentControllerTest {
 
@@ -70,4 +71,3 @@ class AgentControllerTest {
         verify(agentRegistryService).findOnlineByUserId("user-001");
     }
 }
-

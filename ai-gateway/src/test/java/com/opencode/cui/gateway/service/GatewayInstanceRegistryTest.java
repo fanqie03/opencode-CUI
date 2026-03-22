@@ -20,6 +20,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 
+/** GatewayInstanceRegistry 单元测试：验证 Redis 实例注册、心跳刷新和销毁逻辑。 */
 @ExtendWith(MockitoExtension.class)
 class GatewayInstanceRegistryTest {
 

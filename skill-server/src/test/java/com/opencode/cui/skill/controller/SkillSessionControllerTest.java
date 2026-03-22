@@ -21,7 +21,7 @@ import static org.mockito.Mockito.*;
 import org.mockito.ArgumentCaptor;
 
 /**
- * Unit tests for SkillSessionController (plain Mockito, no Spring context).
+ * SkillSessionController 单元测试（纯 Mockito，不加载 Spring 上下文）。
  */
 @ExtendWith(MockitoExtension.class)
 class SkillSessionControllerTest {

@@ -25,6 +25,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/** RedisMessageBroker 单元测试：验证 conn:ak 连接注册表和 agentUser 方法。 */
 @ExtendWith(MockitoExtension.class)
 class RedisMessageBrokerTest {
 

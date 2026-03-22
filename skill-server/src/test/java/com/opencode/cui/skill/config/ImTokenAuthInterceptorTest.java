@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/** ImTokenAuthInterceptor 单元测试：验证 IM Token 认证拦截器的逻辑。 */
 class ImTokenAuthInterceptorTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();

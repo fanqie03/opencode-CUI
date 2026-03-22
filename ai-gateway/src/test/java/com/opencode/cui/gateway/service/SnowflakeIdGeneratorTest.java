@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/** SnowflakeIdGenerator 单元测试：验证 ID 布局、服务编码嵌入和参数校验。 */
 class SnowflakeIdGeneratorTest {
 
     @Test

@@ -19,6 +19,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+/** MessagePersistenceService 单元测试：验证消息持久化、助手轮次终结等逻辑。 */
 class MessagePersistenceServiceTest {
 
         @Mock

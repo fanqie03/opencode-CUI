@@ -21,6 +21,15 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Skill Server 内部 WebSocket 处理器。
+ * 处理 Skill Server → Gateway 的 WebSocket 连接，
+ * 接收 invoke 命令并转发给对应的 Agent。
+ *
+ * <p>
+ * 握手认证：通过 Sec-WebSocket-Protocol 子协议传递 Base64 编码的 token + source。
+ * </p>
+ */
 @Slf4j
 @Component
 public class SkillWebSocketHandler extends TextWebSocketHandler implements HandshakeInterceptor {
@@ -114,6 +123,7 @@ public class SkillWebSocketHandler extends TextWebSocketHandler implements Hands
                 session.getId(), exception.getMessage(), exception);
     }
 
+    /** 从请求头中提取并验证认证子协议。 */
     private HandshakeAuth extractAcceptedProtocol(ServerHttpRequest request) {
         List<String> protocols = request.getHeaders().get("Sec-WebSocket-Protocol");
         if (protocols == null || protocols.isEmpty()) {
@@ -135,6 +145,7 @@ public class SkillWebSocketHandler extends TextWebSocketHandler implements Hands
         return null;
     }
 
+    /** 解码并验证 Base64 认证令牌。 */
     private HandshakeAuth verifyProtocolToken(String protocol) {
         String encodedPayload = protocol.substring(AUTH_PROTOCOL_PREFIX.length());
         try {
@@ -154,6 +165,13 @@ public class SkillWebSocketHandler extends TextWebSocketHandler implements Hands
         }
     }
 
+    /**
+     * 握手认证信息。
+     *
+     * @param protocol   原始子协议字符串
+     * @param source     来源标识
+     * @param instanceId Skill Server 实例 ID
+     */
     private record HandshakeAuth(String protocol, String source, String instanceId) {
     }
 }

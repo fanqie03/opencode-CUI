@@ -22,6 +22,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+/** ImOutboundService 单元测试：验证向 IM 发送消息的出站逻辑。 */
 class ImOutboundServiceTest {
 
     @Mock

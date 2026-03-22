@@ -8,9 +8,13 @@ import lombok.Builder;
 import java.time.LocalDateTime;
 
 /**
- * AK/SK credential entity — maps to the ak_sk_credential table.
+ * AK/SK 凭证实体。
+ * 对应数据库 ak_sk_credential 表，用于 Agent WebSocket 握手时的鉴权校验。
  *
- * Used by AkSkAuthService for database-backed AK/SK lookup (REQ-26).
+ * <p>
+ * AkSkAuthService 通过 AK 查询此表获取 SK，
+ * 然后使用 HMAC-SHA256 算法验证客户端签名。
+ * </p>
  */
 @Data
 @NoArgsConstructor
@@ -18,29 +22,38 @@ import java.time.LocalDateTime;
 @Builder
 public class AkSkCredential {
 
+    /** 数据库主键 */
     private Long id;
 
-    /** Access Key — unique identifier for the credential */
+    /** 应用密钥（Access Key）— 凭证的唯一标识 */
     private String ak;
 
-    /** Secret Key — used for HMAC-SHA256 signature verification */
+    /** 密钥（Secret Key）— 用于 HMAC-SHA256 签名验证 */
     private String sk;
 
-    /** Associated user ID */
+    /** 关联用户 ID */
     private String userId;
 
-    /** Human-readable description */
+    /** 凭证描述（便于管理识别） */
     private String description;
 
-    /** Credential status: ACTIVE or DISABLED */
+    /** 凭证状态：ACTIVE（启用）或 DISABLED（禁用） */
     @Builder.Default
     private CredentialStatus status = CredentialStatus.ACTIVE;
 
+    /** 创建时间 */
     private LocalDateTime createdAt;
 
+    /** 最后更新时间 */
     private LocalDateTime updatedAt;
 
+    /**
+     * 凭证状态枚举。
+     */
     public enum CredentialStatus {
-        ACTIVE, DISABLED
+        /** 启用 */
+        ACTIVE,
+        /** 禁用 */
+        DISABLED
     }
 }

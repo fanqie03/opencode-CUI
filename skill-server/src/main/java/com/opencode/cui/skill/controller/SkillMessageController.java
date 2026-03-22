@@ -35,11 +35,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 消息操作控制器。
+ * 提供发送消息、查询历史、转发到 IM、权限回复等接口，
+ * 操作均基于指定的 session 上下文。
+ */
 @Slf4j
 @RestController
 @RequestMapping("/api/skill/sessions/{sessionId}")
 public class SkillMessageController {
 
+    /** 合法的权限响应值集合 */
     private static final Set<String> VALID_PERMISSION_RESPONSES = Set.of("once", "always", "reject");
 
     private final SkillMessageService messageService;
@@ -68,8 +74,7 @@ public class SkillMessageController {
 
     /**
      * POST /api/skill/sessions/{sessionId}/messages
-     * Send a user message. Persists the message and triggers AI invocation via
-     * AI-Gateway.
+     * 发送用户消息。持久化消息并通过 AI-Gateway 触发 AI 调用。
      */
     @PostMapping("/messages")
     public ResponseEntity<ApiResponse<ProtocolMessageView>> sendMessage(
@@ -96,12 +101,12 @@ public class SkillMessageController {
             return ResponseEntity.ok(ApiResponse.error(409, "Session is closed"));
         }
 
-        // Persist user message
+        // 持久化用户消息
         messagePersistenceService.finalizeActiveAssistantTurn(numericSessionId);
         SkillMessage message = messageService.saveUserMessage(numericSessionId, request.getContent());
         messagePersistenceService.markPendingUserMessage(numericSessionId);
 
-        // Route to AI-Gateway
+        // 路由到 AI-Gateway
         routeToGateway(session, sessionId, numericSessionId, request);
 
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
@@ -112,7 +117,7 @@ public class SkillMessageController {
     }
 
     /**
-     * Route the user message to AI-Gateway based on session state and request type.
+     * 根据会话状态和请求类型将用户消息路由到 AI-Gateway。
      */
     private void routeToGateway(SkillSession session, String sessionId,
             Long numericSessionId, SendMessageRequest request) {
@@ -152,7 +157,7 @@ public class SkillMessageController {
 
     /**
      * GET /api/skill/sessions/{sessionId}/messages
-     * Get message history with pagination.
+     * 分页查询消息历史。
      */
     @GetMapping("/messages")
     public ResponseEntity<ApiResponse<PageResult<ProtocolMessageView>>> getMessages(
@@ -175,7 +180,7 @@ public class SkillMessageController {
 
     /**
      * POST /api/skill/sessions/{sessionId}/send-to-im
-     * Send selected text content to the IM chat associated with this session.
+     * 将选定的文本内容发送到当前会话关联的 IM 聊天。
      */
     @PostMapping("/send-to-im")
     public ResponseEntity<ApiResponse<Map<String, Object>>> sendToIm(
@@ -224,9 +229,8 @@ public class SkillMessageController {
 
     /**
      * POST /api/skill/sessions/{sessionId}/permissions/{permId}
-     * Reply to a permission request.
-     * Valid response values: "once", "always", "reject".
-     * Routes the reply to AI-Gateway -> PCAgent -> OpenCode for execution.
+     * 回复权限请求。合法响应值："once"、"always"、"reject"。
+     * 将回复路由到 AI-Gateway → PCAgent → OpenCode 执行。
      */
     @PostMapping("/permissions/{permId}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> replyPermission(
@@ -272,7 +276,7 @@ public class SkillMessageController {
                 "response", request.getResponse(),
                 "toolSessionId", session.getToolSessionId()));
 
-        // Send permission_reply invoke to AI-Gateway
+        // 向 AI-Gateway 发送 permission_reply invoke 命令
         gatewayRelayService.sendInvokeToGateway(
                 new InvokeCommand(session.getAk(),
                         session.getUserId(),
@@ -300,22 +304,25 @@ public class SkillMessageController {
                 "response", request.getResponse())));
     }
 
+    /** 发送消息请求体。 */
     @Data
     public static class SendMessageRequest {
         private String content;
-        /** Optional: when present, routes to question_reply instead of chat */
+        /** 可选：存在时路由到 question_reply 而非 chat */
         private String toolCallId;
     }
 
+    /** 发送到 IM 请求体。 */
     @Data
     public static class SendToImRequest {
         private String content;
         private String chatId;
     }
 
+    /** 权限回复请求体。 */
     @Data
     public static class PermissionReplyRequest {
-        /** Valid values: "once", "always", "reject" */
+        /** 合法值："once"、"always"、"reject" */
         private String response;
     }
 }

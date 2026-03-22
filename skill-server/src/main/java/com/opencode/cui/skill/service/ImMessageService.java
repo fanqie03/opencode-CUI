@@ -13,25 +13,30 @@ import org.springframework.web.client.RestTemplate;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * IM 消息发送服务。
+ * 通过平台 REST API 向 IM 聊天发送文本消息。
+ */
 @Slf4j
 @Service
 public class ImMessageService {
 
     private final RestTemplate restTemplate;
+    /** IM 平台 API 根地址 */
     private final String imApiUrl;
 
     public ImMessageService(RestTemplate restTemplate,
-                           @Value("${skill.im.api-url}") String imApiUrl) {
+            @Value("${skill.im.api-url}") String imApiUrl) {
         this.restTemplate = restTemplate;
         this.imApiUrl = imApiUrl;
     }
 
     /**
-     * Send a message to an IM chat via the platform API.
+     * 向 IM 聊天发送文本消息。
      *
-     * @param chatId  the IM chat identifier
-     * @param content the text content to send
-     * @return true if the message was sent successfully
+     * @param chatId  IM 会话标识
+     * @param content 文本内容
+     * @return 发送成功返回 true
      */
     public boolean sendMessage(String chatId, String content) {
         if (chatId == null || chatId.isBlank()) {

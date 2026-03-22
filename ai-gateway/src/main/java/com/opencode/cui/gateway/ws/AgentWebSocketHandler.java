@@ -37,19 +37,27 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * WebSocket handler for PCAgent connections.
+ * PCAgent WebSocket 处理器。
  *
- * Handshake: extracts auth params from Sec-WebSocket-Protocol subprotocol,
- * validates AK/SK signature via AkSkAuthService.
+ * <p>
+ * 握手认证：通过 Sec-WebSocket-Protocol 子协议提取认证参数，
+ * 经 AkSkAuthService 验签通过后建立连接。
+ * </p>
  *
- * After connection:
- * - register: validates device binding + duplicate connection + registers agent
- * - heartbeat: updates last_seen_at
- * - tool_event / tool_done / tool_error / session_created / permission_request:
- * relayed to Skill Server
- * - status_response: consumed by Gateway for REST status queries
+ * <p>
+ * 连接后支持的消息类型：
+ * </p>
+ * <ul>
+ * <li>register — 设备绑定校验 + 重复连接检查 + 注册 Agent</li>
+ * <li>heartbeat — 刷新 last_seen_at</li>
+ * <li>tool_event / tool_done / tool_error / session_created /
+ * permission_request — 转发至 Skill Server</li>
+ * <li>status_response — 供 Gateway REST 状态查询使用</li>
+ * </ul>
  *
- * On close: marks agent offline, notifies Skill Server agent_offline
+ * <p>
+ * 断开时：标记 Agent 离线、通知 Skill Server agent_offline。
+ * </p>
  */
 @Slf4j
 @Component
@@ -60,11 +68,11 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
     private static final String ATTR_AGENT_ID = "agentId";
     private static final String AUTH_PROTOCOL_PREFIX = "auth.";
 
-    /** Custom WebSocket close code: duplicate connection rejected */
+    /** 自定义 WebSocket 关闭码：重复连接被拒绝 */
     private static final CloseStatus CLOSE_DUPLICATE = new CloseStatus(4409, "duplicate_connection");
-    /** Custom WebSocket close code: device binding validation failed */
+    /** 自定义 WebSocket 关闭码：设备绑定校验失败 */
     private static final CloseStatus CLOSE_BINDING_FAILED = new CloseStatus(4403, "device_binding_failed");
-    /** Custom WebSocket close code: registration timeout */
+    /** 自定义 WebSocket 关闭码：注册超时 */
     private static final CloseStatus CLOSE_REGISTER_TIMEOUT = new CloseStatus(4408, "register_timeout");
 
     private final AkSkAuthService akSkAuthService;
@@ -80,7 +88,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
     @Value("${gateway.agent.register-timeout-seconds:10}")
     private int registerTimeoutSeconds;
 
-    /** wsSessionId -> ak mapping for routing cleanup on disconnect */
+    /** wsSessionId → ak 映射，用于断开时的路由清理 */
     private final Map<String, String> sessionAkMap = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -111,7 +119,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         log.info("AgentWebSocketHandler scheduler shut down");
     }
 
-    // ==================== Handshake Interceptor ====================
+    // ==================== 握手拦截器 ====================
 
     @Override
     public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response,
@@ -120,17 +128,17 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         log.info("[ENTRY] AgentWSHandler.beforeHandshake: remoteAddr={}",
                 request.getRemoteAddress());
 
-        // Extract auth from Sec-WebSocket-Protocol: "auth.{base64-json}"
+        // 从 Sec-WebSocket-Protocol 提取认证信息："auth.{base64-json}"
         List<String> protocols = request.getHeaders().get("Sec-WebSocket-Protocol");
         if (protocols == null || protocols.isEmpty()) {
             log.warn("[AUTH] AgentWSHandler.beforeHandshake: reason=no_subprotocol");
             return false;
         }
 
-        // Find the auth protocol (may be comma-separated in a single header value)
+        // 查找认证协议（可能在单个 header 值中以逗号分隔）
         String authPayload = null;
         for (String protocol : protocols) {
-            // Handle comma-separated values within a single header
+            // 处理单个 header 中逗号分隔的多个值
             for (String p : protocol.split(",")) {
                 String trimmed = p.trim();
                 if (trimmed.startsWith(AUTH_PROTOCOL_PREFIX)) {
@@ -147,9 +155,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             return false;
         }
 
-        // Decode Base64URL -> JSON -> extract ak/ts/nonce/sign
-        // Uses URL-safe Base64 (RFC 4648 §5) because WebSocket subprotocol tokens
-        // cannot contain '+', '/', '=' (standard Base64 chars).
+        // 解码 Base64URL → JSON → 提取 ak/ts/nonce/sign
+        // 使用 URL 安全 Base64（RFC 4648 §5），因为 WebSocket 子协议不支持 '+', '/', '='
         String ak, ts, nonce, sign;
         try {
             byte[] decoded = Base64.getUrlDecoder().decode(authPayload);
@@ -165,21 +172,20 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             return false;
         }
 
-        // Verify AK/SK signature
+        // 验证 AK/SK 签名
         String userId = akSkAuthService.verify(ak, ts, nonce, sign);
         if (userId == null) {
             log.warn("[AUTH] AgentWSHandler.beforeHandshake: reason=auth_failed, ak={}", ak);
             return false;
         }
 
-        // Store auth info in session attributes
+        // 将认证信息保存到 session 属性中
         attributes.put(ATTR_USER_ID, userId);
         attributes.put(ATTR_AK_ID, ak);
 
-        // Echo the selected subprotocol in response.
-        // RFC 6455 requires the server to respond with one of the client's
-        // offered subprotocols EXACTLY. Bun enforces this strictly and will
-        // reset the connection if the value doesn't match.
+        // 在响应中回显选定的子协议
+        // RFC 6455 要求服务端必须原样回复客户端提供的子协议，
+        // Bun 会严格校验该值
         String selectedProtocol = AUTH_PROTOCOL_PREFIX + authPayload;
         response.getHeaders().set("Sec-WebSocket-Protocol", selectedProtocol);
 
@@ -195,7 +201,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         // No-op
     }
 
-    // ==================== WebSocket Handler ====================
+    // ==================== WebSocket 处理器 ====================
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
@@ -204,7 +210,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         log.info("PCAgent WebSocket connected: sessionId={}, userId={}, ak={}",
                 session.getId(), userId, akId);
 
-        // Start register timeout: if no register message within N seconds, close
+        // 启动注册超时定时器：N 秒内未收到 register 消息则关闭连接
         scheduler.schedule(() -> {
             if (!sessionAkMap.containsKey(session.getId()) && session.isOpen()) {
                 log.warn("Register timeout: closing unregistered connection. sessionId={}, ak={}",
@@ -265,23 +271,23 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String ak = sessionAkMap.remove(session.getId());
         if (ak != null) {
-            // Retrieve agentId (Long) from session attributes for DB operation
+            // 从 session 属性中获取 agentId（Long）用于数据库操作
             Long agentId = (Long) session.getAttributes().get(ATTR_AGENT_ID);
             log.info("PCAgent disconnected: ak={}, agentId={}, sessionId={}, status={}",
                     ak, agentId, session.getId(), status);
 
-            // Mark agent offline in database (requires agentId Long)
+            // 在数据库中标记 Agent 离线（需要 agentId）
             if (agentId != null) {
                 agentRegistryService.markOffline(agentId);
             }
 
-            // Remove from relay service (uses ak)
+            // 从中继服务移除（使用 ak）
             eventRelayService.removeAgentSession(ak);
 
             // v3: 条件删除 conn:ak（仅删本实例注册的，防误删已重连到其他 GW 的 Agent）
             redisMessageBroker.conditionalRemoveConnAk(ak, gatewayInstanceRegistry.getInstanceId());
 
-            // Notify Skill Server that agent went offline (uses ak)
+            // 通知 Skill Server Agent 已离线（使用 ak）
             GatewayMessage offlineMsg = GatewayMessage.agentOffline(ak);
             eventRelayService.relayToSkillServer(ak, offlineMsg);
         } else {
@@ -297,7 +303,9 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
                 ak, session.getId(), exception.getMessage());
     }
 
-    // ==================== Message Handlers ====================
+    // ==================== 消息处理方法 ====================
+
+    /** 处理 Agent 注册：设备绑定校验 → 重复连接检查 → 数据库注册 → 通知 Skill Server。 */
 
     private void handleRegister(WebSocketSession session, GatewayMessage message,
             String userId, String akId) {
@@ -311,7 +319,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         log.info("[ENTRY] AgentWSHandler.handleRegister: ak={}, toolType={}, os={}",
                 akId, toolType, os);
 
-        // Step 1: Validate device binding (3rd party, fail-open)
+        // 步骤 1：验证设备绑定（第三方服务，失败时放行）
         if (!deviceBindingService.validate(akId, macAddress, toolType)) {
             log.warn("Register rejected: device binding failed. ak={}, mac={}, toolType={}",
                     akId, macAddress, toolType);
@@ -320,7 +328,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             return;
         }
 
-        // Step 2: Check for duplicate active connection (keep old, reject new)
+        // 步骤 2：检查重复活跃连接（保留旧连接，拒绝新连接）
         if (eventRelayService.hasAgentSession(akId)) {
             log.warn("Register rejected: duplicate connection. ak={}, toolType={}",
                     akId, toolType);
@@ -329,24 +337,24 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             return;
         }
 
-        // Step 3: Register in database (reuse existing record or create new)
+        // 步骤 3：数据库注册（复用已有记录或新建）
         AgentConnection agent = agentRegistryService.register(
                 userId, akId, deviceName, macAddress, os, toolType, toolVersion);
 
         Long agentId = agent.getId();
 
-        // Store agentId in session attributes (for DB operations on disconnect)
+        // 将 agentId 保存到 session 属性（断开时用于数据库操作）
         session.getAttributes().put(ATTR_AGENT_ID, agentId);
-        // Store ak in session-ak map (for routing)
+        // 将 ak 保存到 session-ak 映射（用于消息路由）
         sessionAkMap.put(session.getId(), akId);
 
-        // Register WebSocket session in relay service (keyed by ak)
+        // 在中继服务中注册 WebSocket 会话（以 ak 为键）
         eventRelayService.registerAgentSession(akId, userId, session);
 
         // v3: 注册 conn:ak → gatewayInstanceId（Source 服务查询用于下行精确投递）
         redisMessageBroker.bindConnAk(akId, gatewayInstanceRegistry.getInstanceId(), CONN_AK_TTL);
 
-        // Send register_ok to client
+        // 发送 register_ok 给客户端
         try {
             String okJson = objectMapper.writeValueAsString(GatewayMessage.registerOk());
             session.sendMessage(new TextMessage(okJson));
@@ -354,7 +362,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             log.error("Failed to send register_ok: ak={}", akId, e);
         }
 
-        // Notify Skill Server that agent is online (keyed by ak)
+        // 通知 Skill Server Agent 已上线（以 ak 为键）
         GatewayMessage onlineMsg = GatewayMessage.agentOnline(
                 akId, toolType, toolVersion);
         eventRelayService.relayToSkillServer(akId, onlineMsg);
@@ -367,8 +375,9 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
                 toolType, toolVersion, elapsedMs);
     }
 
+    /** 处理心跳：刷新 Agent 最后活跃时间和 conn:ak TTL。 */
     private void handleHeartbeat(WebSocketSession session) {
-        // Heartbeat needs agentId (Long) from session attributes for DB operation
+        // 心跳需要从 session 属性中获取 agentId（Long）用于数据库操作
         Long agentId = (Long) session.getAttributes().get(ATTR_AGENT_ID);
         if (agentId != null) {
             agentRegistryService.heartbeat(agentId);
@@ -383,6 +392,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         }
     }
 
+    /** 将消息转发至 Skill Server。 */
     private void handleRelayToSkillServer(WebSocketSession session, GatewayMessage message) {
         String ak = sessionAkMap.get(session.getId());
         if (ak == null) {
@@ -404,6 +414,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
                 message.getType(), ak, elapsedMs);
     }
 
+    /** 处理状态响应：记录 Agent 的 OpenCode 在线状态。 */
     private void handleStatusResponse(WebSocketSession session, GatewayMessage message) {
         String ak = sessionAkMap.get(session.getId());
         if (ak == null) {
@@ -415,11 +426,9 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         log.debug("Recorded status_response: ak={}, opencodeOnline={}", ak, message.getOpencodeOnline());
     }
 
-    // ==================== Helpers ====================
+    // ==================== 辅助方法 ====================
 
-    /**
-     * Send a rejection message and close the WebSocket connection.
-     */
+    /** 发送拒绝消息并关闭 WebSocket 连接。 */
     private void sendAndClose(WebSocketSession session, GatewayMessage message, CloseStatus status) {
         try {
             String json = objectMapper.writeValueAsString(message);

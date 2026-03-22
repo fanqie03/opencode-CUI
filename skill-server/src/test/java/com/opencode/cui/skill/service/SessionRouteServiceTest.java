@@ -21,6 +21,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+/** SessionRouteService 单元测试：验证会话与 Gateway 实例的路由绑定和查询。 */
 class SessionRouteServiceTest {
 
     @Mock

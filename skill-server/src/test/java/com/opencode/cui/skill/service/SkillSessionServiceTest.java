@@ -18,6 +18,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+/** SkillSessionService 单元测试：验证会话创建、查询、关闭等核心逻辑。 */
 class SkillSessionServiceTest {
 
     @Mock

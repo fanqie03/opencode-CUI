@@ -7,16 +7,29 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 
+/**
+ * IM 交互状态管理服务。
+ * 使用 Redis 记录会话中待处理的交互状态（如提问、权限请求），
+ * 用于在收到用户回复时匹配并清除对应的待处理状态。
+ *
+ * <p>
+ * Redis Key 模式：{@code skill:im:interaction:{sessionId}}
+ * </p>
+ */
 @Slf4j
 @Service
 public class ImInteractionStateService {
 
+    /** 交互类型常量：提问 */
     public static final String TYPE_QUESTION = "question";
+    /** 交互类型常量：权限请求 */
     public static final String TYPE_PERMISSION = "permission";
+    /** Redis Key 前缀 */
     private static final String KEY_PREFIX = "skill:im:interaction:";
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    /** 交互状态的 TTL，超时后自动清理 */
     private final Duration ttl;
 
     public ImInteractionStateService(
@@ -28,14 +41,21 @@ public class ImInteractionStateService {
         this.ttl = Duration.ofMinutes(ttlMinutes);
     }
 
+    /** 标记会话有待处理的提问。 */
     public void markQuestion(Long sessionId, String toolCallId) {
         save(sessionId, new PendingInteraction(TYPE_QUESTION, toolCallId));
     }
 
+    /** 标记会话有待处理的权限请求。 */
     public void markPermission(Long sessionId, String permissionId) {
         save(sessionId, new PendingInteraction(TYPE_PERMISSION, permissionId));
     }
 
+    /**
+     * 获取会话的待处理交互状态。
+     *
+     * @return 待处理交互信息，不存在或反序列化失败返回 null
+     */
     public PendingInteraction getPending(Long sessionId) {
         if (sessionId == null) {
             return null;
@@ -53,6 +73,7 @@ public class ImInteractionStateService {
         }
     }
 
+    /** 清除会话的待处理交互状态。 */
     public void clear(Long sessionId) {
         if (sessionId == null) {
             return;
@@ -60,6 +81,10 @@ public class ImInteractionStateService {
         redisTemplate.delete(buildKey(sessionId));
     }
 
+    /**
+     * 条件清除：仅当类型和回复 ID 匹配时才清除待处理状态。
+     * 防止误清除不匹配的交互状态。
+     */
     public void clearIfMatches(Long sessionId, String type, String replyId) {
         PendingInteraction pending = getPending(sessionId);
         if (pending == null) {
@@ -74,6 +99,10 @@ public class ImInteractionStateService {
         clear(sessionId);
     }
 
+    /**
+     * 持久化交互状态到 Redis。
+     * 设置 TTL 防止遗留数据占用内存。
+     */
     private void save(Long sessionId, PendingInteraction pending) {
         if (sessionId == null || pending == null || pending.replyId() == null || pending.replyId().isBlank()) {
             return;
@@ -88,10 +117,17 @@ public class ImInteractionStateService {
         }
     }
 
+    /** 构建 Redis Key。 */
     private String buildKey(Long sessionId) {
         return KEY_PREFIX + sessionId;
     }
 
+    /**
+     * 待处理交互记录。
+     *
+     * @param type    交互类型（question / permission）
+     * @param replyId 关联的回复标识（toolCallId 或 permissionId）
+     */
     public record PendingInteraction(String type, String replyId) {
     }
 }

@@ -27,6 +27,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
+/**
+ * 会话管理控制器。
+ * 提供会话的创建、查询、关闭和中止等 RESTful 接口，
+ * 操作同时会向 AI-Gateway 发送相应的 invoke 命令。
+ */
 @Slf4j
 @RestController
 @RequestMapping("/api/skill/sessions")
@@ -49,8 +54,7 @@ public class SkillSessionController {
 
     /**
      * POST /api/skill/sessions
-     * Create a new skill session. Also instructs AI-Gateway to create an OpenCode
-     * session.
+     * 创建新的 Skill 会话，同时指示 AI-Gateway 创建对应的 OpenCode 会话。
      */
     @PostMapping
     public ResponseEntity<ApiResponse<SkillSession>> createSession(
@@ -88,7 +92,7 @@ public class SkillSessionController {
 
     /**
      * GET /api/skill/sessions
-     * List sessions for a user with pagination.
+     * 分页查询用户的会话列表。
      */
     @GetMapping
     public ResponseEntity<ApiResponse<PageResult<SkillSession>>> listSessions(
@@ -108,7 +112,7 @@ public class SkillSessionController {
 
     /**
      * GET /api/skill/sessions/{id}
-     * Get a single session by ID.
+     * 按 ID 查询单个会话。
      */
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<SkillSession>> getSession(
@@ -124,8 +128,7 @@ public class SkillSessionController {
 
     /**
      * DELETE /api/skill/sessions/{id}
-     * Close a session. Also sends close_session to AI-Gateway if a tool session
-     * exists.
+     * 关闭会话。如果存在 tool session，同时向 AI-Gateway 发送 close_session 命令。
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> closeSession(
@@ -154,8 +157,7 @@ public class SkillSessionController {
 
     /**
      * POST /api/skill/sessions/{id}/abort
-     * Abort a session. Sends abort_session to AI-Gateway to stop ongoing AI
-     * operations while keeping the session reusable.
+     * 中止会话。向 AI-Gateway 发送 abort_session 以停止进行中的 AI 操作，但保留会话可复用。
      */
     @PostMapping("/{id}/abort")
     public ResponseEntity<ApiResponse<Map<String, Object>>> abortSession(
@@ -171,7 +173,7 @@ public class SkillSessionController {
             return ResponseEntity.ok(ApiResponse.error(409, "Session is already closed"));
         }
 
-        // Send abort_session to AI-Gateway if toolSessionId and ak exist
+        // 如果 toolSessionId 和 ak 存在，向 AI-Gateway 发送 abort_session 命令
         log.info("[ENTRY] abortSession: sessionId={}", id);
         if (session.getAk() != null && session.getToolSessionId() != null) {
             gatewayRelayService.sendInvokeToGateway(
@@ -187,6 +189,7 @@ public class SkillSessionController {
         return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "aborted", "welinkSessionId", id)));
     }
 
+    /** 创建会话请求体。 */
     @Data
     public static class CreateSessionRequest {
         private String ak;

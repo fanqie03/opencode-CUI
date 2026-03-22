@@ -25,16 +25,24 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Gateway REST API.
+ * Gateway REST API 控制器。
  *
- * Protocol endpoints:
- * - GET /api/gateway/agents
- * - GET /api/gateway/agents/status?ak=
- * - POST /api/gateway/invoke
+ * <p>
+ * 协议端点：
+ * </p>
+ * <ul>
+ * <li>GET /api/gateway/agents — 查询在线 Agent 列表</li>
+ * <li>GET /api/gateway/agents/status?ak= — 查询 Agent 状态</li>
+ * <li>POST /api/gateway/invoke — 向 Agent 发送命令</li>
+ * </ul>
  *
- * Legacy endpoints are kept for compatibility:
- * - GET /api/gateway/agents/{id}/status
- * - POST /api/gateway/agents/{id}/invoke
+ * <p>
+ * 兼容旧版端点（保留向后兼容）：
+ * </p>
+ * <ul>
+ * <li>GET /api/gateway/agents/{id}/status</li>
+ * <li>POST /api/gateway/agents/{id}/invoke</li>
+ * </ul>
  */
 @Slf4j
 @RestController
@@ -53,6 +61,7 @@ public class AgentController {
         this.internalToken = internalToken;
     }
 
+    /** 查询在线 Agent 列表，支持按 AK 或 userId 过滤。 */
     @GetMapping("/agents")
     public ResponseEntity<ApiResponse<List<AgentSummaryResponse>>> listOnlineAgents(
             @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -81,6 +90,7 @@ public class AgentController {
         return ResponseEntity.ok(ApiResponse.ok(data));
     }
 
+    /** 按 AK 查询 Agent 详细状态（含 WebSocket 连接和 OpenCode 在线状态）。 */
     @GetMapping("/agents/status")
     public ResponseEntity<ApiResponse<AgentStatusResponse>> getAgentStatusByAk(
             @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -104,6 +114,7 @@ public class AgentController {
         return ResponseEntity.ok(ApiResponse.ok(status));
     }
 
+    /** 通过 AK 向 Agent 发送 invoke 命令（新版协议端点）。 */
     @PostMapping("/invoke")
     public ResponseEntity<ApiResponse<InvokeResult>> invokeAgentByAk(
             @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -139,6 +150,7 @@ public class AgentController {
         return ResponseEntity.ok(ApiResponse.ok(new InvokeResult(true, "Command sent to agent")));
     }
 
+    /** 【旧版】按数据库 ID 查询 Agent 状态。 */
     @GetMapping("/agents/{id}/status")
     public ResponseEntity<Map<String, Object>> getAgentStatus(@PathVariable Long id) {
         AgentConnection agent = agentRegistryService.findById(id);
@@ -154,6 +166,7 @@ public class AgentController {
         return ResponseEntity.ok(status);
     }
 
+    /** 【旧版】按数据库 ID 向 Agent 发送 invoke 命令。 */
     @PostMapping("/agents/{id}/invoke")
     public ResponseEntity<Map<String, Object>> invokeAgentLegacy(
             @PathVariable Long id,
@@ -189,6 +202,7 @@ public class AgentController {
         return ResponseEntity.ok(result);
     }
 
+    /** 校验内部 Bearer Token 是否有效。 */
     private boolean isAuthorized(String authorization) {
         return authorization != null && authorization.equals("Bearer " + internalToken);
     }

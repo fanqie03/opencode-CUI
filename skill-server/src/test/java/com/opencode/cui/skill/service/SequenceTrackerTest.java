@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for SequenceTracker three-tier gap detection strategy.
+ * SequenceTracker 三级间隙检测策略单元测试。
  */
 class SequenceTrackerTest {
 
