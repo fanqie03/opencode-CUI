@@ -1,49 +1,44 @@
 package com.opencode.cui.gateway.service;
 
+import com.opencode.cui.gateway.model.AgentConnection;
+import com.opencode.cui.gateway.repository.AgentConnectionRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-
-import java.util.Map;
 
 /**
  * AK 设备绑定校验服务。
- * 校验 AK 是否绑定到指定设备（MAC 地址）和工具类型，通过第三方服务进行验证。
+ * 强制业务规则：一个 AK 只能绑定一台设备（MAC 地址）和一个工具类型（toolType）。
  *
  * <p>
- * 失败开放策略：第三方服务不可用时，允许连接并记录警告日志。
+ * 直接查 agent_connection 表判断绑定关系：
+ * <ul>
+ * <li>首次连接（无记录）→ 放行（后续 register 会创建绑定）</li>
+ * <li>有记录 → 比对 MAC 地址和 toolType，不一致则拒绝</li>
+ * </ul>
  * </p>
  */
 @Slf4j
 @Service
 public class DeviceBindingService {
 
-    @Value("${gateway.device-binding.url:}")
-    private String bindingServiceUrl;
-
-    @Value("${gateway.device-binding.timeout-ms:3000}")
-    private int timeoutMs;
-
     @Value("${gateway.device-binding.enabled:false}")
     private boolean enabled;
 
-    private final RestTemplate restTemplate;
+    private final AgentConnectionRepository agentConnectionRepository;
 
-    public DeviceBindingService(RestTemplate restTemplate) {
-        this.restTemplate = restTemplate;
+    public DeviceBindingService(AgentConnectionRepository agentConnectionRepository) {
+        this.agentConnectionRepository = agentConnectionRepository;
     }
 
     /**
-     * 校验 AK 是否绑定到指定 MAC 地址和工具类型。
+     * 校验 AK 设备绑定。
+     * 一个 AK 只允许绑定一台设备（MAC）和一个 toolType。
      *
      * @param ak         Access Key ID
      * @param macAddress 设备 MAC 地址
-     * @param toolType   工具类型（如 OPENCODE）
-     * @return 校验通过或服务不可用（失败开放）时返回 true
+     * @param toolType   工具类型（如 OPENCODE、channel）
+     * @return 校验通过返回 true
      */
     public boolean validate(String ak, String macAddress, String toolType) {
         if (!enabled) {
@@ -51,43 +46,37 @@ public class DeviceBindingService {
             return true;
         }
 
-        if (bindingServiceUrl == null || bindingServiceUrl.isBlank()) {
-            log.warn("Device binding service URL not configured, fail-open: ak={}", ak);
-            return true;
-        }
-
-        long start = System.nanoTime();
         try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-
-            Map<String, String> body = Map.of(
-                    "ak", ak,
-                    "macAddress", macAddress,
-                    "toolType", toolType);
-
-            HttpEntity<Map<String, String>> request = new HttpEntity<>(body, headers);
-
-            @SuppressWarnings("unchecked")
-            Map<String, Object> response = restTemplate.postForObject(
-                    bindingServiceUrl, request, Map.class);
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-
-            if (response != null && Boolean.TRUE.equals(response.get("valid"))) {
-                log.info("[EXT_CALL] DeviceBinding.validate success: ak={}, toolType={}, durationMs={}",
-                        ak, toolType, elapsedMs);
+            // 按 AK 查询最近的连接记录（不限 toolType，覆盖所有历史绑定）
+            AgentConnection existing = agentConnectionRepository.findLatestByAkId(ak);
+            if (existing == null) {
+                // 首次连接，无绑定记录，放行
+                log.info("Device binding: first connection for ak={}, allowing", ak);
                 return true;
             }
 
-            String message = response != null ? String.valueOf(response.get("message")) : "unknown";
-            log.warn("Device binding validation failed: ak={}, mac={}, toolType={}, reason={}",
-                    ak, macAddress, toolType, message);
-            return false;
+            // 校验 toolType 是否一致
+            String boundToolType = existing.getToolType();
+            if (boundToolType != null && !boundToolType.equalsIgnoreCase(toolType)) {
+                log.warn("Device binding rejected: toolType mismatch. ak={}, bound={}, requested={}",
+                        ak, boundToolType, toolType);
+                return false;
+            }
+
+            // 校验 MAC 地址是否一致
+            String boundMac = existing.getMacAddress();
+            if (boundMac != null && macAddress != null && !boundMac.equalsIgnoreCase(macAddress)) {
+                log.warn("Device binding rejected: MAC mismatch. ak={}, bound={}, requested={}",
+                        ak, boundMac, macAddress);
+                return false;
+            }
+
+            log.debug("Device binding valid: ak={}, mac={}, toolType={}", ak, macAddress, toolType);
+            return true;
 
         } catch (Exception e) {
-            log.warn("Device binding service unavailable, fail-open: ak={}, error={}",
-                    ak, e.getMessage());
-            return true; // 失败开放：服务不可用时允许连接
+            log.warn("Device binding check failed, fail-open: ak={}, error={}", ak, e.getMessage());
+            return true;
         }
     }
 }

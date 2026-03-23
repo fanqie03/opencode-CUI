@@ -4,33 +4,39 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.opencode.cui.gateway.model.AgentConnection;
-import com.opencode.cui.gateway.repository.AgentConnectionRepository;
+import com.opencode.cui.gateway.model.AkSkCredential;
+import com.opencode.cui.gateway.repository.AkSkCredentialRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.concurrent.TimeUnit;
 
 /**
- * AK/SK 四级认证服务。
+ * AK/SK 认证服务。
+ *
+ * <p>
+ * 支持两种验签模式（通过 {@code gateway.auth.mode} 配置）：
+ * </p>
  *
  * <ul>
- * <li>L1: Caffeine 本地缓存命中 → 信任缓存的 userId（外部 API 首次验签后回填）</li>
- * <li>L2: Redis 缓存命中 → 信任缓存，回填 L1</li>
- * <li>L3: 外部身份 API 校验（服务端验签）→ 回填 L1+L2</li>
- * <li>L4: 拒绝认证</li>
+ * <li><b>gateway</b>（默认）— 本地验签：从 ak_sk_credential 表获取 SK，
+ * 使用 HMAC-SHA256 在 Gateway 本地完成签名校验，并返回关联的 userId。</li>
+ * <li><b>remote</b> — 远程验签：委托外部身份 API 完成验签，
+ * 支持 L1(Caffeine) → L2(Redis) → L3(外部API) 缓存分级管线。</li>
  * </ul>
  *
- * 安全保证：
- * - 时间窗口: ±5 分钟（每次请求校验）
- * - Nonce 防重放: Redis SET NX TTL 5 分钟（每次请求校验）
- * - 缓存 TTL: L1 5min / L2 1h（限制信任窗口）
- * - 首次认证必须通过外部 API 真实验签
+ * <p>
+ * 两种模式共用：时间窗口校验（±5分钟） + Nonce 防重放（Redis SET NX）。
+ * </p>
  */
 @Slf4j
 @Service
@@ -42,44 +48,45 @@ public class AkSkAuthService {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final IdentityApiClient identityApiClient;
-    private final AgentConnectionRepository agentConnectionRepository;
+    private final AkSkCredentialRepository akSkCredentialRepository;
 
-    /** L1 本地缓存: ak → IdentityCacheEntry */
+    /** L1 本地缓存: ak → IdentityCacheEntry（仅 remote 模式使用） */
     private final Cache<String, IdentityCacheEntry> l1Cache;
 
     private final long timestampToleranceSeconds;
     private final long nonceTtlSeconds;
     private final long l2TtlSeconds;
 
-    /** 本地调试开关：跳过全部签名校验，直接以 AK 作为 userId 放行 */
-    private final boolean skipVerification;
+    /** 验签模式：gateway=本地 HMAC 验签，remote=外部 API 验签 */
+    private final String authMode;
 
     public AkSkAuthService(
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
             IdentityApiClient identityApiClient,
-            AgentConnectionRepository agentConnectionRepository,
+            AkSkCredentialRepository akSkCredentialRepository,
             @Value("${gateway.auth.timestamp-tolerance-seconds:300}") long timestampToleranceSeconds,
             @Value("${gateway.auth.nonce-ttl-seconds:300}") long nonceTtlSeconds,
             @Value("${gateway.auth.identity-cache.l1-ttl-seconds:300}") long l1TtlSeconds,
             @Value("${gateway.auth.identity-cache.l1-max-size:10000}") long l1MaxSize,
             @Value("${gateway.auth.identity-cache.l2-ttl-seconds:3600}") long l2TtlSeconds,
-            @Value("${gateway.auth.skip-verification:false}") boolean skipVerification) {
+            @Value("${gateway.auth.mode:gateway}") String authMode) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.identityApiClient = identityApiClient;
-        this.agentConnectionRepository = agentConnectionRepository;
+        this.akSkCredentialRepository = akSkCredentialRepository;
         this.timestampToleranceSeconds = timestampToleranceSeconds;
         this.nonceTtlSeconds = nonceTtlSeconds;
         this.l2TtlSeconds = l2TtlSeconds;
-        this.skipVerification = skipVerification;
+        this.authMode = authMode;
         this.l1Cache = Caffeine.newBuilder()
                 .maximumSize(l1MaxSize)
                 .expireAfterWrite(Duration.ofSeconds(l1TtlSeconds))
                 .build();
-        if (skipVerification) {
-            log.warn(
-                    "[WARN] Auth verification DISABLED (gateway.auth.skip-verification=true). DO NOT use in production!");
+        if ("remote".equalsIgnoreCase(authMode)) {
+            log.info("[INIT] Auth mode: REMOTE — delegating signature verification to external API");
+        } else {
+            log.info("[INIT] Auth mode: GATEWAY — local HMAC-SHA256 verification via ak_sk_credential");
         }
     }
 
@@ -98,12 +105,7 @@ public class AkSkAuthService {
             return null;
         }
 
-        // 本地调试模式：跳过签名校验，从数据库查真实 userId
-        if (skipVerification) {
-            String resolvedUserId = resolveUserIdFromDb(ak);
-            log.info("Auth SKIPPED (debug mode). ak={}, userId={}", ak, resolvedUserId);
-            return resolvedUserId;
-        }
+        // === 两种模式共用：时间窗口 + Nonce 检查 ===
 
         // 1. 时间窗口校验
         long ts;
@@ -128,23 +130,81 @@ public class AkSkAuthService {
             return null;
         }
 
-        // 3. 多级身份解析
-        long authStart = System.nanoTime();
-        IdentityCacheEntry identity = resolveIdentity(ak, timestamp, nonce, signature);
-        long authElapsedMs = (System.nanoTime() - authStart) / 1_000_000;
-        if (identity == null) {
-            log.warn("Auth failed: identity not resolved. ak={}, durationMs={}", ak, authElapsedMs);
-            redisTemplate.delete(nonceKey);
-            return null;
+        // 3. 身份解析（按模式分支）
+        if ("remote".equalsIgnoreCase(authMode)) {
+            // remote 模式：走 L1→L2→L3 缓存分级管线（含外部 API 调用）
+            long authStart = System.nanoTime();
+            IdentityCacheEntry identity = resolveIdentity(ak, timestamp, nonce, signature);
+            long authElapsedMs = (System.nanoTime() - authStart) / 1_000_000;
+            if (identity == null) {
+                log.warn("Auth failed (remote): identity not resolved. ak={}, durationMs={}", ak, authElapsedMs);
+                redisTemplate.delete(nonceKey);
+                return null;
+            }
+            log.info("Auth success (remote). ak={}, userId={}, level={}, durationMs={}",
+                    ak, identity.userId(), identity.level(), authElapsedMs);
+            return identity.userId();
+        } else {
+            // gateway 模式：本地 HMAC-SHA256 验签，从 ak_sk_credential 表获取 SK 和 userId
+            long authStart = System.nanoTime();
+            String userId = verifyLocally(ak, timestamp, nonce, signature);
+            long authElapsedMs = (System.nanoTime() - authStart) / 1_000_000;
+            if (userId == null) {
+                redisTemplate.delete(nonceKey);
+                return null;
+            }
+            log.info("Auth success (gateway). ak={}, userId={}, durationMs={}", ak, userId, authElapsedMs);
+            return userId;
         }
-
-        log.info("Auth success. ak={}, userId={}, level={}, durationMs={}", ak, identity.userId(), identity.level(),
-                authElapsedMs);
-        return identity.userId();
     }
 
     // -----------------------------------------------------------------------
-    // 多级身份解析
+    // Gateway 模式：本地 HMAC-SHA256 验签
+    // -----------------------------------------------------------------------
+
+    /**
+     * 从 ak_sk_credential 表获取 SK，本地计算 HMAC-SHA256 并比对签名。
+     *
+     * @return 验签通过返回 userId；失败返回 null
+     */
+    private String verifyLocally(String ak, String timestamp, String nonce, String signature) {
+        AkSkCredential credential = akSkCredentialRepository.findActiveByAk(ak);
+        if (credential == null) {
+            log.warn("Auth failed (gateway): credential not found or disabled. ak={}", ak);
+            return null;
+        }
+
+        // 构造待签名字符串：ak + timestamp + nonce
+        String stringToSign = ak + timestamp + nonce;
+        String expectedSignature = hmacSha256(credential.getSk(), stringToSign);
+
+        if (expectedSignature == null || !MessageDigest.isEqual(
+                expectedSignature.getBytes(StandardCharsets.UTF_8),
+                signature.getBytes(StandardCharsets.UTF_8))) {
+            log.warn("Auth failed (gateway): signature mismatch. ak={}", ak);
+            return null;
+        }
+
+        return String.valueOf(credential.getUserId());
+    }
+
+    /**
+     * 使用 HMAC-SHA256 算法计算签名，返回 Base64 编码结果。
+     */
+    private static String hmacSha256(String secret, String data) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] raw = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+            return Base64.getEncoder().encodeToString(raw);
+        } catch (Exception e) {
+            log.error("HMAC-SHA256 computation failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Remote 模式：多级身份解析（L1→L2→L3）
     // -----------------------------------------------------------------------
 
     /**
@@ -220,28 +280,6 @@ public class AkSkAuthService {
         } catch (JsonProcessingException e) {
             log.debug("Failed to write L2 cache: ak={}, error={}", ak, e.getMessage());
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // Debug 模式辅助
-    // -----------------------------------------------------------------------
-
-    /**
-     * Debug 模式下从数据库解析真实 userId。
-     * 查 agent_connection 表中该 ak 最近一条记录的 user_id。
-     * 如果找不到（首次连接），fallback 到 ak 本身。
-     */
-    private String resolveUserIdFromDb(String ak) {
-        try {
-            AgentConnection conn = agentConnectionRepository.findLatestByAkId(ak);
-            if (conn != null && conn.getUserId() != null && !conn.getUserId().isBlank()) {
-                return conn.getUserId();
-            }
-        } catch (Exception e) {
-            log.warn("Debug mode: failed to resolve userId from DB for ak={}, fallback to ak. error={}",
-                    ak, e.getMessage());
-        }
-        return ak;
     }
 
     // -----------------------------------------------------------------------

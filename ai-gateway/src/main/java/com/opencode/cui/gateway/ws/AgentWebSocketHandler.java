@@ -10,6 +10,8 @@ import com.opencode.cui.gateway.service.DeviceBindingService;
 import com.opencode.cui.gateway.service.EventRelayService;
 import com.opencode.cui.gateway.service.GatewayInstanceRegistry;
 import com.opencode.cui.gateway.service.RedisMessageBroker;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 import java.time.Duration;
 import lombok.extern.slf4j.Slf4j;
@@ -82,6 +84,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
     private final RedisMessageBroker redisMessageBroker;
     private final GatewayInstanceRegistry gatewayInstanceRegistry;
     private final ObjectMapper objectMapper;
+    private final StringRedisTemplate redisTemplate;
 
     private static final Duration CONN_AK_TTL = Duration.ofSeconds(120);
 
@@ -103,7 +106,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             EventRelayService eventRelayService,
             RedisMessageBroker redisMessageBroker,
             GatewayInstanceRegistry gatewayInstanceRegistry,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            StringRedisTemplate redisTemplate) {
         this.akSkAuthService = akSkAuthService;
         this.agentRegistryService = agentRegistryService;
         this.deviceBindingService = deviceBindingService;
@@ -111,6 +115,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         this.redisMessageBroker = redisMessageBroker;
         this.gatewayInstanceRegistry = gatewayInstanceRegistry;
         this.objectMapper = objectMapper;
+        this.redisTemplate = redisTemplate;
     }
 
     @PreDestroy
@@ -305,7 +310,12 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
 
     // ==================== 消息处理方法 ====================
 
-    /** 处理 Agent 注册：设备绑定校验 → 重复连接检查 → 数据库注册 → 通知 Skill Server。 */
+    private static final String REGISTER_LOCK_PREFIX = "gw:register:lock:";
+    private static final long REGISTER_LOCK_TTL_SECONDS = 10;
+    /** Lua 脚本：仅当 value 匹配 owner 时才释放锁，防止超时后误删他人的锁 */
+    private static final DefaultRedisScript<Long> UNLOCK_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+            Long.class);
 
     private void handleRegister(WebSocketSession session, GatewayMessage message,
             String userId, String akId) {
@@ -319,60 +329,77 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         log.info("[ENTRY] AgentWSHandler.handleRegister: ak={}, toolType={}, os={}",
                 akId, toolType, os);
 
-        // 步骤 1：验证设备绑定（第三方服务，失败时放行）
-        if (!deviceBindingService.validate(akId, macAddress, toolType)) {
-            log.warn("Register rejected: device binding failed. ak={}, mac={}, toolType={}",
-                    akId, macAddress, toolType);
-            sendAndClose(session, GatewayMessage.registerRejected("device_binding_failed"),
-                    CLOSE_BINDING_FAILED);
-            return;
-        }
-
-        // 步骤 2：检查重复活跃连接（保留旧连接，拒绝新连接）
-        if (eventRelayService.hasAgentSession(akId)) {
-            log.warn("Register rejected: duplicate connection. ak={}, toolType={}",
-                    akId, toolType);
-            sendAndClose(session, GatewayMessage.registerRejected("duplicate_connection"),
+        // 分布式锁：防止同一 AK 并发注册导致写入多条记录
+        String lockKey = REGISTER_LOCK_PREFIX + akId;
+        String lockOwner = gatewayInstanceRegistry.getInstanceId() + ":" + Thread.currentThread().threadId();
+        Boolean acquired = redisTemplate.opsForValue()
+                .setIfAbsent(lockKey, lockOwner, REGISTER_LOCK_TTL_SECONDS, TimeUnit.SECONDS);
+        if (acquired == null || !acquired) {
+            log.warn("Register rejected: concurrent registration in progress. ak={}", akId);
+            sendAndClose(session, GatewayMessage.registerRejected("concurrent_registration"),
                     CLOSE_DUPLICATE);
             return;
         }
 
-        // 步骤 3：数据库注册（复用已有记录或新建）
-        AgentConnection agent = agentRegistryService.register(
-                userId, akId, deviceName, macAddress, os, toolType, toolVersion);
-
-        Long agentId = agent.getId();
-
-        // 将 agentId 保存到 session 属性（断开时用于数据库操作）
-        session.getAttributes().put(ATTR_AGENT_ID, agentId);
-        // 将 ak 保存到 session-ak 映射（用于消息路由）
-        sessionAkMap.put(session.getId(), akId);
-
-        // 在中继服务中注册 WebSocket 会话（以 ak 为键）
-        eventRelayService.registerAgentSession(akId, userId, session);
-
-        // v3: 注册 conn:ak → gatewayInstanceId（Source 服务查询用于下行精确投递）
-        redisMessageBroker.bindConnAk(akId, gatewayInstanceRegistry.getInstanceId(), CONN_AK_TTL);
-
-        // 发送 register_ok 给客户端
         try {
-            String okJson = objectMapper.writeValueAsString(GatewayMessage.registerOk());
-            session.sendMessage(new TextMessage(okJson));
-        } catch (IOException e) {
-            log.error("Failed to send register_ok: ak={}", akId, e);
+            // 步骤 1：验证设备绑定（查 agent_connection 表，首次放行）
+            if (!deviceBindingService.validate(akId, macAddress, toolType)) {
+                log.warn("Register rejected: device binding failed. ak={}, mac={}, toolType={}",
+                        akId, macAddress, toolType);
+                sendAndClose(session, GatewayMessage.registerRejected("device_binding_failed"),
+                        CLOSE_BINDING_FAILED);
+                return;
+            }
+
+            // 步骤 2：检查重复活跃连接（保留旧连接，拒绝新连接）
+            if (eventRelayService.hasAgentSession(akId)) {
+                log.warn("Register rejected: duplicate connection. ak={}, toolType={}",
+                        akId, toolType);
+                sendAndClose(session, GatewayMessage.registerRejected("duplicate_connection"),
+                        CLOSE_DUPLICATE);
+                return;
+            }
+
+            // 步骤 3：数据库注册（复用已有记录或新建）
+            AgentConnection agent = agentRegistryService.register(
+                    userId, akId, deviceName, macAddress, os, toolType, toolVersion);
+
+            Long agentId = agent.getId();
+
+            // 将 agentId 保存到 session 属性（断开时用于数据库操作）
+            session.getAttributes().put(ATTR_AGENT_ID, agentId);
+            // 将 ak 保存到 session-ak 映射（用于消息路由）
+            sessionAkMap.put(session.getId(), akId);
+
+            // 在中继服务中注册 WebSocket 会话（以 ak 为键）
+            eventRelayService.registerAgentSession(akId, userId, session);
+
+            // v3: 注册 conn:ak → gatewayInstanceId（Source 服务查询用于下行精确投递）
+            redisMessageBroker.bindConnAk(akId, gatewayInstanceRegistry.getInstanceId(), CONN_AK_TTL);
+
+            // 发送 register_ok 给客户端
+            try {
+                String okJson = objectMapper.writeValueAsString(GatewayMessage.registerOk());
+                session.sendMessage(new TextMessage(okJson));
+            } catch (IOException e) {
+                log.error("Failed to send register_ok: ak={}", akId, e);
+            }
+
+            // 通知 Skill Server Agent 已上线（以 ak 为键）
+            GatewayMessage onlineMsg = GatewayMessage.agentOnline(
+                    akId, toolType, toolVersion);
+            eventRelayService.relayToSkillServer(akId, onlineMsg);
+
+            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            log.info(
+                    "[EXIT] AgentWSHandler.handleRegister: ak={}, agentId={}, device={}, mac={}, tool={}/{}, durationMs={}",
+                    akId, agentId, deviceName,
+                    com.opencode.cui.gateway.logging.SensitiveDataMasker.maskMac(macAddress),
+                    toolType, toolVersion, elapsedMs);
+        } finally {
+            // 安全释放分布式锁：仅释放自己持有的锁
+            redisTemplate.execute(UNLOCK_SCRIPT, List.of(lockKey), lockOwner);
         }
-
-        // 通知 Skill Server Agent 已上线（以 ak 为键）
-        GatewayMessage onlineMsg = GatewayMessage.agentOnline(
-                akId, toolType, toolVersion);
-        eventRelayService.relayToSkillServer(akId, onlineMsg);
-
-        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-        log.info(
-                "[EXIT] AgentWSHandler.handleRegister: ak={}, agentId={}, device={}, mac={}, tool={}/{}, durationMs={}",
-                akId, agentId, deviceName,
-                com.opencode.cui.gateway.logging.SensitiveDataMasker.maskMac(macAddress),
-                toolType, toolVersion, elapsedMs);
     }
 
     /** 处理心跳：刷新 Agent 最后活跃时间和 conn:ak TTL。 */

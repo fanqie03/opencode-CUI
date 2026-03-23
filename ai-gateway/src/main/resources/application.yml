@@ -60,11 +60,10 @@ gateway:
 
   # AK/SK auth
   auth:
+    # 验签模式: gateway=本地HMAC-SHA256验签(ak_sk_credential表), remote=外部API验签
+    mode: ${AUTH_MODE:gateway}
     timestamp-tolerance-seconds: 300
     nonce-ttl-seconds: 300
-    # 本地调试开关：跳过全部签名校验（生产环境必须为 false）
-    skip-verification: ${AUTH_SKIP_VERIFICATION:true}
-    # 外部身份校验 API（配置 base-url 后启用，留空则仅用本地 DB）
     identity-api:
       base-url: ${IDENTITY_API_BASE_URL:}
       bearer-token: ${IDENTITY_API_BEARER_TOKEN:}
