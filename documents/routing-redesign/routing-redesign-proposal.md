@@ -6,15 +6,15 @@
 
 ## 一、当前架构问题总结
 
-| # | 问题 | 根因 | 影响 |
-|---|------|------|------|
-| 1 | AK→Source 1:1 覆盖 | `gw:agent:source:{ak}` 简单 SET | 多 Source 并发时上行路由错乱 |
-| 2 | Redis pub/sub 不持久化 | 订阅者不在线消息直接丢失 | Gateway/SS 重启时消息丢失 |
-| 3 | 跨实例中继脆弱 | `gw:relay:{instanceId}` pub/sub | 目标 GW 不在线消息无重试 |
-| 4 | Gateway 有状态 | 内存 Map + owner 选举 + 心跳 TTL | 重启丢状态、竞态窗口 |
-| 5 | SS 只连一个 GW | `GatewayWSClient` 硬编码单 URL | 该 GW 挂了全断 |
-| 6 | source 维度太粗 | 所有 SS 共用 `source="skill-server"` | 无法区分 SS 实例 |
-| 7 | 认证依赖本地 DB | `ak_sk_credential` 表应废弃 | 需改为外部 API |
+| #   | 问题                 | 根因                               | 影响                 |
+| --- | ------------------ | -------------------------------- | ------------------ |
+| 1   | AK→Source 1:1 覆盖   | `gw:agent:source:{ak}` 简单 SET    | 多 Source 并发时上行路由错乱 |
+| 2   | Redis pub/sub 不持久化 | 订阅者不在线消息直接丢失                     | Gateway/SS 重启时消息丢失 |
+| 3   | 跨实例中继脆弱            | `gw:relay:{instanceId}` pub/sub  | 目标 GW 不在线消息无重试     |
+| 4   | Gateway 有状态        | 内存 Map + owner 选举 + 心跳 TTL       | 重启丢状态、竞态窗口         |
+| 5   | SS 只连一个 GW         | `GatewayWSClient` 硬编码单 URL       | 该 GW 挂了全断          |
+| 6   | source 维度太粗        | 所有 SS 共用 `source="skill-server"` | 无法区分 SS 实例         |
+| 7   | 认证依赖本地 DB          | `ak_sk_credential` 表应废弃          | 需改为外部 API          |
 
 ## 二、业界方案对标
 
