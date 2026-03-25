@@ -36,6 +36,8 @@ import java.util.UUID;
  * STATUS_QUERY        | (无额外字段)
  * STATUS_RESPONSE     | opencodeOnline
  * PERMISSION_REQUEST  | (透传到 Skill Server)
+ * ROUTE_CONFIRM       | toolSessionId, welinkSessionId, source
+ * ROUTE_REJECT        | toolSessionId, source
  * </pre>
  *
  * <h3>路由字段说明</h3>
@@ -75,6 +77,8 @@ public class GatewayMessage {
         String STATUS_QUERY = "status_query";
         String STATUS_RESPONSE = "status_response";
         String PERMISSION_REQUEST = "permission_request";
+        String ROUTE_CONFIRM = "route_confirm";
+        String ROUTE_REJECT = "route_reject";
     }
 
     // ==================== 通用字段 ====================

@@ -52,6 +52,11 @@ gateway:
     # TTL for the gw:pending:{ak} downlink buffer queue (Phase 1.6)
     pending-ttl-seconds: ${GATEWAY_PENDING_TTL_SECONDS:60}
 
+  # Legacy relay fallback: 兼容不带 instanceId 的旧版 Source 服务
+  # 生产环境全量升级后设为 false 以禁用旧版路由
+  legacy-relay:
+    enabled: ${GATEWAY_LEGACY_RELAY_ENABLED:true}
+
   skill-relay:
     owner-heartbeat-interval-seconds: 10
     owner-ttl-seconds: 30
