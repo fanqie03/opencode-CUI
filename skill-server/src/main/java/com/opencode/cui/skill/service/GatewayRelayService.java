@@ -46,6 +46,19 @@ public class GatewayRelayService {
         default boolean broadcastToAllGateways(String message) {
             return sendToGateway(message);
         }
+
+        /**
+         * v4: Send message via consistent hash ring selection.
+         * Uses hashKey (typically ak) to deterministically select a GW connection.
+         * Default fallback to sendToGateway for backward compatibility.
+         *
+         * @param hashKey hash key for node selection (typically ak)
+         * @param message serialized message payload
+         * @return true if message was sent successfully
+         */
+        default boolean sendViaHash(String hashKey, String message) {
+            return sendToGateway(message);
+        }
     }
 
     private final ObjectMapper objectMapper;
@@ -101,20 +114,26 @@ public class GatewayRelayService {
             return;
         }
 
-        // v3: 查 conn:ak 精确投递到目标 Gateway 实例
-        String gwInstanceId = redisMessageBroker.getConnAk(command.ak());
-        boolean sent;
-        if (gwInstanceId != null && !gwInstanceId.isBlank()) {
-            sent = relayTarget.sendToGateway(gwInstanceId, messageText);
-            if (!sent) {
-                // 精确投递失败 -> fallback 广播
-                log.warn(
-                        "GatewayRelayService.sendInvokeToGateway: precise delivery failed, fallback to broadcast, ak={}, gwInstanceId={}",
+        // v4: consistent hash routing — primary path
+        boolean sent = relayTarget.sendViaHash(command.ak(), messageText);
+        String gwInstanceId = null;
+
+        if (!sent) {
+            // Fallback path 1: legacy conn:ak precise delivery (compatible with older GW)
+            gwInstanceId = redisMessageBroker.getConnAk(command.ak());
+            if (gwInstanceId != null && !gwInstanceId.isBlank()) {
+                log.info(
+                        "GatewayRelayService.sendInvokeToGateway: hash routing missed, trying conn:ak fallback, ak={}, gwInstanceId={}",
                         command.ak(), gwInstanceId);
-                sent = relayTarget.broadcastToAllGateways(messageText);
+                sent = relayTarget.sendToGateway(gwInstanceId, messageText);
             }
-        } else {
-            // conn:ak 未注册（Agent 可能不在线）-> 广播到所有 GW
+        }
+
+        if (!sent) {
+            // Fallback path 2: broadcast to all GW instances
+            log.warn(
+                    "GatewayRelayService.sendInvokeToGateway: conn:ak fallback failed, falling back to broadcast, ak={}, gwInstanceId={}",
+                    command.ak(), gwInstanceId);
             sent = relayTarget.broadcastToAllGateways(messageText);
         }
 

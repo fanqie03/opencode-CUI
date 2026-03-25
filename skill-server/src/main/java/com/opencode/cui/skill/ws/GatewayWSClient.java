@@ -1,6 +1,7 @@
 package com.opencode.cui.skill.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.service.ConsistentHashRing;
 import com.opencode.cui.skill.service.GatewayDiscoveryService;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.SessionRouteService;
@@ -76,8 +77,14 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget,
     @Value("${skill.gateway.reconnect-max-delay-ms:30000}")
     private long reconnectMaxDelayMs;
 
+    @Value("${skill.hash-ring.virtual-nodes:150}")
+    private int virtualNodes;
+
     /** gwInstanceId → 连接信息 */
     private final Map<String, GwConnection> gwConnections = new ConcurrentHashMap<>();
+
+    /** Consistent hash ring for GW connection selection (gwInstanceId → GwConnection). */
+    private final ConsistentHashRing<GwConnection> hashRing = new ConsistentHashRing<>();
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, r -> {
         Thread t = new Thread(r, "gw-ws-pool");
@@ -206,6 +213,24 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget,
                 .anyMatch(conn -> conn.client != null && conn.client.isOpen());
     }
 
+    /**
+     * Sends a message by selecting a GW connection via the consistent hash ring.
+     *
+     * @param hashKey hash key for node selection (typically ak)
+     * @param message serialized message payload
+     * @return true if the message was sent successfully; false if ring is empty or connection is down
+     */
+    @Override
+    public boolean sendViaHash(String hashKey, String message) {
+        GwConnection conn = hashRing.getNode(hashKey);
+        if (conn != null && conn.client != null && conn.client.isOpen()) {
+            log.info("[EXIT->GW] sendViaHash: hashKey={}, gwInstanceId={}", hashKey, conn.gwInstanceId);
+            return sendViaClient(conn.client, message);
+        }
+        log.info("sendViaHash: no suitable connection found for hashKey={}", hashKey);
+        return false;
+    }
+
     // ==================== GatewayDiscoveryService.Listener 实现 ====================
 
     @Override
@@ -223,11 +248,15 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget,
                 if (seedConn.client != null && seedConn.client.isOpen()) {
                     // seed 连接存活 → 仅重映射 key，不断开连接，避免 GW 侧路由缓存清除
                     gwConnections.put(gwInstanceId, seedConn);
+                    // Remove old seed key from ring and add under the canonical discovery key
+                    hashRing.removeNode(duplicateSeedId);
+                    hashRing.addNode(gwInstanceId, seedConn);
                     log.info("Promoted seed connection to discovery: seed={} -> discovery={}, url={}",
                             duplicateSeedId, gwInstanceId, wsUrl);
                     return;
                 }
                 // seed 连接已断开（如 SS 先于 GW 启动）-> 关闭死连接，用 discovery ID 新建
+                hashRing.removeNode(duplicateSeedId);
                 closeQuietly(seedConn.client);
                 log.info("Seed connection dead, replacing with discovery: seed={} -> discovery={}, url={}",
                         duplicateSeedId, gwInstanceId, wsUrl);
@@ -256,6 +285,7 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget,
     public void onGatewayRemoved(String gwInstanceId) {
         GwConnection conn = gwConnections.remove(gwInstanceId);
         if (conn != null) {
+            hashRing.removeNode(gwInstanceId);
             closeQuietly(conn.client);
             log.info("Disconnected from removed GW instance: {}", gwInstanceId);
         }
@@ -276,6 +306,8 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget,
 
             GwConnection conn = new GwConnection(gwInstanceId, wsUrl, client);
             gwConnections.put(gwInstanceId, conn);
+            // Register in hash ring immediately; sendViaHash guards against closed connections
+            hashRing.addNode(gwInstanceId, conn);
 
             client.connectBlocking(10, TimeUnit.SECONDS);
         } catch (Exception e) {
