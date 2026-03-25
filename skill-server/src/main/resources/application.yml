@@ -76,6 +76,9 @@ skill:
     templates:
       group-chat: ${SKILL_CONTEXT_GROUP_CHAT_TEMPLATE:classpath:templates/group-chat-prompt.txt}
     max-history-messages: ${SKILL_CONTEXT_MAX_HISTORY_MESSAGES:20}
+  relay:
+    # Threshold in seconds before an owner instance is considered dead for takeover
+    owner-dead-threshold-seconds: ${SKILL_RELAY_OWNER_DEAD_THRESHOLD_SECONDS:120}
   session:
     # Idle timeout in minutes before a session is marked IDLE
     idle-timeout-minutes: 30

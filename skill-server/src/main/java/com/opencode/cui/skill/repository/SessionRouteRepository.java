@@ -39,6 +39,14 @@ public interface SessionRouteRepository {
     /** 优雅关闭：关闭指定实例下所有 ACTIVE 路由 */
     int closeAllBySourceInstance(@Param("sourceInstance") String sourceInstance);
 
+    /**
+     * Optimistic-lock takeover: atomically update sourceInstance only when current owner matches.
+     * Returns 1 on success (ownership transferred), 0 on conflict (someone else already took over).
+     */
+    int tryTakeover(@Param("welinkSessionId") Long welinkSessionId,
+            @Param("deadInstanceId") String deadInstanceId,
+            @Param("newInstanceId") String newInstanceId);
+
     /** 僵尸清理：关闭 updated_at 早于指定时间且仍为 ACTIVE 的记录 */
     int closeStaleActiveRoutes(@Param("cutoffTime") LocalDateTime cutoffTime);
 

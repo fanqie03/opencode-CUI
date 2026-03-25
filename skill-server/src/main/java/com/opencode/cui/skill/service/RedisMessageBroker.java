@@ -133,6 +133,53 @@ public class RedisMessageBroker {
         return activeListeners.containsKey(channel);
     }
 
+    // ==================== SS relay pub/sub (Task 2.6) ====================
+
+    private static final String SS_RELAY_CHANNEL_PREFIX = "ss:relay:";
+
+    /**
+     * Subscribe to this instance's SS relay channel.
+     * Messages relayed from other SS instances arrive here.
+     *
+     * @param instanceId the local SS instance ID
+     * @param handler    callback to handle received relay messages (JSON string)
+     */
+    public void subscribeToSsRelay(String instanceId, Consumer<String> handler) {
+        String channel = SS_RELAY_CHANNEL_PREFIX + instanceId;
+        subscribe(channel, handler);
+    }
+
+    /**
+     * Publish a message to the target SS instance's relay channel.
+     * Uses Redis PUBLISH which returns the number of subscribers that received the message.
+     *
+     * @param targetInstanceId the target SS instance ID
+     * @param message          the message to relay (JSON string)
+     * @return number of subscribers that received the message; 0 means nobody is listening
+     */
+    public long publishToSsRelay(String targetInstanceId, String message) {
+        String channel = SS_RELAY_CHANNEL_PREFIX + targetInstanceId;
+        try {
+            Long receivers = redisTemplate.convertAndSend(channel, message);
+            log.info("Published to SS relay channel: target={}, receivers={}", targetInstanceId, receivers);
+            return receivers != null ? receivers : 0;
+        } catch (Exception e) {
+            log.error("Failed to publish to SS relay channel: target={}, error={}",
+                    targetInstanceId, e.getMessage(), e);
+            return 0;
+        }
+    }
+
+    /**
+     * Unsubscribe from this instance's SS relay channel.
+     *
+     * @param instanceId the local SS instance ID
+     */
+    public void unsubscribeFromSsRelay(String instanceId) {
+        String channel = SS_RELAY_CHANNEL_PREFIX + instanceId;
+        unsubscribe(channel);
+    }
+
     // ==================== Gateway 实例发现（v3 新增） ====================
 
     /**

@@ -7,13 +7,18 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.skill.model.InvokeCommand;
+import com.opencode.cui.skill.model.SessionRoute;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import org.springframework.beans.factory.annotation.Value;
+
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Iterator;
 import java.util.Set;
 
@@ -76,6 +81,12 @@ public class GatewayMessageRouter {
 
     /** 会话路由服务，用于多实例场景下的 ownership 检查 */
     private final SessionRouteService sessionRouteService;
+    /** SS 实例心跳注册器，用于探活判断 */
+    private final SkillInstanceRegistry skillInstanceRegistry;
+    /** 本实例 ID */
+    private final String instanceId;
+    /** Owner 被判定为死亡的超时阈值（秒） */
+    private final int ownerDeadThresholdSeconds;
 
     public GatewayMessageRouter(ObjectMapper objectMapper,
             SkillMessageService messageService,
@@ -87,7 +98,9 @@ public class GatewayMessageRouter {
             SessionRebuildService rebuildService,
             ImInteractionStateService interactionStateService,
             ImOutboundService imOutboundService,
-            SessionRouteService sessionRouteService) {
+            SessionRouteService sessionRouteService,
+            SkillInstanceRegistry skillInstanceRegistry,
+            @Value("${skill.relay.owner-dead-threshold-seconds:120}") int ownerDeadThresholdSeconds) {
         this.objectMapper = objectMapper;
         this.messageService = messageService;
         this.sessionService = sessionService;
@@ -99,6 +112,9 @@ public class GatewayMessageRouter {
         this.interactionStateService = interactionStateService;
         this.imOutboundService = imOutboundService;
         this.sessionRouteService = sessionRouteService;
+        this.skillInstanceRegistry = skillInstanceRegistry;
+        this.instanceId = skillInstanceRegistry.getInstanceId();
+        this.ownerDeadThresholdSeconds = ownerDeadThresholdSeconds;
     }
 
     /** 设置下游命令发送者。 */
@@ -118,20 +134,102 @@ public class GatewayMessageRouter {
     /**
      * 消息路由入口。
      * 根据消息类型分发到对应的处理方法。
+     * <p>
+     * 多实例路由逻辑：
+     * 1. 本实例是 session owner → 本地处理
+     * 2. 有远程 owner → relay 给 owner 实例
+     * 3. owner 失联（心跳丢失/updatedAt 超时）→ 乐观锁接管
+     * 4. 无 owner → auto-claim
      */
     public void route(String type, String ak, String userId, JsonNode node) {
         String sessionId = requiresSessionAffinity(type) ? resolveSessionId(type, node) : null;
 
-        // 多实例 ownership 检查 + 存量会话 auto-claim
-        if (sessionId != null && !sessionRouteService.ensureRouteOwnership(sessionId, ak, userId)) {
-            log.debug("[SKIP] GatewayMessageRouter.route: reason=not_my_session, sessionId={}, type={}",
-                    sessionId, type);
+        // Non-session-affinity messages (agent_online, agent_offline, session_created): always process locally
+        if (sessionId == null) {
+            log.info("[ENTRY] GatewayMessageRouter.route: type={}, sessionId=null, ak={}, userId={}",
+                    type, ak, userId);
+            dispatchLocally(type, sessionId, ak, userId, node);
+            log.info("[EXIT] GatewayMessageRouter.route: type={}, sessionId=null", type);
             return;
         }
 
-        log.info("[ENTRY] GatewayMessageRouter.route: type={}, sessionId={}, ak={}, userId={}",
-                type, sessionId, ak, userId);
+        // Session-affinity messages: resolve owner and decide route strategy
+        String ownerInstance = sessionRouteService.getOwnerInstance(sessionId);
 
+        // Case 1: This instance is the owner → process locally
+        if (instanceId.equals(ownerInstance)) {
+            log.info("[ENTRY] GatewayMessageRouter.route: type={}, sessionId={}, ak={}, strategy=local_owner",
+                    type, sessionId, ak);
+            dispatchLocally(type, sessionId, ak, userId, node);
+            log.info("[EXIT] GatewayMessageRouter.route: type={}, sessionId={}", type, sessionId);
+            return;
+        }
+
+        // Case 2: Remote owner exists → try relay
+        if (ownerInstance != null) {
+            String rawMessage = serializeRelayMessage(type, ak, userId, node);
+            long subscribers = redisMessageBroker.publishToSsRelay(ownerInstance, rawMessage);
+            if (subscribers > 0) {
+                log.info("[EXIT] GatewayMessageRouter.route: type={}, sessionId={}, strategy=relay_to_{}",
+                        type, sessionId, ownerInstance);
+                return; // relay succeeded
+            }
+            // subscribers == 0: owner is likely dead → fall through to takeover
+            log.info("Relay returned 0 subscribers, owner may be dead: sessionId={}, owner={}",
+                    sessionId, ownerInstance);
+        }
+
+        // Case 3 & 4: No owner, or owner is dead → attempt takeover / auto-claim
+        if (shouldTakeover(ownerInstance, sessionId)) {
+            if (ownerInstance == null) {
+                // No route record → auto-claim via ensureRouteOwnership
+                boolean claimed = sessionRouteService.ensureRouteOwnership(sessionId, ak, userId);
+                if (claimed) {
+                    log.info("[ENTRY] GatewayMessageRouter.route: type={}, sessionId={}, strategy=auto_claim",
+                            type, sessionId);
+                    dispatchLocally(type, sessionId, ak, userId, node);
+                    log.info("[EXIT] GatewayMessageRouter.route: type={}, sessionId={}", type, sessionId);
+                    return;
+                }
+            } else {
+                // Owner is dead → optimistic-lock takeover
+                boolean taken = sessionRouteService.tryTakeover(sessionId, ownerInstance, instanceId);
+                if (taken) {
+                    log.info("[ENTRY] GatewayMessageRouter.route: type={}, sessionId={}, strategy=takeover_from_{}",
+                            type, sessionId, ownerInstance);
+                    dispatchLocally(type, sessionId, ak, userId, node);
+                    log.info("[EXIT] GatewayMessageRouter.route: type={}, sessionId={}", type, sessionId);
+                    return;
+                }
+            }
+            // Takeover/claim failed → someone else won → forward to winner
+            String winner = sessionRouteService.getOwnerInstance(sessionId);
+            if (winner != null && !instanceId.equals(winner)) {
+                String rawMessage = serializeRelayMessage(type, ak, userId, node);
+                redisMessageBroker.publishToSsRelay(winner, rawMessage);
+                log.info("[EXIT] GatewayMessageRouter.route: type={}, sessionId={}, strategy=forward_to_winner_{}",
+                        type, sessionId, winner);
+                return;
+            }
+            // Winner is this instance (race condition) → process locally
+            if (instanceId.equals(winner)) {
+                log.info("[ENTRY] GatewayMessageRouter.route: type={}, sessionId={}, strategy=won_race",
+                        type, sessionId);
+                dispatchLocally(type, sessionId, ak, userId, node);
+                log.info("[EXIT] GatewayMessageRouter.route: type={}, sessionId={}", type, sessionId);
+                return;
+            }
+        }
+
+        // Fallback: cannot determine owner, drop message
+        log.warn("[SKIP] GatewayMessageRouter.route: no owner resolved, dropping message. type={}, sessionId={}",
+                type, sessionId);
+    }
+
+    /**
+     * Dispatches a message to the appropriate local handler based on type.
+     */
+    private void dispatchLocally(String type, String sessionId, String ak, String userId, JsonNode node) {
         switch (type) {
             case "tool_event" -> handleToolEvent(sessionId, userId, node);
             case "tool_done" -> handleToolDone(sessionId, userId, node);
@@ -142,8 +240,65 @@ public class GatewayMessageRouter {
             case "permission_request" -> handlePermissionRequest(sessionId, userId, node);
             default -> log.warn("[SKIP] GatewayMessageRouter.route: reason=unknown_type, type={}", type);
         }
+    }
 
-        log.info("[EXIT] GatewayMessageRouter.route: type={}, sessionId={}", type, sessionId);
+    /**
+     * Three-tier liveness check to determine if the owner instance should be taken over.
+     *
+     * <ol>
+     *   <li>No owner → always takeover (auto-claim)</li>
+     *   <li>Redis heartbeat missing → takeover</li>
+     *   <li>MySQL updated_at exceeds threshold → takeover</li>
+     * </ol>
+     */
+    private boolean shouldTakeover(String ownerInstance, String sessionId) {
+        if (ownerInstance == null) {
+            return true; // no owner, auto-claim
+        }
+
+        // Tier 1: check Redis heartbeat
+        if (!skillInstanceRegistry.isInstanceAlive(ownerInstance)) {
+            log.info("shouldTakeover: heartbeat missing for owner={}, sessionId={}", ownerInstance, sessionId);
+            return true;
+        }
+
+        // Tier 2: check MySQL updated_at staleness
+        try {
+            Long numericId = Long.parseLong(sessionId);
+            SessionRoute route = sessionRouteService.findByWelinkSessionId(numericId);
+            if (route != null && route.getUpdatedAt() != null) {
+                long elapsedSeconds = ChronoUnit.SECONDS.between(route.getUpdatedAt(), LocalDateTime.now());
+                if (elapsedSeconds > ownerDeadThresholdSeconds) {
+                    log.info("shouldTakeover: updated_at expired for owner={}, sessionId={}, elapsed={}s, threshold={}s",
+                            ownerInstance, sessionId, elapsedSeconds, ownerDeadThresholdSeconds);
+                    return true;
+                }
+            }
+        } catch (NumberFormatException e) {
+            log.warn("shouldTakeover: invalid sessionId format: {}", sessionId);
+        } catch (Exception e) {
+            log.warn("shouldTakeover: failed to check updated_at for sessionId={}, error={}",
+                    sessionId, e.getMessage());
+        }
+
+        return false; // owner is probably still alive
+    }
+
+    /**
+     * Serializes the routing context into a JSON string for relay via Redis pub/sub.
+     */
+    private String serializeRelayMessage(String type, String ak, String userId, JsonNode node) {
+        try {
+            ObjectNode envelope = objectMapper.createObjectNode();
+            envelope.put("type", type);
+            envelope.put("ak", ak);
+            envelope.put("userId", userId);
+            envelope.set("payload", node);
+            return objectMapper.writeValueAsString(envelope);
+        } catch (JsonProcessingException e) {
+            log.error("Failed to serialize relay message: type={}, error={}", type, e.getMessage());
+            return "{}";
+        }
     }
 
     /** 处理 tool_event：翻译事件、区分用户/助手消息、检测上下文溢出。 */

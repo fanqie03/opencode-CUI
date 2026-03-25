@@ -236,6 +236,46 @@ public class SessionRouteService {
         }
     }
 
+    // ==================== Takeover (Task 2.6) ====================
+
+    /**
+     * Attempts an optimistic-lock takeover of a session owned by a dead instance.
+     * Uses MySQL CAS: UPDATE ... SET source_instance = new WHERE source_instance = dead.
+     *
+     * <p>On success, updates the Redis ownership cache to the new instance.
+     *
+     * @param welinkSessionId the session to take over (string form)
+     * @param deadInstanceId  the expected current owner (will be used as CAS condition)
+     * @param newInstanceId   the new owner instance ID
+     * @return true if this instance won the takeover; false if another instance won first
+     */
+    public boolean tryTakeover(String welinkSessionId, String deadInstanceId, String newInstanceId) {
+        if (welinkSessionId == null || welinkSessionId.isBlank()) {
+            return false;
+        }
+        try {
+            Long numericId = Long.parseLong(welinkSessionId);
+            int affected = repository.tryTakeover(numericId, deadInstanceId, newInstanceId);
+            if (affected == 1) {
+                log.info("Takeover succeeded: welinkSessionId={}, from={}, to={}",
+                        welinkSessionId, deadInstanceId, newInstanceId);
+                // Update Redis ownership cache to reflect new owner
+                writeCacheOwnership(welinkSessionId, newInstanceId);
+                return true;
+            } else {
+                log.info("Takeover conflict: welinkSessionId={}, deadInstance={}, affected=0",
+                        welinkSessionId, deadInstanceId);
+                return false;
+            }
+        } catch (NumberFormatException e) {
+            log.warn("tryTakeover invalid welinkSessionId format: {}", welinkSessionId);
+            return false;
+        } catch (Exception e) {
+            log.error("tryTakeover failed: welinkSessionId={}, error={}", welinkSessionId, e.getMessage(), e);
+            return false;
+        }
+    }
+
     // ==================== 查询 ====================
 
     /**

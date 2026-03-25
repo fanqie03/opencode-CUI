@@ -51,10 +51,14 @@ class GatewayRelayServiceTest {
         @Mock
         private SessionRouteService sessionRouteService;
         @Mock
+        private SkillInstanceRegistry skillInstanceRegistry;
+        @Mock
         private GatewayRelayService.GatewayRelayTarget gatewayRelayTarget;
 
         private GatewayMessageRouter messageRouter;
         private GatewayRelayService service;
+
+        private static final String LOCAL_INSTANCE = "ss-test-local";
 
         @BeforeEach
         void setUp() {
@@ -62,6 +66,9 @@ class GatewayRelayServiceTest {
                 org.mockito.Mockito.lenient().when(sessionRouteService.ensureRouteOwnership(any(), any(), any())).thenReturn(true);
                 org.mockito.Mockito.lenient().when(sessionRouteService.isMySession(any())).thenReturn(true);
                 org.mockito.Mockito.lenient().when(sessionRouteService.isMyToolSession(any())).thenReturn(true);
+                // Make getOwnerInstance return LOCAL_INSTANCE so route() processes locally
+                org.mockito.Mockito.lenient().when(sessionRouteService.getOwnerInstance(any())).thenReturn(LOCAL_INSTANCE);
+                org.mockito.Mockito.lenient().when(skillInstanceRegistry.getInstanceId()).thenReturn(LOCAL_INSTANCE);
 
                 messageRouter = new GatewayMessageRouter(
                                 new ObjectMapper(),
@@ -74,7 +81,9 @@ class GatewayRelayServiceTest {
                                 rebuildService,
                                 interactionStateService,
                                 imOutboundService,
-                                sessionRouteService);
+                                sessionRouteService,
+                                skillInstanceRegistry,
+                                120);
                 service = new GatewayRelayService(
                                 new ObjectMapper(),
                                 messageRouter,

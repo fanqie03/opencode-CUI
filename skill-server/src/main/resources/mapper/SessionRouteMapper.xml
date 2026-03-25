@@ -59,6 +59,14 @@
           AND status = 'ACTIVE'
     </update>
 
+    <update id="tryTakeover">
+        UPDATE session_route
+        SET source_instance = #{newInstanceId}, updated_at = NOW()
+        WHERE welink_session_id = #{welinkSessionId}
+          AND source_instance = #{deadInstanceId}
+          AND status = 'ACTIVE'
+    </update>
+
     <update id="closeAllBySourceInstance">
         UPDATE session_route
         SET status = 'CLOSED', updated_at = NOW()
