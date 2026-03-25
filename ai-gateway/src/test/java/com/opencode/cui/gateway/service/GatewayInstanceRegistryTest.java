@@ -44,7 +44,7 @@ class GatewayInstanceRegistryTest {
     }
 
     @Test
-    @DisplayName("register 写入 Redis key gw:instance:{id} 并设置 TTL")
+    @DisplayName("register 写入新旧两个 Redis key 并设置 TTL")
     void registerWritesRedisKeyWithTtl() {
         registry.register();
 
@@ -52,12 +52,15 @@ class GatewayInstanceRegistryTest {
         ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Duration> ttlCaptor = ArgumentCaptor.forClass(Duration.class);
 
-        verify(valueOperations).set(keyCaptor.capture(), valueCaptor.capture(), ttlCaptor.capture());
+        // dual-write: gw:instance:{id} (legacy) + gw:internal:instance:{id} (new)
+        verify(valueOperations, org.mockito.Mockito.times(2))
+                .set(keyCaptor.capture(), valueCaptor.capture(), ttlCaptor.capture());
 
-        assertEquals("gw:instance:" + INSTANCE_ID, keyCaptor.getValue());
-        assertTrue(valueCaptor.getValue().contains(WS_URL));
-        assertTrue(valueCaptor.getValue().contains("startedAt"));
-        assertEquals(Duration.ofSeconds(TTL_SECONDS), ttlCaptor.getValue());
+        var keys = keyCaptor.getAllValues();
+        assertTrue(keys.contains("gw:instance:" + INSTANCE_ID));
+        assertTrue(keys.contains("gw:internal:instance:" + INSTANCE_ID));
+        assertTrue(valueCaptor.getAllValues().stream().allMatch(v -> v.contains(WS_URL)));
+        assertTrue(ttlCaptor.getAllValues().stream().allMatch(t -> t.equals(Duration.ofSeconds(TTL_SECONDS))));
     }
 
     @Test
@@ -66,9 +69,9 @@ class GatewayInstanceRegistryTest {
         registry.register();
         registry.refreshHeartbeat();
 
-        // register + refreshHeartbeat = 2 次 set 调用
-        verify(valueOperations, org.mockito.Mockito.times(2)).set(
-                eq("gw:instance:" + INSTANCE_ID),
+        // register(2 keys) + refreshHeartbeat(2 keys) = 4 次 set 调用
+        verify(valueOperations, org.mockito.Mockito.times(4)).set(
+                anyString(),
                 anyString(),
                 eq(Duration.ofSeconds(TTL_SECONDS)));
     }
@@ -78,7 +81,9 @@ class GatewayInstanceRegistryTest {
     void destroyRemovesKey() {
         registry.destroy();
 
+        // dual-delete: both legacy and internal keys
         verify(redisTemplate).delete("gw:instance:" + INSTANCE_ID);
+        verify(redisTemplate).delete("gw:internal:instance:" + INSTANCE_ID);
     }
 
     @Test
@@ -93,7 +98,8 @@ class GatewayInstanceRegistryTest {
         registry.register();
 
         ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
-        verify(valueOperations).set(anyString(), valueCaptor.capture(), eq(Duration.ofSeconds(TTL_SECONDS)));
+        verify(valueOperations, org.mockito.Mockito.atLeastOnce())
+                .set(anyString(), valueCaptor.capture(), eq(Duration.ofSeconds(TTL_SECONDS)));
 
         String value = valueCaptor.getValue();
         assertTrue(value.contains("\"wsUrl\""));
