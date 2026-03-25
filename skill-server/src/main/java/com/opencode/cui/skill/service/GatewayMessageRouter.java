@@ -76,8 +76,23 @@ public class GatewayMessageRouter {
         void sendInvokeToGateway(InvokeCommand command);
     }
 
+    /**
+     * 路由响应发送接口（Task 2.10）。
+     * 由 GatewayRelayService 注入，用于向 GW 回复 route_confirm / route_reject。
+     */
+    public interface RouteResponseSender {
+        /** 向 GW 发送 route_confirm：确认该 toolSessionId 路由归属于本 SS。 */
+        void sendRouteConfirm(String toolSessionId, String welinkSessionId);
+
+        /** 向 GW 发送 route_reject：通知 GW 本 SS 无法处理该 toolSessionId 的消息。 */
+        void sendRouteReject(String toolSessionId);
+    }
+
     /** 下游发送者引用（延迟注入） */
     private volatile DownstreamSender downstreamSender;
+
+    /** 路由响应发送者引用（延迟注入，避免循环依赖） */
+    private volatile RouteResponseSender routeResponseSender;
 
     /** 会话路由服务，用于多实例场景下的 ownership 检查 */
     private final SessionRouteService sessionRouteService;
@@ -120,6 +135,11 @@ public class GatewayMessageRouter {
     /** 设置下游命令发送者。 */
     public void setDownstreamSender(DownstreamSender sender) {
         this.downstreamSender = sender;
+    }
+
+    /** 设置路由响应发送者（由 GatewayRelayService 在构造后注入）。 */
+    public void setRouteResponseSender(RouteResponseSender sender) {
+        this.routeResponseSender = sender;
     }
 
 
@@ -546,20 +566,28 @@ public class GatewayMessageRouter {
         log.error("Tool error for session {}: {}", sessionId, error);
     }
 
-    /** 处理 agent_online：向 AK 关联的所有会话广播上线状态。 */
+    /** 处理 agent_online：接管该 AK 的活跃路由，然后向关联会话广播上线状态。 */
     private void handleAgentOnline(String ak, String userId, JsonNode node) {
         String toolType = node.path("toolType").asText("UNKNOWN");
         String toolVersion = node.path("toolVersion").asText("UNKNOWN");
-        log.info("Agent online: ak={}, toolType={}, toolVersion={}", ak, toolType, toolVersion);
+        log.info("[ENTRY] handleAgentOnline: ak={}, toolType={}, toolVersion={}", ak, toolType, toolVersion);
 
         if (ak == null) {
+            log.warn("[SKIP] handleAgentOnline: reason=ak_null");
             return;
         }
+
+        // 接管该 AK 下所有 ACTIVE 路由：Agent 重连后让本实例成为新 owner，
+        // 避免旧实例 instanceId 残留导致后续消息被错误路由。
+        sessionRouteService.takeoverActiveRoutes(ak);
+        log.info("handleAgentOnline: takeoverActiveRoutes completed, ak={}", ak);
+
         StreamMessage msg = StreamMessage.agentOnline();
         sessionService.findByAk(ak).forEach(session -> broadcastStreamMessage(
                 session.getId().toString(),
                 userId != null && !userId.isBlank() ? userId : session.getUserId(),
                 msg));
+        log.info("[EXIT] handleAgentOnline: ak={}", ak);
     }
 
     /** 处理 agent_offline：向 AK 关联的所有会话广播离线状态。 */
@@ -690,7 +718,12 @@ public class GatewayMessageRouter {
         bufferService.accumulate(sessionId, msg);
     }
 
-    /** 从消息 JSON 中解析 sessionId（先尝试 welinkSessionId，再通过 toolSessionId 反查）。 */
+    /**
+     * 从消息 JSON 中解析 sessionId（先尝试 welinkSessionId，再通过 toolSessionId 反查）。
+     *
+     * <p>Task 2.10：当通过 toolSessionId 反查时，发送 route_confirm（找到）或 route_reject（未找到）。
+     * welinkSessionId 直连路径不发送 confirm，因为 GW 已通过 welinkSessionId 精确路由，无需确认。</p>
+     */
     private String resolveSessionId(String messageType, JsonNode node) {
         String sessionId = node.path("welinkSessionId").asText(null);
         if (sessionId != null) {
@@ -702,13 +735,28 @@ public class GatewayMessageRouter {
             try {
                 SkillSession session = sessionService.findByToolSessionId(toolSessionId);
                 if (session != null) {
+                    // 找到归属 session → 回复 route_confirm
+                    RouteResponseSender sender = routeResponseSender;
+                    if (sender != null) {
+                        sender.sendRouteConfirm(toolSessionId, session.getId().toString());
+                    }
                     return session.getId().toString();
                 }
-                log.warn("Dropping upstream message: type={}, toolSessionId={}, reason=session_not_found",
+                // 未找到 → 回复 route_reject
+                log.warn("Upstream message session not found: type={}, toolSessionId={}, reason=session_not_found",
                         messageType, toolSessionId);
+                RouteResponseSender sender = routeResponseSender;
+                if (sender != null) {
+                    sender.sendRouteReject(toolSessionId);
+                }
             } catch (Exception e) {
                 log.error("Failed to resolve upstream session affinity: type={}, toolSessionId={}, reason={}",
                         messageType, toolSessionId, e.getMessage());
+                // 查询异常也视为无法处理，回复 route_reject
+                RouteResponseSender sender = routeResponseSender;
+                if (sender != null) {
+                    sender.sendRouteReject(toolSessionId);
+                }
             }
         } else {
             log.warn(
