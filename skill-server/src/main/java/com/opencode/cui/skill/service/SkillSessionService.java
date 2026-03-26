@@ -119,13 +119,22 @@ public class SkillSessionService {
             statusNames = List.of(query.status());
         }
         boolean hasFilters = (query.ak() != null && !query.ak().isBlank())
-                || (query.imGroupId() != null && !query.imGroupId().isBlank())
+                || (query.businessSessionDomain() != null && !query.businessSessionDomain().isBlank())
+                || (query.businessSessionType() != null && !query.businessSessionType().isBlank())
+                || (query.businessSessionId() != null && !query.businessSessionId().isBlank())
+                || (query.assistantAccount() != null && !query.assistantAccount().isBlank())
                 || statusNames != null;
         if (hasFilters) {
             List<SkillSession> content = sessionRepository.findByUserIdFiltered(
-                    query.userId(), query.ak(), query.imGroupId(), statusNames, offset, query.size());
+                    query.userId(), query.ak(),
+                    query.businessSessionDomain(), query.businessSessionType(),
+                    query.businessSessionId(), query.assistantAccount(),
+                    statusNames, offset, query.size());
             long total = sessionRepository.countByUserIdFiltered(
-                    query.userId(), query.ak(), query.imGroupId(), statusNames);
+                    query.userId(), query.ak(),
+                    query.businessSessionDomain(), query.businessSessionType(),
+                    query.businessSessionId(), query.assistantAccount(),
+                    statusNames);
             return new PageResult<>(content, total, query.page(), query.size());
         }
         List<SkillSession> content = sessionRepository.findByUserId(query.userId(), offset, query.size());

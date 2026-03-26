@@ -15,6 +15,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -28,6 +29,8 @@ class MessagePersistenceServiceTest {
         private SkillMessagePartRepository partRepository;
         @Mock
         private SnowflakeIdGenerator snowflakeIdGenerator;
+        @Mock
+        private MessageHistoryCacheService messageHistoryCacheService;
 
         private ActiveMessageTracker activeMessageTracker;
         private MessagePersistenceService service;
@@ -63,6 +66,7 @@ class MessagePersistenceServiceTest {
                 service.finalizeActiveAssistantTurn(1L);
 
                 verify(messageService).markMessageFinished(11L);
+                verify(messageService, times(2)).scheduleLatestHistoryRefreshAfterCommit(1L);
         }
 
         @Test
@@ -86,6 +90,7 @@ class MessagePersistenceServiceTest {
                                 .build());
 
                 verify(messageService).updateMessageContent(11L, "final answer");
+                verify(messageService).scheduleLatestHistoryRefreshAfterCommit(1L);
         }
 
         @Test

@@ -122,12 +122,22 @@ export interface Message {
   parts?: MessagePart[];
 }
 
+export interface MessageHistoryPage<T> {
+  content: T[];
+  size: number;
+  hasMore: boolean;
+  nextBeforeSeq?: number;
+}
+
 export interface Session {
   id: string;
   userId?: string;
   ak?: string;
   title: string;
-  imGroupId?: string;
+  businessSessionDomain?: string;
+  businessSessionType?: string;
+  businessSessionId?: string;
+  assistantAccount?: string;
   status: 'active' | 'idle' | 'closed';
   toolSessionId?: string;
   createdAt: string;

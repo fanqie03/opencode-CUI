@@ -103,8 +103,17 @@
         <if test="ak != null and ak != ''">
             AND ak = #{ak}
         </if>
+        <if test="businessSessionDomain != null and businessSessionDomain != ''">
+            AND business_session_domain = #{businessSessionDomain}
+        </if>
+        <if test="businessSessionType != null and businessSessionType != ''">
+            AND business_session_type = #{businessSessionType}
+        </if>
         <if test="businessSessionId != null and businessSessionId != ''">
             AND business_session_id = #{businessSessionId}
+        </if>
+        <if test="assistantAccount != null and assistantAccount != ''">
+            AND assistant_account = #{assistantAccount}
         </if>
         <if test="statuses != null and statuses.size() > 0">
             AND status IN
@@ -122,8 +131,17 @@
         <if test="ak != null and ak != ''">
             AND ak = #{ak}
         </if>
+        <if test="businessSessionDomain != null and businessSessionDomain != ''">
+            AND business_session_domain = #{businessSessionDomain}
+        </if>
+        <if test="businessSessionType != null and businessSessionType != ''">
+            AND business_session_type = #{businessSessionType}
+        </if>
         <if test="businessSessionId != null and businessSessionId != ''">
             AND business_session_id = #{businessSessionId}
+        </if>
+        <if test="assistantAccount != null and assistantAccount != ''">
+            AND assistant_account = #{assistantAccount}
         </if>
         <if test="statuses != null and statuses.size() > 0">
             AND status IN

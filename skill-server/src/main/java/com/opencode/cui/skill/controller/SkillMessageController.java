@@ -2,6 +2,7 @@ package com.opencode.cui.skill.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.ApiResponse;
+import com.opencode.cui.skill.model.MessageHistoryResult;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.ProtocolMessageView;
 import com.opencode.cui.skill.model.InvokeCommand;
@@ -47,6 +48,7 @@ public class SkillMessageController {
 
     /** 合法的权限响应值集合 */
     private static final Set<String> VALID_PERMISSION_RESPONSES = Set.of("once", "always", "reject");
+    private static final int MAX_HISTORY_PAGE_SIZE = 200;
 
     private final SkillMessageService messageService;
     private final SkillSessionService sessionService;
@@ -165,16 +167,61 @@ public class SkillMessageController {
             @PathVariable String sessionId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
+        if (size <= 0 || size > MAX_HISTORY_PAGE_SIZE) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Size must be between 1 and " + MAX_HISTORY_PAGE_SIZE));
+        }
 
         Long numericSessionId = ProtocolUtils.parseSessionId(sessionId);
         if (numericSessionId == null) {
             return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
         }
 
+        log.info("[ENTRY] SkillMessageController.getMessages: sessionId={}, page={}, size={}",
+                sessionId, page, size);
+        long start = System.nanoTime();
+
         accessControlService.requireSessionAccess(numericSessionId, userIdCookie);
 
         PageResult<ProtocolMessageView> result = messageService.getMessageHistoryWithParts(
                 numericSessionId, page, size);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        log.info("[EXIT] SkillMessageController.getMessages: sessionId={}, page={}, size={}, items={}, durationMs={}",
+                sessionId, page, size, result.getContent() != null ? result.getContent().size() : 0, elapsedMs);
+        return ResponseEntity.ok(ApiResponse.ok(result));
+    }
+
+    @GetMapping("/messages/history")
+    public ResponseEntity<ApiResponse<MessageHistoryResult<ProtocolMessageView>>> getCursorMessages(
+            @CookieValue(value = "userId", required = false) String userIdCookie,
+            @PathVariable String sessionId,
+            @RequestParam(required = false) Integer beforeSeq,
+            @RequestParam(defaultValue = "50") int size) {
+        if (size <= 0 || size > MAX_HISTORY_PAGE_SIZE) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Size must be between 1 and " + MAX_HISTORY_PAGE_SIZE));
+        }
+
+        Long numericSessionId = ProtocolUtils.parseSessionId(sessionId);
+        if (numericSessionId == null) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
+        }
+
+        log.info("[ENTRY] SkillMessageController.getCursorMessages: sessionId={}, beforeSeq={}, size={}",
+                sessionId, beforeSeq, size);
+        long start = System.nanoTime();
+
+        accessControlService.requireSessionAccess(numericSessionId, userIdCookie);
+
+        MessageHistoryResult<ProtocolMessageView> result = messageService.getCursorMessageHistoryWithParts(
+                numericSessionId, beforeSeq, size);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        log.info(
+                "[EXIT] SkillMessageController.getCursorMessages: sessionId={}, beforeSeq={}, size={}, items={}, hasMore={}, durationMs={}",
+                sessionId,
+                beforeSeq,
+                size,
+                result.getContent() != null ? result.getContent().size() : 0,
+                result.getHasMore(),
+                elapsedMs);
         return ResponseEntity.ok(ApiResponse.ok(result));
     }
 

@@ -106,6 +106,16 @@
         ORDER BY seq ASC
     </select>
 
+    <select id="findByMessageIds" resultMap="SkillMessagePartResultMap">
+        SELECT <include refid="allColumns"/>
+        FROM skill_message_part
+        WHERE message_id IN
+        <foreach collection="messageIds" item="messageId" open="(" separator="," close=")">
+            #{messageId}
+        </foreach>
+        ORDER BY message_id ASC, seq ASC
+    </select>
+
     <select id="findMaxSeqByMessageId" resultType="int">
         SELECT COALESCE(MAX(seq), 0) FROM skill_message_part WHERE message_id = #{messageId}
     </select>

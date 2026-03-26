@@ -45,6 +45,21 @@
         LIMIT #{limit} OFFSET #{offset}
     </select>
 
+    <select id="findLatestBySessionId" resultMap="SkillMessageResultMap">
+        <include refid="selectAllColumns"/>
+        WHERE session_id = #{sessionId}
+        ORDER BY seq DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="findBySessionIdBeforeSeq" resultMap="SkillMessageResultMap">
+        <include refid="selectAllColumns"/>
+        WHERE session_id = #{sessionId}
+          AND seq &lt; #{beforeSeq}
+        ORDER BY seq DESC
+        LIMIT #{limit}
+    </select>
+
     <select id="findAllBySessionId" resultMap="SkillMessageResultMap">
         <include refid="selectAllColumns"/>
         WHERE session_id = #{sessionId}

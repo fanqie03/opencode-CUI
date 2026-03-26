@@ -118,7 +118,7 @@ class SkillSessionServiceTest {
         when(sessionRepository.countByUserId("1")).thenReturn(0L);
 
         PageResult<SkillSession> result = service.listSessions(
-                new SessionListQuery("1", null, null, null, 0, 10));
+                new SessionListQuery("1", null, null, null, null, null, null, 0, 10));
         assertNotNull(result);
         assertEquals(0, result.getTotalElements());
     }
@@ -126,12 +126,12 @@ class SkillSessionServiceTest {
     @Test
     @DisplayName("listSessions with status filter")
     void listSessionsWithFilter() {
-        when(sessionRepository.findByUserIdFiltered(eq("1"), isNull(), isNull(), anyList(), eq(0), eq(10)))
+        when(sessionRepository.findByUserIdFiltered(eq("1"), isNull(), isNull(), isNull(), isNull(), isNull(), anyList(), eq(0), eq(10)))
                 .thenReturn(List.of());
-        when(sessionRepository.countByUserIdFiltered(eq("1"), isNull(), isNull(), anyList())).thenReturn(0L);
+        when(sessionRepository.countByUserIdFiltered(eq("1"), isNull(), isNull(), isNull(), isNull(), isNull(), anyList())).thenReturn(0L);
 
         PageResult<SkillSession> result = service.listSessions(
-                new SessionListQuery("1", null, null, "ACTIVE", 0, 10));
+                new SessionListQuery("1", null, null, null, null, null, "ACTIVE", 0, 10));
         assertNotNull(result);
     }
 

@@ -38,18 +38,24 @@ public interface SkillSessionRepository {
         long countByUserIdAndStatusIn(@Param("userId") String userId,
                         @Param("statuses") List<String> statuses);
 
-        /** 按用户 ID + AK + 业务会话 ID + 状态列表组合过滤查询 */
+        /** 按用户 ID + AK + 业务会话域/类型/ID + 助手账号 + 状态列表组合过滤查询 */
         List<SkillSession> findByUserIdFiltered(@Param("userId") String userId,
                         @Param("ak") String ak,
+                        @Param("businessSessionDomain") String businessSessionDomain,
+                        @Param("businessSessionType") String businessSessionType,
                         @Param("businessSessionId") String businessSessionId,
+                        @Param("assistantAccount") String assistantAccount,
                         @Param("statuses") List<String> statuses,
                         @Param("offset") int offset,
                         @Param("limit") int limit);
 
-        /** 按用户 ID + AK + 业务会话 ID + 状态列表组合过滤统计 */
+        /** 按用户 ID + AK + 业务会话域/类型/ID + 助手账号 + 状态列表组合过滤统计 */
         long countByUserIdFiltered(@Param("userId") String userId,
                         @Param("ak") String ak,
+                        @Param("businessSessionDomain") String businessSessionDomain,
+                        @Param("businessSessionType") String businessSessionType,
                         @Param("businessSessionId") String businessSessionId,
+                        @Param("assistantAccount") String assistantAccount,
                         @Param("statuses") List<String> statuses);
 
         /** 按 AK 查询所有会话 */

@@ -25,6 +25,13 @@ public interface SkillMessageRepository {
                         @Param("offset") int offset,
                         @Param("limit") int limit);
 
+        List<SkillMessage> findLatestBySessionId(@Param("sessionId") Long sessionId,
+                        @Param("limit") int limit);
+
+        List<SkillMessage> findBySessionIdBeforeSeq(@Param("sessionId") Long sessionId,
+                        @Param("beforeSeq") Integer beforeSeq,
+                        @Param("limit") int limit);
+
         /** 按会话 ID 查询全部消息（不分页） */
         List<SkillMessage> findAllBySessionId(@Param("sessionId") Long sessionId);
 

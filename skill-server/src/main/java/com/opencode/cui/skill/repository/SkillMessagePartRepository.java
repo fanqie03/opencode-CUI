@@ -32,6 +32,8 @@ public interface SkillMessagePartRepository {
     /** 按所属消息 ID 查询所有分片 */
     List<SkillMessagePart> findByMessageId(@Param("messageId") Long messageId);
 
+    List<SkillMessagePart> findByMessageIds(@Param("messageIds") List<Long> messageIds);
+
     /** 查询指定消息下的最大分片序号 */
     int findMaxSeqByMessageId(@Param("messageId") Long messageId);
 

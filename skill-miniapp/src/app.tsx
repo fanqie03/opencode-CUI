@@ -6,6 +6,7 @@ import { AgentSelector } from './components/AgentSelector';
 import { useSkillSession } from './hooks/useSkillSession';
 import { useSkillStream } from './hooks/useSkillStream';
 import { useAgentSelector } from './hooks/useAgentSelector';
+import { MINIAPP_SESSION_DOMAIN, MINIAPP_SESSION_TYPE } from './constants/session';
 import './index.css';
 
 const agentStatusConfig: Record<string, { className: string; label: string }> = {
@@ -60,6 +61,8 @@ const App: React.FC = () => {
     await createSession({
       ak: selectedAgent.ak,
       title: `Session ${new Date().toLocaleString()}`,
+      businessSessionDomain: MINIAPP_SESSION_DOMAIN,
+      businessSessionType: MINIAPP_SESSION_TYPE,
     });
   }, [createSession, selectedAgent]);
 
@@ -82,6 +85,8 @@ const App: React.FC = () => {
         const session = await createSession({
           ak: selectedAgent.ak,
           title: text.slice(0, 50),
+          businessSessionDomain: MINIAPP_SESSION_DOMAIN,
+          businessSessionType: MINIAPP_SESSION_TYPE,
         });
         if (!session) {
           pendingInitialMessageRef.current = null;

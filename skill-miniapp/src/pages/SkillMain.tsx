@@ -8,6 +8,7 @@ import { useSkillSession } from '../hooks/useSkillSession';
 import { useSkillStream } from '../hooks/useSkillStream';
 import { useSendToIm } from '../hooks/useSendToIm';
 import { useAgentSelector } from '../hooks/useAgentSelector';
+import { MINIAPP_SESSION_DOMAIN, MINIAPP_SESSION_TYPE } from '../constants/session';
 
 interface SkillMainProps {
   onCollapse: () => void;
@@ -169,7 +170,9 @@ export const SkillMain: React.FC<SkillMainProps> = ({
     await createSession({
       ak: selectedAgent.ak,
       title: `Session ${new Date().toLocaleString()}`,
-      imGroupId: imChatId,
+      businessSessionDomain: MINIAPP_SESSION_DOMAIN,
+      businessSessionType: MINIAPP_SESSION_TYPE,
+      businessSessionId: imChatId || undefined,
     });
   }, [createSession, imChatId, selectedAgent]);
 
@@ -192,7 +195,9 @@ export const SkillMain: React.FC<SkillMainProps> = ({
         const session = await createSession({
           ak: selectedAgent.ak,
           title: text.slice(0, 50),
-          imGroupId: imChatId,
+          businessSessionDomain: MINIAPP_SESSION_DOMAIN,
+          businessSessionType: MINIAPP_SESSION_TYPE,
+          businessSessionId: imChatId || undefined,
         });
         if (!session) {
           pendingInitialMessageRef.current = null;

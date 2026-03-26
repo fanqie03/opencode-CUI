@@ -81,11 +81,21 @@ class SkillApiClient:
 
     def create_session(self, user_id: str, ak: str,
                        title: str = "Test Session",
-                       im_group_id: str = "default_group") -> requests.Response:
+                       business_session_id: str = "default_group",
+                       business_session_domain: str = "miniapp",
+                       business_session_type: str = "direct",
+                       assistant_account: Optional[str] = None) -> requests.Response:
         """POST /api/skill/sessions"""
-        body = {"ak": ak, "title": title}
-        if im_group_id:
-            body["imGroupId"] = im_group_id
+        body = {
+            "ak": ak,
+            "title": title,
+            "businessSessionDomain": business_session_domain,
+            "businessSessionType": business_session_type,
+        }
+        if business_session_id:
+            body["businessSessionId"] = business_session_id
+        if assistant_account:
+            body["assistantAccount"] = assistant_account
         return requests.post(
             f"{self.base_url}/api/skill/sessions",
             json=body,
@@ -142,6 +152,18 @@ class SkillApiClient:
         return requests.get(
             f"{self.base_url}/api/skill/sessions/{session_id}/messages",
             params={"page": page, "size": size},
+            cookies=self._cookies(user_id),
+        )
+
+    def get_message_history(self, session_id, user_id: str,
+                            size: int = 50, before_seq: Optional[int] = None) -> requests.Response:
+        """GET /api/skill/sessions/{id}/messages/history"""
+        params = {"size": size}
+        if before_seq is not None:
+            params["beforeSeq"] = before_seq
+        return requests.get(
+            f"{self.base_url}/api/skill/sessions/{session_id}/messages/history",
+            params=params,
             cookies=self._cookies(user_id),
         )
 

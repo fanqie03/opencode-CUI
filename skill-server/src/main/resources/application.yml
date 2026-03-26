@@ -76,6 +76,13 @@ skill:
     templates:
       group-chat: ${SKILL_CONTEXT_GROUP_CHAT_TEMPLATE:classpath:templates/group-chat-prompt.txt}
     max-history-messages: ${SKILL_CONTEXT_MAX_HISTORY_MESSAGES:20}
+  message-history:
+    cache-ttl-seconds: ${SKILL_MESSAGE_HISTORY_CACHE_TTL_SECONDS:30}
+    warm-sizes: ${SKILL_MESSAGE_HISTORY_WARM_SIZES:50}
+    refresh:
+      core-pool-size: ${SKILL_MESSAGE_HISTORY_REFRESH_CORE_POOL_SIZE:2}
+      max-pool-size: ${SKILL_MESSAGE_HISTORY_REFRESH_MAX_POOL_SIZE:4}
+      queue-capacity: ${SKILL_MESSAGE_HISTORY_REFRESH_QUEUE_CAPACITY:200}
   relay:
     # Threshold in seconds before an owner instance is considered dead for takeover
     owner-dead-threshold-seconds: ${SKILL_RELAY_OWNER_DEAD_THRESHOLD_SECONDS:120}

@@ -6,7 +6,10 @@ package com.opencode.cui.skill.model;
 public record SessionListQuery(
         String userId,
         String ak,
-        String imGroupId,
+        String businessSessionDomain,
+        String businessSessionType,
+        String businessSessionId,
+        String assistantAccount,
         String status,
         int page,
         int size) {

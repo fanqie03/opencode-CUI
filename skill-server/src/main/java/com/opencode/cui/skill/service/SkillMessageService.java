@@ -1,6 +1,7 @@
 package com.opencode.cui.skill.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.MessageHistoryResult;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.ProtocolMessageView;
 import com.opencode.cui.skill.model.SaveMessageCommand;
@@ -8,8 +9,18 @@ import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.repository.SkillMessagePartRepository;
 import com.opencode.cui.skill.repository.SkillMessageRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Executor;
+import java.util.stream.Collectors;
 
 /**
  * 消息管理服务。
@@ -29,17 +40,23 @@ public class SkillMessageService {
     private final SkillSessionService sessionService;
     private final SnowflakeIdGenerator snowflakeIdGenerator;
     private final ObjectMapper objectMapper;
+    private final MessageHistoryCacheService messageHistoryCacheService;
+    private final Executor messageHistoryRefreshExecutor;
 
     public SkillMessageService(SkillMessageRepository messageRepository,
             SkillMessagePartRepository partRepository,
             SkillSessionService sessionService,
             SnowflakeIdGenerator snowflakeIdGenerator,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            MessageHistoryCacheService messageHistoryCacheService,
+            @Qualifier("messageHistoryRefreshExecutor") Executor messageHistoryRefreshExecutor) {
         this.messageRepository = messageRepository;
         this.partRepository = partRepository;
         this.sessionService = sessionService;
         this.snowflakeIdGenerator = snowflakeIdGenerator;
         this.objectMapper = objectMapper;
+        this.messageHistoryCacheService = messageHistoryCacheService;
+        this.messageHistoryRefreshExecutor = messageHistoryRefreshExecutor;
     }
 
     /**
@@ -67,8 +84,9 @@ public class SkillMessageService {
 
         messageRepository.insert(message);
         sessionService.touchSession(cmd.sessionId());
+        scheduleLatestHistoryRefreshAfterCommit(cmd.sessionId());
 
-        log.debug("Saved message: sessionId={}, messageId={}, seq={}, role={}",
+        log.info("Saved message: sessionId={}, messageId={}, seq={}, role={}",
                 cmd.sessionId(), effectiveMessageId, nextSeq, cmd.role());
         return message;
     }
@@ -114,24 +132,45 @@ public class SkillMessageService {
     /** 分页查询消息历史，按 seq 升序排列。 */
     @Transactional(readOnly = true)
     public PageResult<SkillMessage> getMessageHistory(Long sessionId, int page, int size) {
-        int offset = page * size;
-        var content = messageRepository.findBySessionId(sessionId, offset, size);
         long total = messageRepository.countBySessionId(sessionId);
-        return new PageResult<>(content, total, page, size);
+        int normalizedPage = Math.max(page, 0);
+        int normalizedSize = size > 0 ? size : 50;
+        int offset = calculateTailOffset(total, normalizedPage, normalizedSize);
+        var content = messageRepository.findBySessionId(sessionId, offset, normalizedSize);
+        return new PageResult<>(content, total, normalizedPage, normalizedSize);
     }
 
     /** 分页查询消息历史（含 Part 附件），返回协议层视图对象。 */
     @Transactional(readOnly = true)
     public PageResult<ProtocolMessageView> getMessageHistoryWithParts(Long sessionId, int page, int size) {
         PageResult<SkillMessage> messages = getMessageHistory(sessionId, page, size);
+        Map<Long, List<com.opencode.cui.skill.model.SkillMessagePart>> partsByMessageId =
+                loadPartsByMessageIds(messages.getContent());
         var content = messages.getContent().stream()
                 .map(message -> ProtocolMessageMapper.toProtocolMessage(
                         message,
-                        partRepository.findByMessageId(message.getId()),
+                        partsByMessageId.getOrDefault(message.getId(), List.of()),
                         objectMapper))
                 .toList();
         return new PageResult<>(content, messages.getTotalElements(),
                 messages.getNumber(), messages.getSize());
+    }
+
+    @Transactional(readOnly = true)
+    public MessageHistoryResult<ProtocolMessageView> getCursorMessageHistoryWithParts(Long sessionId, Integer beforeSeq, int size) {
+        int normalizedSize = normalizeHistorySize(size);
+        if (beforeSeq == null) {
+            MessageHistoryResult<ProtocolMessageView> cached =
+                    messageHistoryCacheService.getLatestHistory(sessionId, normalizedSize);
+            if (cached != null) {
+                return cached;
+            }
+        }
+        MessageHistoryResult<ProtocolMessageView> result = buildCursorMessageHistory(sessionId, beforeSeq, normalizedSize);
+        if (beforeSeq == null) {
+            messageHistoryCacheService.putLatestHistory(sessionId, normalizedSize, result);
+        }
+        return result;
     }
 
     /** 查询会话的全部消息，按 seq 排序。 */
@@ -144,6 +183,37 @@ public class SkillMessageService {
     @Transactional(readOnly = true)
     public long getMessageCount(Long sessionId) {
         return messageRepository.countBySessionId(sessionId);
+    }
+
+    public void invalidateLatestHistoryCache(Long sessionId) {
+        messageHistoryCacheService.invalidateLatestHistory(sessionId);
+    }
+
+    public void refreshLatestHistoryCaches(Long sessionId) {
+        if (sessionId == null) {
+            return;
+        }
+        for (Integer size : messageHistoryCacheService.getWarmSizes()) {
+            int normalizedSize = normalizeHistorySize(size);
+            MessageHistoryResult<ProtocolMessageView> result = buildCursorMessageHistory(sessionId, null, normalizedSize);
+            messageHistoryCacheService.putLatestHistory(sessionId, normalizedSize, result);
+        }
+    }
+
+    public void scheduleLatestHistoryRefreshAfterCommit(Long sessionId) {
+        if (sessionId == null) {
+            return;
+        }
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    triggerAsyncLatestHistoryRefresh(sessionId);
+                }
+            });
+            return;
+        }
+        triggerAsyncLatestHistoryRefresh(sessionId);
     }
 
     @Transactional(readOnly = true)
@@ -186,5 +256,74 @@ public class SkillMessageService {
 
     private String generateMessageId(Long sessionId, int seq) {
         return "msg_" + sessionId + "_" + seq;
+    }
+
+    static int calculateTailOffset(long total, int page, int size) {
+        if (total <= 0 || size <= 0) {
+            return 0;
+        }
+        long remaining = total - (long) (page + 1) * size;
+        return (int) Math.max(remaining, 0L);
+    }
+
+    private List<SkillMessage> loadHistoryWindow(Long sessionId, Integer beforeSeq, int limit) {
+        if (beforeSeq == null) {
+            return messageRepository.findLatestBySessionId(sessionId, limit);
+        }
+        return messageRepository.findBySessionIdBeforeSeq(sessionId, beforeSeq, limit);
+    }
+
+    private MessageHistoryResult<ProtocolMessageView> buildCursorMessageHistory(Long sessionId, Integer beforeSeq, int size) {
+        List<SkillMessage> fetched = loadHistoryWindow(sessionId, beforeSeq, size + 1);
+        boolean hasMore = fetched.size() > size;
+        List<SkillMessage> window = hasMore ? fetched.subList(0, size) : fetched;
+        List<SkillMessage> orderedWindow = window.stream()
+                .sorted(Comparator.comparingInt(message -> message.getSeq() != null ? message.getSeq() : Integer.MAX_VALUE))
+                .toList();
+        Map<Long, List<com.opencode.cui.skill.model.SkillMessagePart>> partsByMessageId =
+                loadPartsByMessageIds(orderedWindow);
+        List<ProtocolMessageView> content = orderedWindow.stream()
+                .map(message -> ProtocolMessageMapper.toProtocolMessage(
+                        message,
+                        partsByMessageId.getOrDefault(message.getId(), List.of()),
+                        objectMapper))
+                .toList();
+        Integer nextBeforeSeq = hasMore && !orderedWindow.isEmpty() ? orderedWindow.get(0).getSeq() : null;
+        return MessageHistoryResult.<ProtocolMessageView>builder()
+                .content(content)
+                .size(size)
+                .hasMore(hasMore)
+                .nextBeforeSeq(nextBeforeSeq)
+                .build();
+    }
+
+    private int normalizeHistorySize(int size) {
+        return size > 0 ? size : 50;
+    }
+
+    private void triggerAsyncLatestHistoryRefresh(Long sessionId) {
+        messageHistoryRefreshExecutor.execute(() -> {
+            try {
+                refreshLatestHistoryCaches(sessionId);
+            } catch (Exception e) {
+                log.warn("Failed to refresh latest history caches asynchronously: sessionId={}, error={}",
+                        sessionId, e.getMessage(), e);
+            }
+        });
+    }
+
+    private Map<Long, List<com.opencode.cui.skill.model.SkillMessagePart>> loadPartsByMessageIds(List<SkillMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<Long> messageIds = messages.stream()
+                .map(SkillMessage::getId)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        if (messageIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return partRepository.findByMessageIds(messageIds).stream()
+                .collect(Collectors.groupingBy(com.opencode.cui.skill.model.SkillMessagePart::getMessageId));
     }
 }

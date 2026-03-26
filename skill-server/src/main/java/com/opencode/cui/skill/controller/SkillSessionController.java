@@ -68,10 +68,10 @@ public class SkillSessionController {
                 resolvedUserId,
                 request.getAk(),
                 request.getTitle(),
-                SkillSession.DOMAIN_MINIAPP,
-                null,
-                request.getImGroupId(),
-                null);
+                request.getBusinessSessionDomain(),
+                request.getBusinessSessionType(),
+                request.getBusinessSessionId(),
+                request.getAssistantAccount());
 
         if (request.getAk() != null) {
             gatewayRelayService.sendInvokeToGateway(
@@ -99,14 +99,18 @@ public class SkillSessionController {
             @CookieValue(value = "userId", required = false) String userIdCookie,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String ak,
-            @RequestParam(required = false) String imGroupId,
+            @RequestParam(required = false) String businessSessionDomain,
+            @RequestParam(required = false) String businessSessionType,
+            @RequestParam(required = false) String businessSessionId,
+            @RequestParam(required = false) String assistantAccount,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
 
         String resolvedUserId = accessControlService.requireUserId(userIdCookie);
         PageResult<SkillSession> sessions = sessionService.listSessions(
                 new com.opencode.cui.skill.model.SessionListQuery(
-                        resolvedUserId, ak, imGroupId, status, page, size));
+                        resolvedUserId, ak, businessSessionDomain, businessSessionType,
+                        businessSessionId, assistantAccount, status, page, size));
         return ResponseEntity.ok(ApiResponse.ok(sessions));
     }
 
@@ -194,6 +198,9 @@ public class SkillSessionController {
     public static class CreateSessionRequest {
         private String ak;
         private String title;
-        private String imGroupId;
+        private String businessSessionDomain;
+        private String businessSessionType;
+        private String businessSessionId;
+        private String assistantAccount;
     }
 }

@@ -63,7 +63,7 @@ public class MessagePersistenceService {
                 ? tracker.resolveActiveMessage(sessionId, msg)
                 : null;
 
-        switch (msg.getType()) {
+        boolean refreshed = switch (msg.getType()) {
             case StreamMessage.Types.TEXT_DONE -> persistTextPart(sessionId, msg, "text", active);
             case StreamMessage.Types.THINKING_DONE -> persistTextPart(sessionId, msg, "reasoning", active);
             case StreamMessage.Types.TOOL_UPDATE -> persistToolPartIfFinal(sessionId, msg, active);
@@ -72,10 +72,14 @@ public class MessagePersistenceService {
                 persistPermissionPart(sessionId, msg, active);
             case StreamMessage.Types.FILE -> persistFilePart(sessionId, msg, active);
             case StreamMessage.Types.STEP_DONE -> persistStepDone(sessionId, msg, active);
-            case StreamMessage.Types.SESSION_STATUS -> handleSessionStatus(sessionId, msg);
-            default -> {
-                // Intermediate deltas and status-only events do not persist parts.
+            case StreamMessage.Types.SESSION_STATUS -> {
+                handleSessionStatus(sessionId, msg);
+                yield false;
             }
+            default -> false;
+        };
+        if (refreshed) {
+            messageService.scheduleLatestHistoryRefreshAfterCommit(sessionId);
         }
     }
 
@@ -132,14 +136,15 @@ public class MessagePersistenceService {
     @Transactional
     public void finalizeActiveAssistantTurn(Long sessionId) {
         tracker.finalizeActiveAssistantTurn(sessionId);
+        messageService.scheduleLatestHistoryRefreshAfterCommit(sessionId);
     }
 
     // ==================== 持久化逻辑 ====================
 
-    private void persistTextPart(Long sessionId, StreamMessage msg, String partType,
+    private boolean persistTextPart(Long sessionId, StreamMessage msg, String partType,
             ActiveMessageTracker.ActiveMessageRef active) {
         if (active == null) {
-            return;
+            return false;
         }
 
         SkillMessagePart part = SkillMessagePart.builder()
@@ -159,20 +164,22 @@ public class MessagePersistenceService {
         if ("text".equals(partType)) {
             syncMessageContent(active);
         }
+        return true;
     }
 
-    private void persistToolPartIfFinal(Long sessionId, StreamMessage msg,
+    private boolean persistToolPartIfFinal(Long sessionId, StreamMessage msg,
             ActiveMessageTracker.ActiveMessageRef active) {
         String status = msg.getStatus();
         if ("completed".equals(status) || "error".equals(status)) {
-            persistToolPart(sessionId, msg, active);
+            return persistToolPart(sessionId, msg, active);
         }
+        return false;
     }
 
-    private void persistToolPart(Long sessionId, StreamMessage msg,
+    private boolean persistToolPart(Long sessionId, StreamMessage msg,
             ActiveMessageTracker.ActiveMessageRef active) {
         if (active == null) {
-            return;
+            return false;
         }
 
         String inputJson = null;
@@ -205,12 +212,13 @@ public class MessagePersistenceService {
         log.debug("Persisted tool part: sessionId={}, protocolId={}, tool={}, status={}",
                 sessionId, active.protocolMessageId(),
                 tool != null ? tool.getToolName() : null, msg.getStatus());
+        return true;
     }
 
-    private void persistPermissionPart(Long sessionId, StreamMessage msg,
+    private boolean persistPermissionPart(Long sessionId, StreamMessage msg,
             ActiveMessageTracker.ActiveMessageRef active) {
         if (active == null) {
-            return;
+            return false;
         }
 
         String metadataJson = null;
@@ -243,12 +251,13 @@ public class MessagePersistenceService {
         partRepository.upsert(part);
         log.debug("Persisted permission part: sessionId={}, protocolId={}, permissionId={}, type={}",
                 sessionId, active.protocolMessageId(), permissionId, msg.getType());
+        return true;
     }
 
-    private void persistFilePart(Long sessionId, StreamMessage msg,
+    private boolean persistFilePart(Long sessionId, StreamMessage msg,
             ActiveMessageTracker.ActiveMessageRef active) {
         if (active == null) {
-            return;
+            return false;
         }
 
         var f = msg.getFile();
@@ -268,6 +277,7 @@ public class MessagePersistenceService {
         log.debug("Persisted file part: sessionId={}, protocolId={}, file={}",
                 sessionId, active.protocolMessageId(),
                 f != null ? f.getFileName() : null);
+        return true;
     }
 
     private record UsageStats(Integer tokensIn, Integer tokensOut) {
@@ -285,10 +295,10 @@ public class MessagePersistenceService {
         return new UsageStats(tokensIn, tokensOut);
     }
 
-    private void persistStepDone(Long sessionId, StreamMessage msg,
+    private boolean persistStepDone(Long sessionId, StreamMessage msg,
             ActiveMessageTracker.ActiveMessageRef active) {
         if (active == null) {
-            return;
+            return false;
         }
 
         var u = msg.getUsage();
@@ -312,6 +322,7 @@ public class MessagePersistenceService {
         messageService.updateMessageStats(active.dbId(), stats.tokensIn(), stats.tokensOut(), cost);
         log.debug("Persisted step.done: sessionId={}, protocolId={}, tokensIn={}, tokensOut={}, cost={}",
                 sessionId, active.protocolMessageId(), stats.tokensIn(), stats.tokensOut(), cost);
+        return true;
     }
 
     private void handleSessionStatus(Long sessionId, StreamMessage msg) {

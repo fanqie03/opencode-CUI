@@ -1,4 +1,4 @@
-import type { Session, Message } from '../protocol/types';
+import type { Session, Message, MessageHistoryPage } from '../protocol/types';
 import { ensureDevUserIdCookie } from './devAuth';
 
 // ---------------------------------------------------------------------------
@@ -179,7 +179,10 @@ export function getOnlineAgents(): Promise<AgentInfo[]> {
 export interface CreateSessionParams {
   ak: string;
   title?: string;
-  imGroupId?: string;
+  businessSessionDomain?: string;
+  businessSessionType?: string;
+  businessSessionId?: string;
+  assistantAccount?: string;
 }
 
 interface PaginatedResponse<T> {
@@ -195,7 +198,10 @@ interface BackendSession {
   userId?: string | null;
   ak?: string | null;
   title?: string | null;
-  imGroupId?: string | null;
+  businessSessionDomain?: string | null;
+  businessSessionType?: string | null;
+  businessSessionId?: string | null;
+  assistantAccount?: string | null;
   status?: string | null;
   toolSessionId?: string | null;
   createdAt?: string | null;
@@ -220,7 +226,10 @@ function normalizeSession(raw: BackendSession): Session {
     userId: raw.userId ?? undefined,
     ak: raw.ak ?? undefined,
     title: raw.title ?? '',
-    imGroupId: raw.imGroupId ?? undefined,
+    businessSessionDomain: raw.businessSessionDomain ?? undefined,
+    businessSessionType: raw.businessSessionType ?? undefined,
+    businessSessionId: raw.businessSessionId ?? undefined,
+    assistantAccount: raw.assistantAccount ?? undefined,
     status: normalizeSessionStatus(raw.status),
     toolSessionId: raw.toolSessionId ?? undefined,
     createdAt,
@@ -283,6 +292,21 @@ export function getMessages(
 ): Promise<PaginatedResponse<Message>> {
   return request<PaginatedResponse<Message>>(
     `/api/skill/sessions/${sessionId}/messages?page=${page}&size=${size}`,
+  );
+}
+
+/** GET /api/skill/sessions/{id}/messages/history */
+export function getMessageHistory(
+  sessionId: string | number,
+  size = 50,
+  beforeSeq?: number,
+): Promise<MessageHistoryPage<Message>> {
+  const query = new URLSearchParams({ size: String(size) });
+  if (beforeSeq != null) {
+    query.set('beforeSeq', String(beforeSeq));
+  }
+  return request<MessageHistoryPage<Message>>(
+    `/api/skill/sessions/${sessionId}/messages/history?${query.toString()}`,
   );
 }
 

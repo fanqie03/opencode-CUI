@@ -1,6 +1,7 @@
 package com.opencode.cui.skill.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.MessageHistoryResult;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.ProtocolMessageView;
 import com.opencode.cui.skill.model.InvokeCommand;
@@ -161,6 +162,52 @@ class SkillMessageControllerTest {
         assertEquals("1", response.getBody().getData().getContent().get(0).getWelinkSessionId());
         assertEquals("assistant", response.getBody().getData().getContent().get(0).getRole());
         assertEquals("markdown", response.getBody().getData().getContent().get(0).getContentType());
+    }
+
+    @Test
+    @DisplayName("getCursorMessageHistory returns 200")
+    void getCursorMessages200() {
+        when(accessControlService.requireSessionAccess(1L, "1")).thenReturn(new SkillSession());
+        ProtocolMessageView view = new ProtocolMessageView();
+        view.setWelinkSessionId("1");
+        view.setRole("assistant");
+        view.setContentType("markdown");
+        view.setParts(List.of());
+        when(messageService.getCursorMessageHistoryWithParts(1L, null, 50))
+                .thenReturn(MessageHistoryResult.<ProtocolMessageView>builder()
+                        .content(List.of(view))
+                        .size(50)
+                        .hasMore(false)
+                        .build());
+
+        var response = controller.getCursorMessages("1", "1", null, 50);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("1", response.getBody().getData().getContent().get(0).getWelinkSessionId());
+        assertEquals("assistant", response.getBody().getData().getContent().get(0).getRole());
+        assertEquals("markdown", response.getBody().getData().getContent().get(0).getContentType());
+    }
+
+    @Test
+    @DisplayName("getMessageHistory returns 400 when size exceeds limit")
+    void getMessagesRejectsOversizedRequest() {
+        var response = controller.getMessages("1", "1", 0, 201);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals(400, response.getBody().getCode());
+        verifyNoInteractions(accessControlService, messageService);
+    }
+
+    @Test
+    @DisplayName("getCursorMessageHistory returns 400 when size exceeds limit")
+    void getCursorMessagesRejectsOversizedRequest() {
+        var response = controller.getCursorMessages("1", "1", null, 201);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals(400, response.getBody().getCode());
+        verifyNoInteractions(accessControlService, messageService);
     }
 
     @Test

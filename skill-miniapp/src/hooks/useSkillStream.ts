@@ -591,7 +591,7 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
     let cancelled = false;
     (async () => {
       try {
-        const response = await api.getMessages(sessionId, 0, 50);
+        const response = await api.getMessageHistory(sessionId, 50);
         if (!cancelled && historyRequestRef.current === requestId) {
           const normalized = normalizeHistoryMessages(response.content as unknown as Array<Record<string, unknown>>);
           setMessages((prev) => mergeHistoryMessages(prev, normalized));
