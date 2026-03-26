@@ -7,6 +7,9 @@ import com.opencode.cui.skill.model.ProtocolMessageView;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.model.AgentSummary;
+import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.service.GatewayApiClient;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
 import com.opencode.cui.skill.service.MessagePersistenceService;
@@ -27,6 +30,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.lenient;
 import org.mockito.ArgumentCaptor;
 
 /**
@@ -42,6 +46,8 @@ class SkillMessageControllerTest {
     @Mock
     private GatewayRelayService gatewayRelayService;
     @Mock
+    private GatewayApiClient gatewayApiClient;
+    @Mock
     private ImMessageService imMessageService;
     @Mock
     private MessagePersistenceService messagePersistenceService;
@@ -54,8 +60,11 @@ class SkillMessageControllerTest {
     void setUp() {
         controller = new SkillMessageController(
                 messageService, sessionService, gatewayRelayService,
-                imMessageService, new ObjectMapper(),
+                gatewayApiClient, imMessageService, new ObjectMapper(),
                 messagePersistenceService, accessControlService);
+        // 默认 Agent 在线，离线场景在专用测试中覆盖
+        lenient().when(gatewayApiClient.getAgentByAk(any()))
+                .thenReturn(AgentSummary.builder().ak("99").toolType("opencode").build());
     }
 
     @Test
@@ -288,5 +297,37 @@ class SkillMessageControllerTest {
         var response = controller.sendToIm("1", "1", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(true, response.getBody().getData().get("success"));
+    }
+
+    @Test
+    @DisplayName("sendMessage broadcasts error via WebSocket and saves system message when agent is offline")
+    void sendMessageAgentOfflineBroadcastsError() {
+        SkillSession session = new SkillSession();
+        session.setId(1L);
+        session.setAk("99");
+        session.setUserId("1");
+        session.setToolSessionId("tool-session-1");
+        session.setStatus(SkillSession.Status.ACTIVE);
+        when(accessControlService.requireSessionAccess(1L, "1")).thenReturn(session);
+        when(gatewayApiClient.getAgentByAk("99")).thenReturn(null); // Agent 离线
+
+        SkillMessage msg = SkillMessage.builder()
+                .id(1L).sessionId(1L).role(SkillMessage.Role.USER).content("Hello").build();
+        when(messageService.saveUserMessage(eq(1L), eq("Hello"))).thenReturn(msg);
+
+        var request = new SkillMessageController.SendMessageRequest();
+        request.setContent("Hello");
+
+        ResponseEntity<?> response = controller.sendMessage("1", "1", request);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+
+        // 验证保存了系统错误消息
+        verify(messageService).saveSystemMessage(eq(1L), contains("任务下发失败"));
+        // 验证通过 WebSocket 广播了错误
+        ArgumentCaptor<StreamMessage> msgCaptor = ArgumentCaptor.forClass(StreamMessage.class);
+        verify(gatewayRelayService).publishProtocolMessage(eq("1"), msgCaptor.capture());
+        assertEquals(StreamMessage.Types.ERROR, msgCaptor.getValue().getType());
+        // 验证没有调用 Gateway 发送 invoke
+        verify(gatewayRelayService, never()).sendInvokeToGateway(any());
     }
 }

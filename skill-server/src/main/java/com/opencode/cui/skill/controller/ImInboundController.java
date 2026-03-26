@@ -9,7 +9,9 @@ import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.service.AssistantAccountResolverService;
 import com.opencode.cui.skill.service.ContextInjectionService;
 import com.opencode.cui.skill.service.GatewayActions;
+import com.opencode.cui.skill.service.GatewayApiClient;
 import com.opencode.cui.skill.service.GatewayRelayService;
+import com.opencode.cui.skill.service.ImOutboundService;
 import com.opencode.cui.skill.service.ImSessionManager;
 import com.opencode.cui.skill.service.MessagePersistenceService;
 import com.opencode.cui.skill.service.PayloadBuilder;
@@ -39,8 +41,13 @@ import java.util.Map;
 @RequestMapping("/api/inbound")
 public class ImInboundController {
 
+    /** Agent 离线提示消息 */
+    private static final String AGENT_OFFLINE_MESSAGE = "任务下发失败，请检查助理是否离线，确保助理在线后重试";
+
     private final AssistantAccountResolverService resolverService; // 助手账号解析服务：assistantAccount → (ak, ownerWelinkId)
+    private final GatewayApiClient gatewayApiClient; // Gateway API 客户端：查询 Agent 在线状态
     private final ImSessionManager sessionManager; // IM 会话管理器：查找/创建 skill session
+    private final ImOutboundService imOutboundService; // IM 出站消息服务：向 IM 发送消息
     private final ContextInjectionService contextInjectionService; // 上下文注入服务：群聊时将历史消息拼入 prompt
     private final GatewayRelayService gatewayRelayService; // Gateway 通信服务：通过 WebSocket 转发消息到 AI Gateway
     private final SkillMessageService messageService; // 消息持久化服务：保存用户/助手消息到数据库
@@ -49,14 +56,18 @@ public class ImInboundController {
 
     public ImInboundController(
             AssistantAccountResolverService resolverService,
+            GatewayApiClient gatewayApiClient,
             ImSessionManager sessionManager,
+            ImOutboundService imOutboundService,
             ContextInjectionService contextInjectionService,
             GatewayRelayService gatewayRelayService,
             SkillMessageService messageService,
             MessagePersistenceService messagePersistenceService,
             ObjectMapper objectMapper) {
         this.resolverService = resolverService;
+        this.gatewayApiClient = gatewayApiClient;
         this.sessionManager = sessionManager;
+        this.imOutboundService = imOutboundService;
         this.contextInjectionService = contextInjectionService;
         this.gatewayRelayService = gatewayRelayService;
         this.messageService = messageService;
@@ -101,6 +112,32 @@ public class ImInboundController {
         String ownerWelinkId = resolveResult.ownerWelinkId();
         log.info("ImInboundController.receiveMessage: resolved assistant={}, ak={}, ownerWelinkId={}",
                 request.assistantAccount(), ak, ownerWelinkId);
+
+        // ========== 第 3.5 步：Agent 在线检查 ==========
+        if (gatewayApiClient.getAgentByAk(ak) == null) {
+            log.warn("[SKIP] ImInboundController.receiveMessage: reason=agent_offline, ak={}, sessionType={}, sessionId={}",
+                    ak, request.sessionType(), request.sessionId());
+            // 通过 IM 回复离线提示
+            imOutboundService.sendTextToIm(
+                    request.sessionType(), request.sessionId(),
+                    AGENT_OFFLINE_MESSAGE, request.assistantAccount());
+            // 单聊 + 已有 session：保存系统消息到数据库
+            if (SkillSession.SESSION_TYPE_DIRECT.equalsIgnoreCase(request.sessionType())) {
+                SkillSession existingSession = sessionManager.findSession(
+                        request.businessDomain(), request.sessionType(), request.sessionId(), ak);
+                if (existingSession != null) {
+                    try {
+                        messageService.saveSystemMessage(existingSession.getId(), AGENT_OFFLINE_MESSAGE);
+                    } catch (Exception e) {
+                        log.error("Failed to persist agent_offline message for IM session {}: {}",
+                                existingSession.getId(), e.getMessage());
+                    }
+                }
+            }
+            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            log.info("[EXIT] ImInboundController.receiveMessage: reason=agent_offline, ak={}, durationMs={}", ak, elapsedMs);
+            return ResponseEntity.ok(ApiResponse.ok(null));
+        }
 
         // ========== 第 4 步：上下文注入（群聊场景下将 chatHistory 拼接到 prompt）==========
         String prompt = contextInjectionService.resolvePrompt(

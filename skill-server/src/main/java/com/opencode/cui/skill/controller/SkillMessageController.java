@@ -10,6 +10,7 @@ import com.opencode.cui.skill.service.GatewayActions;
 import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.service.GatewayApiClient;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
 import com.opencode.cui.skill.service.MessagePersistenceService;
@@ -49,10 +50,13 @@ public class SkillMessageController {
     /** 合法的权限响应值集合 */
     private static final Set<String> VALID_PERMISSION_RESPONSES = Set.of("once", "always", "reject");
     private static final int MAX_HISTORY_PAGE_SIZE = 200;
+    /** Agent 离线提示消息 */
+    private static final String AGENT_OFFLINE_MESSAGE = "任务下发失败，请检查助理是否离线，确保助理在线后重试";
 
     private final SkillMessageService messageService;
     private final SkillSessionService sessionService;
     private final GatewayRelayService gatewayRelayService;
+    private final GatewayApiClient gatewayApiClient;
     private final ImMessageService imMessageService;
     private final ObjectMapper objectMapper;
     private final MessagePersistenceService messagePersistenceService;
@@ -61,6 +65,7 @@ public class SkillMessageController {
     public SkillMessageController(SkillMessageService messageService,
             SkillSessionService sessionService,
             GatewayRelayService gatewayRelayService,
+            GatewayApiClient gatewayApiClient,
             ImMessageService imMessageService,
             ObjectMapper objectMapper,
             MessagePersistenceService messagePersistenceService,
@@ -68,6 +73,7 @@ public class SkillMessageController {
         this.messageService = messageService;
         this.sessionService = sessionService;
         this.gatewayRelayService = gatewayRelayService;
+        this.gatewayApiClient = gatewayApiClient;
         this.imMessageService = imMessageService;
         this.objectMapper = objectMapper;
         this.messagePersistenceService = messagePersistenceService;
@@ -125,6 +131,22 @@ public class SkillMessageController {
             Long numericSessionId, SendMessageRequest request) {
         if (session.getAk() == null) {
             log.warn("[SKIP] SkillMessageController.routeToGateway: reason=no_agent, sessionId={}", sessionId);
+            return;
+        }
+
+        // Agent 在线检查：离线时保存系统消息并通过 WebSocket 通知客户端
+        if (gatewayApiClient.getAgentByAk(session.getAk()) == null) {
+            log.warn("[SKIP] SkillMessageController.routeToGateway: reason=agent_offline, sessionId={}, ak={}",
+                    sessionId, session.getAk());
+            try {
+                messageService.saveSystemMessage(numericSessionId, AGENT_OFFLINE_MESSAGE);
+            } catch (Exception e) {
+                log.error("Failed to persist agent_offline message for session {}: {}", sessionId, e.getMessage());
+            }
+            gatewayRelayService.publishProtocolMessage(sessionId, StreamMessage.builder()
+                    .type(StreamMessage.Types.ERROR)
+                    .error(AGENT_OFFLINE_MESSAGE)
+                    .build());
             return;
         }
 

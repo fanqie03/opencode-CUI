@@ -5,9 +5,12 @@ import com.opencode.cui.skill.model.AssistantResolveResult;
 import com.opencode.cui.skill.model.ImMessageRequest;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.model.AgentSummary;
 import com.opencode.cui.skill.service.AssistantAccountResolverService;
 import com.opencode.cui.skill.service.ContextInjectionService;
+import com.opencode.cui.skill.service.GatewayApiClient;
 import com.opencode.cui.skill.service.GatewayRelayService;
+import com.opencode.cui.skill.service.ImOutboundService;
 import com.opencode.cui.skill.service.ImSessionManager;
 import com.opencode.cui.skill.service.MessagePersistenceService;
 import com.opencode.cui.skill.service.SkillMessageService;
@@ -26,6 +29,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.contains;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -37,7 +42,11 @@ class ImInboundControllerTest {
         @Mock
         private AssistantAccountResolverService resolverService;
         @Mock
+        private GatewayApiClient gatewayApiClient;
+        @Mock
         private ImSessionManager sessionManager;
+        @Mock
+        private ImOutboundService imOutboundService;
         @Mock
         private ContextInjectionService contextInjectionService;
         @Mock
@@ -53,12 +62,17 @@ class ImInboundControllerTest {
         void setUp() {
                 controller = new ImInboundController(
                                 resolverService,
+                                gatewayApiClient,
                                 sessionManager,
+                                imOutboundService,
                                 contextInjectionService,
                                 gatewayRelayService,
                                 messageService,
                                 messagePersistenceService,
                                 new ObjectMapper());
+                // 默认 Agent 在线
+                lenient().when(gatewayApiClient.getAgentByAk(any()))
+                        .thenReturn(AgentSummary.builder().ak("ak-001").toolType("opencode").build());
         }
 
         @Test
@@ -200,5 +214,67 @@ class ImInboundControllerTest {
                 assertEquals(HttpStatus.OK, response.getStatusCode());
                 verify(sessionManager).requestToolSession(session, "waiting message");
                 verify(gatewayRelayService, never()).sendInvokeToGateway(any());
+        }
+
+        @Test
+        @DisplayName("agent offline in direct chat with existing session replies IM and saves system message")
+        void agentOfflineDirectWithSessionRepliesAndPersists() {
+                SkillSession session = new SkillSession();
+                session.setId(101L);
+                session.setAk("ak-001");
+
+                ImMessageRequest request = new ImMessageRequest(
+                                "im", "direct", "dm-001", "assist-001", "hello", "text", null, null);
+
+                when(resolverService.resolve("assist-001"))
+                                .thenReturn(new AssistantResolveResult("ak-001", "owner-001"));
+                when(gatewayApiClient.getAgentByAk("ak-001")).thenReturn(null); // Agent 离线
+                when(sessionManager.findSession("im", "direct", "dm-001", "ak-001")).thenReturn(session);
+
+                var response = controller.receiveMessage(request);
+
+                assertEquals(HttpStatus.OK, response.getStatusCode());
+                verify(imOutboundService).sendTextToIm(eq("direct"), eq("dm-001"),
+                                contains("任务下发失败"), eq("assist-001"));
+                verify(messageService).saveSystemMessage(eq(101L), contains("任务下发失败"));
+                verify(gatewayRelayService, never()).sendInvokeToGateway(any());
+        }
+
+        @Test
+        @DisplayName("agent offline in group chat replies IM without persisting")
+        void agentOfflineGroupRepliesWithoutPersisting() {
+                ImMessageRequest request = new ImMessageRequest(
+                                "im", "group", "grp-001", "assist-001", "hello", "text", null, null);
+
+                when(resolverService.resolve("assist-001"))
+                                .thenReturn(new AssistantResolveResult("ak-001", "owner-001"));
+                when(gatewayApiClient.getAgentByAk("ak-001")).thenReturn(null); // Agent 离线
+
+                var response = controller.receiveMessage(request);
+
+                assertEquals(HttpStatus.OK, response.getStatusCode());
+                verify(imOutboundService).sendTextToIm(eq("group"), eq("grp-001"),
+                                contains("任务下发失败"), eq("assist-001"));
+                verify(messageService, never()).saveSystemMessage(any(), any());
+                verify(gatewayRelayService, never()).sendInvokeToGateway(any());
+        }
+
+        @Test
+        @DisplayName("agent offline in direct chat without session replies IM only")
+        void agentOfflineDirectNoSessionRepliesOnly() {
+                ImMessageRequest request = new ImMessageRequest(
+                                "im", "direct", "dm-new", "assist-001", "hello", "text", null, null);
+
+                when(resolverService.resolve("assist-001"))
+                                .thenReturn(new AssistantResolveResult("ak-001", "owner-001"));
+                when(gatewayApiClient.getAgentByAk("ak-001")).thenReturn(null); // Agent 离线
+                when(sessionManager.findSession("im", "direct", "dm-new", "ak-001")).thenReturn(null);
+
+                var response = controller.receiveMessage(request);
+
+                assertEquals(HttpStatus.OK, response.getStatusCode());
+                verify(imOutboundService).sendTextToIm(eq("direct"), eq("dm-new"),
+                                contains("任务下发失败"), eq("assist-001"));
+                verify(messageService, never()).saveSystemMessage(any(), any());
         }
 }
