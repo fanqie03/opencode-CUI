@@ -92,6 +92,12 @@ skill:
     # Cleanup interval in minutes for scheduled IDLE session cleanup
     cleanup-interval-minutes: 10
     auto-create-timeout-seconds: ${SKILL_SESSION_AUTO_CREATE_TIMEOUT_SECONDS:30}
+  assistant-id:
+    enabled: ${SKILL_ASSISTANT_ID_ENABLED:true}
+    target-tool-type: ${SKILL_ASSISTANT_ID_TARGET_TOOL_TYPE:assistant}
+    persona-base-url: ${SKILL_ASSISTANT_ID_PERSONA_BASE_URL:}
+    cache-ttl-minutes: ${SKILL_ASSISTANT_ID_CACHE_TTL_MINUTES:30}
+    match-ak: ${SKILL_ASSISTANT_ID_MATCH_AK:false}
 
 opencode:
   logging:
