@@ -65,16 +65,19 @@ public class GatewayRelayService {
     private final GatewayMessageRouter messageRouter;
     private final SessionRebuildService rebuildService;
     private final RedisMessageBroker redisMessageBroker;
+    private final AssistantIdResolverService assistantIdResolverService;
     private volatile GatewayRelayTarget gatewayRelayTarget;
 
     public GatewayRelayService(ObjectMapper objectMapper,
             GatewayMessageRouter messageRouter,
             SessionRebuildService rebuildService,
-            RedisMessageBroker redisMessageBroker) {
+            RedisMessageBroker redisMessageBroker,
+            AssistantIdResolverService assistantIdResolverService) {
         this.objectMapper = objectMapper;
         this.messageRouter = messageRouter;
         this.rebuildService = rebuildService;
         this.redisMessageBroker = redisMessageBroker;
+        this.assistantIdResolverService = assistantIdResolverService;
 
         // 向 MessageRouter 注入下行发送能力，避免循环依赖
         messageRouter.setDownstreamSender(this::sendInvokeToGateway);
@@ -191,6 +194,20 @@ public class GatewayRelayService {
         } catch (JsonProcessingException e) {
             log.warn("Failed to parse invoke payload as JSON, sending as string: {}", e.getMessage());
             message.put("payload", command.payload());
+        }
+
+        // 注入 assistantId（集中拦截：所有 invoke 消息自动覆盖）
+        String assistantId = assistantIdResolverService.resolve(command.ak(), command.sessionId());
+        if (assistantId != null) {
+            ObjectNode targetPayload;
+            JsonNode existingPayload = message.get("payload");
+            if (existingPayload instanceof ObjectNode on) {
+                targetPayload = on;
+            } else {
+                targetPayload = objectMapper.createObjectNode();
+                message.set("payload", targetPayload);
+            }
+            targetPayload.put("assistantId", assistantId);
         }
 
         try {

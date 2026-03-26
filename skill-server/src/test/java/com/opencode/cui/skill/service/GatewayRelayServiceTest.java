@@ -54,6 +54,8 @@ class GatewayRelayServiceTest {
         private SkillInstanceRegistry skillInstanceRegistry;
         @Mock
         private GatewayRelayService.GatewayRelayTarget gatewayRelayTarget;
+        @Mock
+        private AssistantIdResolverService assistantIdResolverService;
 
         private GatewayMessageRouter messageRouter;
         private GatewayRelayService service;
@@ -88,7 +90,8 @@ class GatewayRelayServiceTest {
                                 new ObjectMapper(),
                                 messageRouter,
                                 rebuildService,
-                                redisMessageBroker);
+                                redisMessageBroker,
+                                assistantIdResolverService);
                 service.setGatewayRelayTarget(gatewayRelayTarget);
         }
 
@@ -709,6 +712,59 @@ class GatewayRelayServiceTest {
                 verify(redisMessageBroker).publishToUser(eq("user-1"), payloadCaptor.capture());
                 JsonNode published = readPublishedMessage(payloadCaptor.getValue());
                 assertEquals("tool.update", published.path("message").path("type").asText());
+        }
+
+        @Test
+        @DisplayName("buildInvokeMessage injects assistantId into payload when resolved")
+        void buildInvokeMessageInjectsAssistantId() throws Exception {
+                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+                when(gatewayRelayTarget.sendViaHash(any(), any())).thenReturn(true);
+                when(assistantIdResolverService.resolve("ak-001", "42")).thenReturn("persona-agent-id");
+
+                service.sendInvokeToGateway(
+                                new InvokeCommand("ak-001", "user-1", "42", "chat", "{\"text\":\"hello\"}"));
+
+                ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
+                verify(gatewayRelayTarget).sendViaHash(eq("ak-001"), msgCaptor.capture());
+
+                JsonNode sent = objectMapper.readTree(msgCaptor.getValue());
+                assertEquals("persona-agent-id", sent.path("payload").path("assistantId").asText());
+                // 原有 payload 字段不受影响
+                assertEquals("hello", sent.path("payload").path("text").asText());
+        }
+
+        @Test
+        @DisplayName("buildInvokeMessage does not inject when resolver returns null")
+        void buildInvokeMessageSkipsWhenResolverReturnsNull() throws Exception {
+                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+                when(gatewayRelayTarget.sendViaHash(any(), any())).thenReturn(true);
+                when(assistantIdResolverService.resolve("ak-001", "42")).thenReturn(null);
+
+                service.sendInvokeToGateway(
+                                new InvokeCommand("ak-001", "user-1", "42", "chat", "{\"text\":\"hello\"}"));
+
+                ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
+                verify(gatewayRelayTarget).sendViaHash(eq("ak-001"), msgCaptor.capture());
+
+                JsonNode sent = objectMapper.readTree(msgCaptor.getValue());
+                assertTrue(sent.path("payload").path("assistantId").isMissingNode());
+        }
+
+        @Test
+        @DisplayName("buildInvokeMessage creates payload ObjectNode when payload is null")
+        void buildInvokeMessageCreatesPayloadWhenNull() throws Exception {
+                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+                when(gatewayRelayTarget.sendViaHash(any(), any())).thenReturn(true);
+                when(assistantIdResolverService.resolve("ak-001", "42")).thenReturn("agent-id");
+
+                service.sendInvokeToGateway(
+                                new InvokeCommand("ak-001", "user-1", "42", "create_session", null));
+
+                ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
+                verify(gatewayRelayTarget).sendViaHash(eq("ak-001"), msgCaptor.capture());
+
+                JsonNode sent = objectMapper.readTree(msgCaptor.getValue());
+                assertEquals("agent-id", sent.path("payload").path("assistantId").asText());
         }
 
         private JsonNode readPublishedMessage(String payload) {
