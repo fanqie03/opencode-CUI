@@ -3,7 +3,6 @@ package com.opencode.cui.skill.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.opencode.cui.skill.model.SessionRoute;
 import com.opencode.cui.skill.model.StreamMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -11,8 +10,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.time.LocalDateTime;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -29,7 +26,7 @@ import static org.mockito.Mockito.when;
  * Verifies the GatewayMessageRouter route() method handles:
  * - Local owner processing
  * - Remote owner relay via Redis pub/sub
- * - Dead owner takeover (heartbeat missing, updatedAt expired)
+ * - Dead owner takeover (heartbeat missing)
  * - Takeover conflict forwarding to winner
  * - Auto-claim when no owner exists
  */
@@ -137,28 +134,6 @@ class SsRelayAndTakeoverTest {
         // Heartbeat is missing
         when(skillInstanceRegistry.isInstanceAlive(REMOTE_INSTANCE)).thenReturn(false);
         // Takeover succeeds
-        when(sessionRouteService.tryTakeover(SESSION_ID, REMOTE_INSTANCE, LOCAL_INSTANCE)).thenReturn(true);
-
-        JsonNode node = buildToolDoneNode(SESSION_ID);
-        router.route("tool_done", AK, USER_ID, node);
-
-        verify(sessionRouteService).tryTakeover(SESSION_ID, REMOTE_INSTANCE, LOCAL_INSTANCE);
-    }
-
-    @Test
-    @DisplayName("route: owner dead (updatedAt expired) -> should takeover")
-    void route_ownerDead_updatedAtExpired_shouldTakeover() {
-        when(sessionRouteService.getOwnerInstance(SESSION_ID)).thenReturn(REMOTE_INSTANCE);
-        when(redisMessageBroker.publishToSsRelay(eq(REMOTE_INSTANCE), anyString())).thenReturn(0L);
-        // Heartbeat exists but...
-        when(skillInstanceRegistry.isInstanceAlive(REMOTE_INSTANCE)).thenReturn(true);
-        // updatedAt is way past threshold
-        SessionRoute staleRoute = SessionRoute.builder()
-                .welinkSessionId(Long.parseLong(SESSION_ID))
-                .sourceInstance(REMOTE_INSTANCE)
-                .updatedAt(LocalDateTime.now().minusSeconds(DEAD_THRESHOLD_SECONDS + 60))
-                .build();
-        when(sessionRouteService.findByWelinkSessionId(Long.parseLong(SESSION_ID))).thenReturn(staleRoute);
         when(sessionRouteService.tryTakeover(SESSION_ID, REMOTE_INSTANCE, LOCAL_INSTANCE)).thenReturn(true);
 
         JsonNode node = buildToolDoneNode(SESSION_ID);

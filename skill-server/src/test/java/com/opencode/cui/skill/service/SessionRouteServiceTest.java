@@ -1,31 +1,39 @@
 package com.opencode.cui.skill.service;
 
-import com.opencode.cui.skill.model.SessionRoute;
 import com.opencode.cui.skill.repository.SessionRouteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
+
+import java.time.Duration;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * SessionRouteService unit tests (pure Redis ownership).
+ * Verifies SETNX-based ownership creation, Redis-only lookups,
+ * and Lua CAS takeover.
+ */
 @ExtendWith(MockitoExtension.class)
-/** SessionRouteService 单元测试：验证会话与 Gateway 实例的路由绑定和查询。 */
 class SessionRouteServiceTest {
 
     @Mock
@@ -34,198 +42,253 @@ class SessionRouteServiceTest {
     @Mock
     private StringRedisTemplate redisTemplate;
 
+    @Mock
+    private ValueOperations<String, String> valueOps;
+
     private SessionRouteService service;
 
     private static final String INSTANCE_ID = "ss-az1-1";
+    private static final int TTL_SECONDS = 1800;
+    private static final String CACHE_PREFIX = "ss:internal:session:";
 
     @BeforeEach
     void setUp() {
-        ValueOperations<String, String> valueOps = mock(ValueOperations.class);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        service = new SessionRouteService(repository, redisTemplate, INSTANCE_ID, 1800);
+        service = new SessionRouteService(repository, redisTemplate, INSTANCE_ID, TTL_SECONDS);
     }
 
     @Nested
-    @DisplayName("路由记录 CRUD")
-    class CrudTests {
+    @DisplayName("createRoute - SETNX ownership")
+    class CreateRouteTests {
 
         @Test
-        @DisplayName("createRoute 插入记录并返回")
-        void createRouteInsertsRecord() {
+        @DisplayName("createRoute writes ownership via SETNX")
+        void createRouteWritesRedis() {
+            when(valueOps.setIfAbsent(
+                    eq(CACHE_PREFIX + "12345"),
+                    eq(INSTANCE_ID),
+                    eq(Duration.ofSeconds(TTL_SECONDS)))).thenReturn(true);
+
             service.createRoute("ak-1", 12345L, "skill-server", "user-123");
 
-            ArgumentCaptor<SessionRoute> captor = ArgumentCaptor.forClass(SessionRoute.class);
-            verify(repository).insert(captor.capture());
-
-            SessionRoute route = captor.getValue();
-            assertEquals("ak-1", route.getAk());
-            assertEquals(12345L, route.getWelinkSessionId());
-            assertEquals("skill-server", route.getSourceType());
-            assertEquals(INSTANCE_ID, route.getSourceInstance());
-            assertEquals("user-123", route.getUserId());
-            assertEquals("ACTIVE", route.getStatus());
-            assertNull(route.getToolSessionId());
+            verify(valueOps).setIfAbsent(
+                    eq(CACHE_PREFIX + "12345"),
+                    eq(INSTANCE_ID),
+                    eq(Duration.ofSeconds(TTL_SECONDS)));
         }
 
         @Test
-        @DisplayName("updateToolSessionId 更新记录")
-        void updateToolSessionIdUpdatesRecord() {
-            service.updateToolSessionId(12345L, "skill-server", "oc-uuid-001");
+        @DisplayName("createRoute does not overwrite existing ownership")
+        void createRouteDoesNotOverwrite() {
+            when(valueOps.setIfAbsent(
+                    eq(CACHE_PREFIX + "12345"),
+                    eq(INSTANCE_ID),
+                    eq(Duration.ofSeconds(TTL_SECONDS)))).thenReturn(false);
+            when(valueOps.get(CACHE_PREFIX + "12345")).thenReturn("ss-other-2");
 
-            verify(repository).updateToolSessionId(12345L, "skill-server", "oc-uuid-001");
-        }
+            service.createRoute("ak-1", 12345L, "skill-server", "user-123");
 
-        @Test
-        @DisplayName("closeRoute 设置状态为 CLOSED")
-        void closeRouteSetsStatusClosed() {
-            service.closeRoute(12345L, "skill-server");
-
-            verify(repository).updateStatus(12345L, "skill-server", "CLOSED");
+            // No exception, ownership not overwritten
+            verify(valueOps).setIfAbsent(
+                    eq(CACHE_PREFIX + "12345"),
+                    eq(INSTANCE_ID),
+                    eq(Duration.ofSeconds(TTL_SECONDS)));
         }
     }
 
     @Nested
-    @DisplayName("Ownership 检查")
+    @DisplayName("closeRoute - delete Redis key")
+    class CloseRouteTests {
+
+        @Test
+        @DisplayName("closeRoute deletes Redis ownership key")
+        void closeRouteDeletesRedis() {
+            service.closeRoute(12345L, "skill-server");
+
+            verify(redisTemplate).delete(CACHE_PREFIX + "12345");
+        }
+    }
+
+    @Nested
+    @DisplayName("Ownership checks")
     class OwnershipTests {
 
         @Test
-        @DisplayName("isMySession 返回 true 当 sourceInstance 匹配本实例")
+        @DisplayName("isMySession returns true when Redis value matches instanceId")
         void isMySessionReturnsTrueWhenMatching() {
-            SessionRoute route = new SessionRoute();
-            route.setSourceInstance(INSTANCE_ID);
-            when(repository.findByWelinkSessionId(12345L)).thenReturn(route);
+            when(valueOps.get(CACHE_PREFIX + "12345")).thenReturn(INSTANCE_ID);
 
             assertTrue(service.isMySession("12345"));
         }
 
         @Test
-        @DisplayName("isMySession 返回 false 当 sourceInstance 不匹配")
+        @DisplayName("isMySession returns false when Redis value does not match")
         void isMySessionReturnsFalseWhenNotMatching() {
-            SessionRoute route = new SessionRoute();
-            route.setSourceInstance("ss-az1-2");
-            when(repository.findByWelinkSessionId(12345L)).thenReturn(route);
+            when(valueOps.get(CACHE_PREFIX + "12345")).thenReturn("ss-other-2");
 
             assertFalse(service.isMySession("12345"));
         }
 
         @Test
-        @DisplayName("isMySession 返回 false 当记录不存在")
+        @DisplayName("isMySession returns false when key not found")
         void isMySessionReturnsFalseWhenNotFound() {
-            when(repository.findByWelinkSessionId(12345L)).thenReturn(null);
+            when(valueOps.get(CACHE_PREFIX + "12345")).thenReturn(null);
 
             assertFalse(service.isMySession("12345"));
         }
 
         @Test
-        @DisplayName("isMyToolSession 返回 true 当 sourceInstance 匹配")
-        void isMyToolSessionReturnsTrueWhenMatching() {
-            SessionRoute route = new SessionRoute();
-            route.setSourceInstance(INSTANCE_ID);
-            when(repository.findByToolSessionId("oc-uuid-001")).thenReturn(route);
-
-            assertTrue(service.isMyToolSession("oc-uuid-001"));
-        }
-
-        @Test
-        @DisplayName("isMyToolSession 返回 false 当不匹配或不存在")
-        void isMyToolSessionReturnsFalseWhenNotMatching() {
-            when(repository.findByToolSessionId("oc-uuid-001")).thenReturn(null);
-
-            assertFalse(service.isMyToolSession("oc-uuid-001"));
-        }
-
-        @Test
-        @DisplayName("isMySession DB 异常时降级返回 true")
-        void isMySessionReturnsTrueOnDbException() {
-            when(repository.findByWelinkSessionId(12345L)).thenThrow(new RuntimeException("DB connection lost"));
+        @DisplayName("isMySession degrades to true on Redis exception")
+        void isMySessionDegradesToTrueOnError() {
+            when(valueOps.get(CACHE_PREFIX + "12345")).thenThrow(new RuntimeException("Redis down"));
 
             assertTrue(service.isMySession("12345"));
         }
+    }
+
+    @Nested
+    @DisplayName("getOwnerInstance - pure Redis")
+    class GetOwnerInstanceTests {
 
         @Test
-        @DisplayName("isMyToolSession DB 异常时降级返回 true")
-        void isMyToolSessionReturnsTrueOnDbException() {
-            when(repository.findByToolSessionId("oc-uuid-001")).thenThrow(new RuntimeException("DB connection lost"));
+        @DisplayName("getOwnerInstance returns owner from Redis")
+        void returnsOwnerFromRedis() {
+            when(valueOps.get(CACHE_PREFIX + "12345")).thenReturn(INSTANCE_ID);
 
-            assertTrue(service.isMyToolSession("oc-uuid-001"));
+            String result = service.getOwnerInstance("12345");
+
+            assertEquals(INSTANCE_ID, result);
+        }
+
+        @Test
+        @DisplayName("getOwnerInstance returns null when key missing")
+        void returnsNullWhenMissing() {
+            when(valueOps.get(CACHE_PREFIX + "12345")).thenReturn(null);
+
+            assertNull(service.getOwnerInstance("12345"));
+        }
+
+        @Test
+        @DisplayName("getOwnerInstance returns null on Redis error")
+        void returnsNullOnRedisError() {
+            when(valueOps.get(CACHE_PREFIX + "12345")).thenThrow(new RuntimeException("Redis down"));
+
+            assertNull(service.getOwnerInstance("12345"));
         }
     }
 
     @Nested
-    @DisplayName("查询")
-    class QueryTests {
+    @DisplayName("ensureRouteOwnership - SETNX")
+    class EnsureOwnershipTests {
 
         @Test
-        @DisplayName("findByToolSessionId 返回路由记录")
-        void findByToolSessionIdReturnsRoute() {
-            SessionRoute expected = new SessionRoute();
-            expected.setToolSessionId("oc-uuid-001");
-            expected.setSourceInstance(INSTANCE_ID);
-            when(repository.findByToolSessionId("oc-uuid-001")).thenReturn(expected);
+        @DisplayName("ensureRouteOwnership succeeds with SETNX")
+        void ensureOwnershipSucceedsViaSetnx() {
+            when(valueOps.setIfAbsent(
+                    eq(CACHE_PREFIX + "12345"),
+                    eq(INSTANCE_ID),
+                    eq(Duration.ofSeconds(TTL_SECONDS)))).thenReturn(true);
 
-            SessionRoute result = service.findByToolSessionId("oc-uuid-001");
-
-            assertNotNull(result);
-            assertEquals("oc-uuid-001", result.getToolSessionId());
+            assertTrue(service.ensureRouteOwnership("12345", "ak-1", "user-123"));
         }
 
         @Test
-        @DisplayName("findByToolSessionId null 时返回 null")
-        void findByToolSessionIdReturnsNullForNull() {
-            assertNull(service.findByToolSessionId(null));
+        @DisplayName("ensureRouteOwnership returns true when already owned by this instance")
+        void ensureOwnershipReturnsTrueWhenAlreadyOwned() {
+            when(valueOps.setIfAbsent(
+                    eq(CACHE_PREFIX + "12345"),
+                    eq(INSTANCE_ID),
+                    eq(Duration.ofSeconds(TTL_SECONDS)))).thenReturn(false);
+            when(valueOps.get(CACHE_PREFIX + "12345")).thenReturn(INSTANCE_ID);
+
+            assertTrue(service.ensureRouteOwnership("12345", "ak-1", "user-123"));
+        }
+
+        @Test
+        @DisplayName("ensureRouteOwnership returns false when owned by another instance")
+        void ensureOwnershipReturnsFalseWhenOwnedByOther() {
+            when(valueOps.setIfAbsent(
+                    eq(CACHE_PREFIX + "12345"),
+                    eq(INSTANCE_ID),
+                    eq(Duration.ofSeconds(TTL_SECONDS)))).thenReturn(false);
+            when(valueOps.get(CACHE_PREFIX + "12345")).thenReturn("ss-other-2");
+
+            assertFalse(service.ensureRouteOwnership("12345", "ak-1", "user-123"));
+        }
+
+        @Test
+        @DisplayName("ensureRouteOwnership degrades to true on Redis error")
+        void ensureOwnershipDegradesToTrueOnError() {
+            when(valueOps.setIfAbsent(any(), any(), any(Duration.class)))
+                    .thenThrow(new RuntimeException("Redis down"));
+
+            assertTrue(service.ensureRouteOwnership("12345", "ak-1", "user-123"));
         }
     }
 
     @Nested
-    @DisplayName("启动接管与优雅关闭")
-    class LifecycleTests {
+    @DisplayName("tryTakeover - Lua CAS")
+    class TakeoverTests {
+
+        @SuppressWarnings("unchecked")
+        @Test
+        @DisplayName("tryTakeover succeeds when CAS returns 1")
+        void takeoverSucceeds() {
+            when(redisTemplate.execute(any(RedisScript.class), any(List.class),
+                    eq("ss-dead-1"), eq(INSTANCE_ID), eq("1800")))
+                    .thenReturn(1L);
+
+            assertTrue(service.tryTakeover("12345", "ss-dead-1", INSTANCE_ID));
+        }
+
+        @SuppressWarnings("unchecked")
+        @Test
+        @DisplayName("tryTakeover fails when CAS returns 0")
+        void takeoverConflict() {
+            when(redisTemplate.execute(any(RedisScript.class), any(List.class),
+                    eq("ss-dead-1"), eq(INSTANCE_ID), eq("1800")))
+                    .thenReturn(0L);
+
+            assertFalse(service.tryTakeover("12345", "ss-dead-1", INSTANCE_ID));
+        }
+
+        @SuppressWarnings("unchecked")
+        @Test
+        @DisplayName("tryTakeover returns false on Redis error")
+        void takeoverFailsOnError() {
+            when(redisTemplate.execute(any(RedisScript.class), any(List.class),
+                    anyString(), anyString(), anyString()))
+                    .thenThrow(new RuntimeException("Redis down"));
+
+            assertFalse(service.tryTakeover("12345", "ss-dead-1", INSTANCE_ID));
+        }
+    }
+
+    @Nested
+    @DisplayName("Deprecated methods")
+    class DeprecatedTests {
 
         @Test
-        @DisplayName("takeoverActiveRoutes 将指定 AK 下所有 ACTIVE 路由的 sourceInstance 更新为当前实例")
-        void takeoverActiveRoutesUpdatesSourceInstance() {
+        @DisplayName("takeoverActiveRoutes is no-op")
+        void takeoverActiveRoutesIsNoop() {
             service.takeoverActiveRoutes("ak-1");
-
-            verify(repository).takeoverByAk("ak-1", INSTANCE_ID);
+            // Should not interact with repository
+            verify(repository, never()).takeoverByAk(anyString(), anyString());
         }
 
         @Test
-        @DisplayName("closeAllByInstance 关闭当前实例所有 ACTIVE 路由")
-        void closeAllByInstanceClosesAllActiveRoutes() {
+        @DisplayName("closeAllByInstance is no-op")
+        void closeAllByInstanceIsNoop() {
             service.closeAllByInstance();
-
-            verify(repository).closeAllBySourceInstance(INSTANCE_ID);
+            verify(repository, never()).closeAllBySourceInstance(anyString());
         }
-    }
-
-    @Nested
-    @DisplayName("清理任务")
-    class CleanupTests {
 
         @Test
-        @DisplayName("cleanupStaleRoutes 关闭超时的 ACTIVE 僵尸记录")
-        void cleanupStaleRoutesClosesZombies() {
-            when(repository.closeStaleActiveRoutes(any())).thenReturn(3);
-            when(repository.purgeClosedBefore(any())).thenReturn(10);
-
+        @DisplayName("cleanupStaleRoutes is no-op")
+        void cleanupStaleRoutesIsNoop() {
             service.cleanupStaleRoutes(24, 7);
-
-            verify(repository).closeStaleActiveRoutes(any());
-            verify(repository).purgeClosedBefore(any());
-        }
-    }
-
-    @Nested
-    @DisplayName("并发防护")
-    class ConcurrencyTests {
-
-        @Test
-        @DisplayName("createRoute 重复插入时不抛异常")
-        void createRouteDuplicateDoesNotThrow() {
-            when(repository.insert(any())).thenThrow(
-                    new org.springframework.dao.DuplicateKeyException("Duplicate entry"));
-
-            // 不应抛异常
-            service.createRoute("ak-1", 12345L, "skill-server", "user-123");
+            verify(repository, never()).closeStaleActiveRoutes(any());
+            verify(repository, never()).purgeClosedBefore(any());
         }
     }
 }

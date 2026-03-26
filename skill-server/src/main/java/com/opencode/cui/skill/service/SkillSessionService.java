@@ -239,11 +239,6 @@ public class SkillSessionService {
         int count = sessionRepository.markIdleSessions(SkillSession.Status.IDLE.name(), cutoff);
         log.info("Marked {} sessions as IDLE (inactive since before {})", count, cutoff);
 
-        // 附带清理路由表：24h 未更新的 ACTIVE 僵尸 + 7 天前的 CLOSED 历史
-        try {
-            sessionRouteService.cleanupStaleRoutes(24, 7);
-        } catch (Exception e) {
-            log.warn("路由表清理失败: {}", e.getMessage());
-        }
+        // Note: session_route MySQL cleanup removed — ownership now uses Redis TTL expiry.
     }
 }

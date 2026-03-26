@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.skill.model.InvokeCommand;
-import com.opencode.cui.skill.model.SessionRoute;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
 import lombok.extern.slf4j.Slf4j;
@@ -18,8 +17,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
@@ -285,13 +282,15 @@ public class GatewayMessageRouter {
     }
 
     /**
-     * Three-tier liveness check to determine if the owner instance should be taken over.
+     * Two-tier liveness check to determine if the owner instance should be taken over.
      *
      * <ol>
      *   <li>No owner → always takeover (auto-claim)</li>
      *   <li>Redis heartbeat missing → takeover</li>
-     *   <li>MySQL updated_at exceeds threshold → takeover</li>
      * </ol>
+     *
+     * Note: Redis PUBLISH subscriber count (checked before this method) serves as
+     * an auxiliary signal — 0 subscribers hints the owner may be dead.
      */
     private boolean shouldTakeover(String ownerInstance, String sessionId) {
         if (ownerInstance == null) {
@@ -303,26 +302,6 @@ public class GatewayMessageRouter {
             ownerProbeDeadCount.incrementAndGet();
             log.info("shouldTakeover: heartbeat missing for owner={}, sessionId={}", ownerInstance, sessionId);
             return true;
-        }
-
-        // Tier 2: check MySQL updated_at staleness
-        try {
-            Long numericId = Long.parseLong(sessionId);
-            SessionRoute route = sessionRouteService.findByWelinkSessionId(numericId);
-            if (route != null && route.getUpdatedAt() != null) {
-                long elapsedSeconds = ChronoUnit.SECONDS.between(route.getUpdatedAt(), LocalDateTime.now());
-                if (elapsedSeconds > ownerDeadThresholdSeconds) {
-                    ownerProbeDeadCount.incrementAndGet();
-                    log.info("shouldTakeover: updated_at expired for owner={}, sessionId={}, elapsed={}s, threshold={}s",
-                            ownerInstance, sessionId, elapsedSeconds, ownerDeadThresholdSeconds);
-                    return true;
-                }
-            }
-        } catch (NumberFormatException e) {
-            log.warn("shouldTakeover: invalid sessionId format: {}", sessionId);
-        } catch (Exception e) {
-            log.warn("shouldTakeover: failed to check updated_at for sessionId={}, error={}",
-                    sessionId, e.getMessage());
         }
 
         return false; // owner is probably still alive
@@ -590,7 +569,7 @@ public class GatewayMessageRouter {
         log.error("Tool error for session {}: {}", sessionId, error);
     }
 
-    /** 处理 agent_online：接管该 AK 的活跃路由，然后向关联会话广播上线状态。 */
+    /** 处理 agent_online：向关联会话广播上线状态。Ownership 由消息驱动懒接管处理。 */
     private void handleAgentOnline(String ak, String userId, JsonNode node) {
         String toolType = node.path("toolType").asText("UNKNOWN");
         String toolVersion = node.path("toolVersion").asText("UNKNOWN");
@@ -601,10 +580,7 @@ public class GatewayMessageRouter {
             return;
         }
 
-        // 接管该 AK 下所有 ACTIVE 路由：Agent 重连后让本实例成为新 owner，
-        // 避免旧实例 instanceId 残留导致后续消息被错误路由。
-        sessionRouteService.takeoverActiveRoutes(ak);
-        log.info("handleAgentOnline: takeoverActiveRoutes completed, ak={}", ak);
+        // Ownership takeover is now message-driven (lazy) — no eager takeoverActiveRoutes needed.
 
         StreamMessage msg = StreamMessage.agentOnline();
         sessionService.findByAk(ak).forEach(session -> broadcastStreamMessage(
