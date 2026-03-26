@@ -92,6 +92,8 @@ skill:
     # Cleanup interval in minutes for scheduled IDLE session cleanup
     cleanup-interval-minutes: 10
     auto-create-timeout-seconds: ${SKILL_SESSION_AUTO_CREATE_TIMEOUT_SECONDS:30}
+    rebuild-max-attempts: ${SKILL_SESSION_REBUILD_MAX_ATTEMPTS:3}
+    rebuild-cooldown-seconds: ${SKILL_SESSION_REBUILD_COOLDOWN_SECONDS:30}
   assistant-id:
     enabled: ${SKILL_ASSISTANT_ID_ENABLED:true}
     target-tool-type: ${SKILL_ASSISTANT_ID_TARGET_TOOL_TYPE:assistant}

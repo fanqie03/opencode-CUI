@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 会话重建服务。
@@ -36,13 +37,25 @@ public class SessionRebuildService {
             .expireAfterWrite(Duration.ofMinutes(5))
             .maximumSize(1_000)
             .build();
+    /** 重建计数器：sessionId → 已重建次数，冷却期后自动过期 */
+    private final Cache<String, AtomicInteger> rebuildAttemptCounters;
+    private final int maxRebuildAttempts;
+    private final int rebuildCooldownSeconds;
 
     public SessionRebuildService(ObjectMapper objectMapper,
             SkillSessionService sessionService,
-            SkillMessageRepository messageRepository) {
+            SkillMessageRepository messageRepository,
+            @org.springframework.beans.factory.annotation.Value("${skill.session.rebuild-max-attempts:3}") int maxRebuildAttempts,
+            @org.springframework.beans.factory.annotation.Value("${skill.session.rebuild-cooldown-seconds:30}") int rebuildCooldownSeconds) {
         this.objectMapper = objectMapper;
         this.sessionService = sessionService;
         this.messageRepository = messageRepository;
+        this.maxRebuildAttempts = maxRebuildAttempts;
+        this.rebuildCooldownSeconds = rebuildCooldownSeconds;
+        this.rebuildAttemptCounters = Caffeine.newBuilder()
+                .expireAfterAccess(Duration.ofSeconds(rebuildCooldownSeconds))
+                .maximumSize(1_000)
+                .build();
     }
 
     /** 处理工具会话不存在的情况，触发从存储消息重建。 */
@@ -60,6 +73,7 @@ public class SessionRebuildService {
     /**
      * 执行工具会话重建核心流程。
      * <ol>
+     * <li>检查重建计数器是否超限</li>
      * <li>缓存待重试的用户消息</li>
      * <li>广播 retry 状态到前端</li>
      * <li>向 Gateway 发送 create_session 命令</li>
@@ -67,8 +81,27 @@ public class SessionRebuildService {
      */
     public void rebuildToolSession(String sessionId, SkillSession session,
             String pendingMessage, RebuildCallback callback) {
-        log.info("Rebuilding toolSession for welinkSession={}", sessionId);
+        // --- 重建计数器检查 ---
+        AtomicInteger counter = rebuildAttemptCounters.get(sessionId, k -> new AtomicInteger(0));
+        int attempts = counter.incrementAndGet();
 
+        if (attempts > maxRebuildAttempts) {
+            log.warn("Rebuild exhausted: session={}, attempts={}, cooldownSeconds={}",
+                    sessionId, attempts, rebuildCooldownSeconds);
+            pendingRebuildMessages.invalidate(sessionId);
+            Long numericId = ProtocolUtils.parseSessionId(sessionId);
+            if (numericId != null) {
+                sessionService.clearToolSessionId(numericId);
+            }
+            callback.broadcast(sessionId, session.getUserId(),
+                    StreamMessage.error("会话连接异常（重建已达上限），请等待 "
+                            + rebuildCooldownSeconds + " 秒后重试"));
+            return;
+        }
+
+        log.info("Rebuild attempt {}/{} for session={}", attempts, maxRebuildAttempts, sessionId);
+
+        // --- 原有逻辑 ---
         if (pendingMessage != null && !pendingMessage.isBlank()) {
             pendingRebuildMessages.put(sessionId, pendingMessage);
             log.info("Stored pending retry message for session {}: '{}'",
