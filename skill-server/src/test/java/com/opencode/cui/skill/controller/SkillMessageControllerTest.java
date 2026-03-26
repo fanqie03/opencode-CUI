@@ -7,6 +7,7 @@ import com.opencode.cui.skill.model.ProtocolMessageView;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.config.AssistantIdProperties;
 import com.opencode.cui.skill.model.AgentSummary;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.service.GatewayApiClient;
@@ -54,17 +55,21 @@ class SkillMessageControllerTest {
     @Mock
     private SessionAccessControlService accessControlService;
 
+    private AssistantIdProperties assistantIdProperties;
     private SkillMessageController controller;
 
     @BeforeEach
     void setUp() {
+        assistantIdProperties = new AssistantIdProperties();
+        assistantIdProperties.setEnabled(true);
+        assistantIdProperties.setTargetToolType("assistant");
         controller = new SkillMessageController(
                 messageService, sessionService, gatewayRelayService,
-                gatewayApiClient, imMessageService, new ObjectMapper(),
+                gatewayApiClient, assistantIdProperties, imMessageService, new ObjectMapper(),
                 messagePersistenceService, accessControlService);
         // 默认 Agent 在线，离线场景在专用测试中覆盖
         lenient().when(gatewayApiClient.getAgentByAk(any()))
-                .thenReturn(AgentSummary.builder().ak("99").toolType("opencode").build());
+                .thenReturn(AgentSummary.builder().ak("99").toolType("assistant").build());
     }
 
     @Test

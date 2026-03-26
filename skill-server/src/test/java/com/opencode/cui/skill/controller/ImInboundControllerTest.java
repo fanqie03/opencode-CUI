@@ -5,6 +5,7 @@ import com.opencode.cui.skill.model.AssistantResolveResult;
 import com.opencode.cui.skill.model.ImMessageRequest;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.config.AssistantIdProperties;
 import com.opencode.cui.skill.model.AgentSummary;
 import com.opencode.cui.skill.service.AssistantAccountResolverService;
 import com.opencode.cui.skill.service.ContextInjectionService;
@@ -56,12 +57,17 @@ class ImInboundControllerTest {
         @Mock
         private MessagePersistenceService messagePersistenceService;
 
+        private AssistantIdProperties assistantIdProperties;
         private ImInboundController controller;
 
         @BeforeEach
         void setUp() {
+                assistantIdProperties = new AssistantIdProperties();
+                assistantIdProperties.setEnabled(true);
+                assistantIdProperties.setTargetToolType("assistant");
                 controller = new ImInboundController(
                                 resolverService,
+                                assistantIdProperties,
                                 gatewayApiClient,
                                 sessionManager,
                                 imOutboundService,
@@ -72,7 +78,7 @@ class ImInboundControllerTest {
                                 new ObjectMapper());
                 // 默认 Agent 在线
                 lenient().when(gatewayApiClient.getAgentByAk(any()))
-                        .thenReturn(AgentSummary.builder().ak("ak-001").toolType("opencode").build());
+                        .thenReturn(AgentSummary.builder().ak("ak-001").toolType("assistant").build());
         }
 
         @Test

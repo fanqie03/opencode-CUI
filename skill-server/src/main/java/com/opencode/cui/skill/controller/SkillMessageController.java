@@ -8,8 +8,10 @@ import com.opencode.cui.skill.model.ProtocolMessageView;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.service.GatewayActions;
 import com.opencode.cui.skill.model.SkillMessage;
+import com.opencode.cui.skill.model.AgentSummary;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.config.AssistantIdProperties;
 import com.opencode.cui.skill.service.GatewayApiClient;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
@@ -57,6 +59,7 @@ public class SkillMessageController {
     private final SkillSessionService sessionService;
     private final GatewayRelayService gatewayRelayService;
     private final GatewayApiClient gatewayApiClient;
+    private final AssistantIdProperties assistantIdProperties;
     private final ImMessageService imMessageService;
     private final ObjectMapper objectMapper;
     private final MessagePersistenceService messagePersistenceService;
@@ -66,6 +69,7 @@ public class SkillMessageController {
             SkillSessionService sessionService,
             GatewayRelayService gatewayRelayService,
             GatewayApiClient gatewayApiClient,
+            AssistantIdProperties assistantIdProperties,
             ImMessageService imMessageService,
             ObjectMapper objectMapper,
             MessagePersistenceService messagePersistenceService,
@@ -74,6 +78,7 @@ public class SkillMessageController {
         this.sessionService = sessionService;
         this.gatewayRelayService = gatewayRelayService;
         this.gatewayApiClient = gatewayApiClient;
+        this.assistantIdProperties = assistantIdProperties;
         this.imMessageService = imMessageService;
         this.objectMapper = objectMapper;
         this.messagePersistenceService = messagePersistenceService;
@@ -134,20 +139,25 @@ public class SkillMessageController {
             return;
         }
 
-        // Agent 在线检查：离线时保存系统消息并通过 WebSocket 通知客户端
-        if (gatewayApiClient.getAgentByAk(session.getAk()) == null) {
-            log.warn("[SKIP] SkillMessageController.routeToGateway: reason=agent_offline, sessionId={}, ak={}",
-                    sessionId, session.getAk());
-            try {
-                messageService.saveSystemMessage(numericSessionId, AGENT_OFFLINE_MESSAGE);
-            } catch (Exception e) {
-                log.error("Failed to persist agent_offline message for session {}: {}", sessionId, e.getMessage());
+        // Agent 在线检查：开关开启时，先判断 toolType 是否为目标值，是目标值且离线时通知客户端
+        if (assistantIdProperties.isEnabled()) {
+            AgentSummary agent = gatewayApiClient.getAgentByAk(session.getAk());
+            if (agent == null) {
+                // Agent 离线：保存系统错误消息 + WebSocket 广播
+                log.warn("[SKIP] SkillMessageController.routeToGateway: reason=agent_offline, sessionId={}, ak={}",
+                        sessionId, session.getAk());
+                try {
+                    messageService.saveSystemMessage(numericSessionId, AGENT_OFFLINE_MESSAGE);
+                } catch (Exception e) {
+                    log.error("Failed to persist agent_offline message for session {}: {}", sessionId, e.getMessage());
+                }
+                gatewayRelayService.publishProtocolMessage(sessionId, StreamMessage.builder()
+                        .type(StreamMessage.Types.ERROR)
+                        .error(AGENT_OFFLINE_MESSAGE)
+                        .build());
+                return;
             }
-            gatewayRelayService.publishProtocolMessage(sessionId, StreamMessage.builder()
-                    .type(StreamMessage.Types.ERROR)
-                    .error(AGENT_OFFLINE_MESSAGE)
-                    .build());
-            return;
+            // Agent 在线但 toolType 不匹配目标值：跳过 assistantId 相关逻辑，正常发送
         }
 
         if (session.getToolSessionId() == null) {
