@@ -684,7 +684,6 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
       }
 
       setError(null);
-      finalizeAllStreamingMessages();
 
       const tempId = genId('user');
       const optimisticMessage: Message = {
@@ -708,7 +707,7 @@ export function useSkillStream(sessionId: string | null): UseSkillStreamReturn {
         setError(message);
       }
     },
-    [finalizeAllStreamingMessages, sessionId],
+    [sessionId],
   );
 
   const replyPermissionFn = useCallback(
