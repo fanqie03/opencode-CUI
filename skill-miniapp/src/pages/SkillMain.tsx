@@ -141,7 +141,6 @@ export const SkillMain: React.FC<SkillMainProps> = ({
   // Streaming
   const {
     messages,
-    isStreaming,
     agentStatus,
     socketReady,
     sendMessage,
@@ -308,7 +307,7 @@ export const SkillMain: React.FC<SkillMainProps> = ({
           />
           <MessageInput
             onSend={handleSendMessage}
-            disabled={isStreaming || !selectedAgent}
+            disabled={!selectedAgent}
             placeholder={
               !selectedAgent
                 ? '请先选择 Agent...'
