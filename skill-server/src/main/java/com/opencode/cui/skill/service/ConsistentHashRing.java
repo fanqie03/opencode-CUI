@@ -25,9 +25,10 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * <p>Thread-safe: uses a {@link ReentrantReadWriteLock} so concurrent reads never
  * block each other while structural mutations are fully serialised.</p>
  *
- * <p>Hash function: MD5 (128-bit), collapsed to a signed 64-bit long, which gives
- * excellent uniformity without any third-party dependency. Virtual-node positions are
- * derived by appending {@code "#N"} suffixes to the node key before hashing.</p>
+ * <p>Hash function: SHA-256 (256-bit), collapsed to a signed 64-bit long via XOR
+ * folding, which gives excellent uniformity without any third-party dependency.
+ * Virtual-node positions are derived by appending {@code "#N"} suffixes to the
+ * node key before hashing.</p>
  *
  * @param <T> node value type (e.g. {@code WebSocketSession})
  */
@@ -180,10 +181,10 @@ public class ConsistentHashRing<T> {
     }
 
     /**
-     * Hashes a string to a 64-bit long using MD5.
+     * Hashes a string to a 64-bit long using SHA-256.
      *
-     * <p>MD5 produces 128 bits; we XOR the high 64 bits into the low 64 bits to
-     * retain all the entropy in a single long value, giving a well-distributed
+     * <p>SHA-256 produces 256 bits (32 bytes); we XOR-fold all four 64-bit segments
+     * into a single long value, retaining full entropy while giving a well-distributed
      * mapping across the ring.</p>
      *
      * @param key the string to hash
@@ -192,15 +193,17 @@ public class ConsistentHashRing<T> {
      */
     private static long hash(String key) {
         try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
             byte[] digest = md.digest(key.getBytes(StandardCharsets.UTF_8));
-            // Fold 128-bit digest into 64 bits
-            long high = bytesToLong(digest, 0);
-            long low  = bytesToLong(digest, 8);
-            return high ^ low;
+            // Fold 256-bit digest into 64 bits via XOR of four 64-bit segments
+            long h = bytesToLong(digest, 0);
+            h ^= bytesToLong(digest, 8);
+            h ^= bytesToLong(digest, 16);
+            h ^= bytesToLong(digest, 24);
+            return h;
         } catch (NoSuchAlgorithmException e) {
-            // MD5 is guaranteed to be available on every JVM
-            throw new IllegalStateException("MD5 not available", e);
+            // SHA-256 is guaranteed to be available on every JVM
+            throw new IllegalStateException("SHA-256 not available", e);
         }
     }
 
