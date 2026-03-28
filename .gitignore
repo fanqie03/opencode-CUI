@@ -8,7 +8,15 @@ target/
 build/
 dist/
 node_modules/
-.planning/
+!.planning/
+.planning/*
+!.planning/PROJECT.md
+!.planning/REQUIREMENTS.md
+!.planning/ROADMAP.md
+!.planning/STATE.md
+!.planning/config.json
+!.planning/phases/
+!.planning/phases/**
 
 # OS
 .DS_Store
