@@ -255,16 +255,21 @@ public class SkillRelayService {
      * @return true if the message was delivered, false if delivery failed
      */
     public boolean relayToSkill(GatewayMessage message) {
-        // V2 path
-        if (v2RelayToSkill(message)) {
-            return true;
+        // V2 路径：投递到 MESH 连接（带 instanceId 的 Source 服务）
+        boolean v2Delivered = v2RelayToSkill(message);
+
+        // Legacy 路径：投递到 LEGACY 连接（无 instanceId 的 Source 服务）。
+        // LEGACY 连接不在 V2 hashRings 中，必须并行投递而非 fallback，
+        // 否则 V2 广播"成功"后会短路 Legacy，导致旧版 Source 永远收不到消息。
+        boolean legacyDelivered = false;
+        if (legacyStrategy.getActiveConnectionCount() > 0) {
+            legacyDelivered = legacyStrategy.relayToSkill(message);
+            if (legacyDelivered) {
+                log.info("[Legacy] Parallel delivery: type={}, ak={}", message.getType(), message.getAk());
+            }
         }
-        // Legacy fallback (controlled by config)
-        if (legacyRelayEnabled) {
-            log.info("[V2] V2 routing failed, falling back to legacy strategy: type={}", message.getType());
-            return legacyStrategy.relayToSkill(message);
-        }
-        return false;
+
+        return v2Delivered || legacyDelivered;
     }
 
     /**

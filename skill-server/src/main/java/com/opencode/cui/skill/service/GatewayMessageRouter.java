@@ -9,6 +9,8 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.logging.MdcHelper;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -78,6 +80,8 @@ public class GatewayMessageRouter {
     private final AtomicLong takeoverConflictCount = new AtomicLong();
     /** Count of shouldTakeover detections where the current owner was found dead. */
     private final AtomicLong ownerProbeDeadCount = new AtomicLong();
+    /** Count of messages received via SS relay channel (this instance is the relay target). */
+    private final AtomicLong routeRelayReceiveCount = new AtomicLong();
 
     /**
      * 下游命令发送接口。
@@ -144,6 +148,56 @@ public class GatewayMessageRouter {
         this.ownerDeadThresholdSeconds = ownerDeadThresholdSeconds;
     }
 
+    // ==================== SS relay subscription (启动时订阅本实例的中转 channel) ====================
+
+    /**
+     * 启动时订阅本实例的 SS relay channel，接收其他 SS 实例中转过来的消息。
+     *
+     * <p>与 {@link SkillInstanceRegistry#register()} 配合：心跳注册让其他实例知道本实例存活，
+     * relay 订阅让其他实例的消息能真正送达。两者缺一不可。</p>
+     */
+    @PostConstruct
+    void initSsRelaySubscription() {
+        redisMessageBroker.subscribeToSsRelay(instanceId, this::handleSsRelayMessage);
+        log.info("[ENTRY] GatewayMessageRouter.initSsRelaySubscription: instanceId={}, channel=ss:relay:{}",
+                instanceId, instanceId);
+    }
+
+    /**
+     * 处理从其他 SS 实例通过 Redis pub/sub 中转过来的消息。
+     *
+     * <p>消息格式为 {@link #serializeRelayMessage} 生成的 JSON envelope，
+     * 包含 type、ak、userId、sessionId 和原始 payload。
+     * 直接调用 {@link #dispatchLocally} 进行本地处理，不再走 {@link #route} 避免循环中转。</p>
+     */
+    private void handleSsRelayMessage(String rawMessage) {
+        try {
+            JsonNode envelope = objectMapper.readTree(rawMessage);
+            String type = envelope.path("type").asText("");
+            String ak = envelope.path("ak").asText(null);
+            String userId = envelope.path("userId").asText(null);
+            String sessionId = envelope.path("sessionId").asText(null);
+            JsonNode payload = envelope.path("payload");
+
+            MdcHelper.putAk(ak);
+            MdcHelper.putSessionId(sessionId);
+            MdcHelper.putScenario("ss-relay-" + type);
+
+            routeRelayReceiveCount.incrementAndGet();
+            log.info("[ENTRY] GatewayMessageRouter.handleSsRelayMessage: type={}, sessionId={}, ak={}",
+                    type, sessionId, ak);
+
+            dispatchLocally(type, sessionId, ak, userId, payload);
+
+            log.info("[EXIT] GatewayMessageRouter.handleSsRelayMessage: type={}, sessionId={}",
+                    type, sessionId);
+        } catch (Exception e) {
+            log.error("[ERROR] GatewayMessageRouter.handleSsRelayMessage: error={}", e.getMessage(), e);
+        } finally {
+            MdcHelper.clearAll();
+        }
+    }
+
     /** 设置下游命令发送者。 */
     public void setDownstreamSender(DownstreamSender sender) {
         this.downstreamSender = sender;
@@ -201,7 +255,7 @@ public class GatewayMessageRouter {
 
         // Case 2: Remote owner exists → try relay
         if (ownerInstance != null) {
-            String rawMessage = serializeRelayMessage(type, ak, userId, node);
+            String rawMessage = serializeRelayMessage(type, sessionId, ak, userId, node);
             long subscribers = redisMessageBroker.publishToSsRelay(ownerInstance, rawMessage);
             if (subscribers > 0) {
                 routeRelayCount.incrementAndGet();
@@ -243,7 +297,7 @@ public class GatewayMessageRouter {
             takeoverConflictCount.incrementAndGet();
             String winner = sessionRouteService.getOwnerInstance(sessionId);
             if (winner != null && !instanceId.equals(winner)) {
-                String rawMessage = serializeRelayMessage(type, ak, userId, node);
+                String rawMessage = serializeRelayMessage(type, sessionId, ak, userId, node);
                 redisMessageBroker.publishToSsRelay(winner, rawMessage);
                 log.info("[EXIT] GatewayMessageRouter.route: type={}, sessionId={}, strategy=forward_to_winner_{}",
                         type, sessionId, winner);
@@ -309,13 +363,18 @@ public class GatewayMessageRouter {
 
     /**
      * Serializes the routing context into a JSON string for relay via Redis pub/sub.
+     *
+     * @param sessionId 已解析的 welinkSessionId，传入 envelope 避免接收端重复解析
      */
-    private String serializeRelayMessage(String type, String ak, String userId, JsonNode node) {
+    private String serializeRelayMessage(String type, String sessionId, String ak, String userId, JsonNode node) {
         try {
             ObjectNode envelope = objectMapper.createObjectNode();
             envelope.put("type", type);
             envelope.put("ak", ak);
             envelope.put("userId", userId);
+            if (sessionId != null) {
+                envelope.put("sessionId", sessionId);
+            }
             envelope.set("payload", node);
             return objectMapper.writeValueAsString(envelope);
         } catch (JsonProcessingException e) {
@@ -1005,8 +1064,8 @@ public class GatewayMessageRouter {
      */
     @Scheduled(fixedDelay = 60_000)
     void logMetrics() {
-        log.info("[METRICS] route: local={}, relay={} | takeover: success={}, conflict={}, probeDead={}",
-                routeLocalCount.get(), routeRelayCount.get(),
+        log.info("[METRICS] route: local={}, relaySend={}, relayReceive={} | takeover: success={}, conflict={}, probeDead={}",
+                routeLocalCount.get(), routeRelayCount.get(), routeRelayReceiveCount.get(),
                 takeoverCount.get(), takeoverConflictCount.get(), ownerProbeDeadCount.get());
     }
 }
