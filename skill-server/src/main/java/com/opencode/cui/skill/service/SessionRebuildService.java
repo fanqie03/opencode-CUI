@@ -137,7 +137,10 @@ public class SessionRebuildService {
     public String consumePendingMessage(String sessionId) {
         String key = PENDING_MSG_PREFIX + sessionId;
         try {
-            String pendingText = redisTemplate.opsForValue().getAndDelete(key);
+            String pendingText = redisTemplate.opsForValue().get(key);
+            if (pendingText != null) {
+                redisTemplate.delete(key);
+            }
             return pendingText;
         } catch (Exception e) {
             log.error("[ERROR] consumePendingMessage: Redis 操作失败, sessionId={}, error={}",
