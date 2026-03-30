@@ -59,6 +59,20 @@
 
 这些 fallback 让系统更抗脏数据和缓存 miss，但也意味着任何一条消息的“真正路径”都可能随上下文而变化。
 
+## Current Routing State By Layer
+
+当前路由状态不是集中落在一处，而是分散在多层缓存、Redis、以及历史数据反查里。下面这张表是 Phase 1 执行时对现状的统一拆解。
+
+| 层次 | 当前持有的路由或关联状态 | 代表实现文件 | 为什么会造成边界不清 |
+| --- | --- | --- | --- |
+| 本地内存 | `SkillRelayService` 的 `sourceTypeSessions`、哈希环、已学习的本地路由；`GatewayWSClient` 的 `gwConnections` | `ai-gateway/src/main/java/com/opencode/cui/gateway/service/SkillRelayService.java`、`skill-server/src/main/java/com/opencode/cui/skill/ws/GatewayWSClient.java` | 本地内存里既有连接池又有路由学习结果，但没有被正式声明为缓存还是主真源 |
+| Caffeine | `AkSkAuthService` 的身份缓存，以及各模块围绕热点访问形成的本地加速层 | `ai-gateway/src/main/java/com/opencode/cui/gateway/service/AkSkAuthService.java` | 认证缓存本身不等于路由状态，但它参与连接准入，导致“谁负责连接事实、谁负责路由事实”被混在一起理解 |
+| GW 共享 Redis | `conn:ak`、GW 内部 agent 连接索引、relay 所需的跨 GW 注册信息 | `ai-gateway/src/main/java/com/opencode/cui/gateway/service/RedisMessageBroker.java` | 这里看起来最像可共享真源，但当前只在部分链路中发挥主作用，没有成为所有回路由的唯一依据 |
+| SS Redis | `SessionRouteService` 维护的 `ss:internal:session:{welinkSessionId}` owner 信息和 TTL | `skill-server/src/main/java/com/opencode/cui/skill/service/SessionRouteService.java` | `SS Redis` 能回答 `welinkSessionId` 归谁，却不能天然回答 `toolSessionId`、连接级归属和跨 GW 真相 |
+| repository/DB 反查 | `sessionService.findByToolSessionId()`、`session_route`/历史会话记录等反查入口 | `skill-server/src/main/java/com/opencode/cui/skill/service/GatewayMessageRouter.java`、相关 repository/service | 历史数据被当成了热路径补丁，导致 `toolSessionId 依赖历史反查`，而不是显式路由索引 |
+
+把这五层放在一起看，可以解释为什么团队经常会对“到底谁是路由真源”给出不同答案。现状不是没有状态，而是状态太多、且每层只覆盖部分问题。
+
 ## Why The Current Model Is Hard To Reason About
 
 当前模型最难解释的地方，不是单个类写得复杂，而是多个类分别保存了一部分“看起来像真相”的状态。
@@ -73,3 +87,15 @@
 - “`toolSessionId` 到底是显式路由键，还是从历史数据里反查出来的补丁？”
 
 只要这些问题还要靠“看这次命中了哪条 fallback”才能回答，路由模型就很难成为团队共享的正式设计。
+
+## Conflicts Against Locked Decisions
+
+结合本 phase 前面已经锁定的设计决策，当前现实至少存在以下直接冲突：
+
+- `GW 真源不唯一`：本地内存、`GW 共享 Redis`、`SS Redis` 和 repository/DB 反查都在参与回路由判断，团队很难指认一个唯一的 GW 内部路由真源。
+- `toolSessionId 依赖历史反查`：`GatewayMessageRouter` 仍然需要通过 `sessionService.findByToolSessionId()` 找回 `welinkSessionId`，这和“显式路由索引”方向相冲突。
+- `mesh/full-connection` 假设与 `ALB` 统一入口现实不符：`GatewayWSClient` 和部分设计材料仍把“直连所有 GW 实例”当主模型，但跨集群现实要求从统一入口接入。
+- `route_confirm` 仍承担学习职责：这让协议层和运行时兜底耦合在一起，无法把新版协议定义成显式路由绑定。
+- owner 粒度停留在实例/会话混合层：当前实现能回答“哪个实例拥有某个会话”，但回答不了“哪个连接承担这条会话流”，这与连接池承载吞吐的目标也不一致。
+
+因此，Phase 1 后续文档必须把“现状如何工作”和“目标应该如何重构”明确拆开，否则团队会继续把历史 fallback 误认为正式设计。
