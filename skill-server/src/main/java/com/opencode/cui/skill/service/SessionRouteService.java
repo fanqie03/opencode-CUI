@@ -1,16 +1,12 @@
 package com.opencode.cui.skill.service;
 
-import com.opencode.cui.skill.model.SessionRoute;
-import com.opencode.cui.skill.repository.SessionRouteRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -19,7 +15,6 @@ import java.util.List;
  * Manages session-to-instance ownership via Redis key:
  *   ss:internal:session:{welinkSessionId} → instanceId
  *
- * All core paths use Redis only. MySQL-based methods are retained but marked @Deprecated.
  * TTL-based expiry replaces explicit cleanup — no reverse index needed.
  */
 @Slf4j
@@ -43,16 +38,13 @@ public class SessionRouteService {
 
     private final DefaultRedisScript<Long> casScript;
 
-    private final SessionRouteRepository repository;
     private final StringRedisTemplate redisTemplate;
     private final String instanceId;
     private final int ownershipCacheTtlSeconds;
 
-    public SessionRouteService(SessionRouteRepository repository,
-            StringRedisTemplate redisTemplate,
+    public SessionRouteService(StringRedisTemplate redisTemplate,
             @Value("${HOSTNAME:skill-server-local}") String instanceId,
             @Value("${skill.session.ownership-cache-ttl-seconds:1800}") int ownershipCacheTtlSeconds) {
-        this.repository = repository;
         this.redisTemplate = redisTemplate;
         this.instanceId = instanceId;
         this.ownershipCacheTtlSeconds = ownershipCacheTtlSeconds;
@@ -88,17 +80,6 @@ public class SessionRouteService {
             log.warn("Failed to create session ownership in Redis: welinkSessionId={}, error={}",
                     welinkSessionId, e.getMessage());
         }
-    }
-
-    /**
-     * @deprecated MySQL-based toolSessionId backfill is no longer needed in pure Redis mode.
-     *             toolSessionId mapping is handled by skill_sessions table via SkillSessionService.
-     */
-    @Deprecated
-    public void updateToolSessionId(Long welinkSessionId, String sourceType, String toolSessionId) {
-        repository.updateToolSessionId(welinkSessionId, sourceType, toolSessionId);
-        log.info("(deprecated) Updated toolSessionId: welinkSessionId={}, toolSessionId={}",
-                welinkSessionId, toolSessionId);
     }
 
     /**
@@ -161,28 +142,6 @@ public class SessionRouteService {
         } catch (Exception e) {
             log.warn("ensureRouteOwnership Redis error, degrading to true: sessionId={}, error={}",
                     sessionId, e.getMessage());
-            return true;
-        }
-    }
-
-    /**
-     * Checks whether the given toolSessionId is owned by this instance.
-     * Pure Redis cannot look up by toolSessionId (no reverse index).
-     * Callers should use SkillSessionService.findByToolSessionId() + isMySession() instead.
-     *
-     * @deprecated Use SkillSessionService.findByToolSessionId() to get welinkSessionId, then isMySession().
-     */
-    @Deprecated
-    public boolean isMyToolSession(String toolSessionId) {
-        if (toolSessionId == null || toolSessionId.isBlank()) {
-            return false;
-        }
-        try {
-            SessionRoute route = repository.findByToolSessionId(toolSessionId);
-            return route != null && instanceId.equals(route.getSourceInstance());
-        } catch (Exception e) {
-            log.warn("isMyToolSession query failed, degrading to true: toolSessionId={}, error={}",
-                    toolSessionId, e.getMessage());
             return true;
         }
     }
@@ -254,43 +213,10 @@ public class SessionRouteService {
         }
     }
 
-    // ==================== Query (deprecated MySQL-based) ====================
-
-    /**
-     * @deprecated Use SkillSessionService.findByToolSessionId() instead.
-     */
-    @Deprecated
-    public SessionRoute findByToolSessionId(String toolSessionId) {
-        if (toolSessionId == null || toolSessionId.isBlank()) {
-            return null;
-        }
-        return repository.findByToolSessionId(toolSessionId);
-    }
-
-    /**
-     * @deprecated No longer needed in pure Redis mode. Ownership is in Redis.
-     */
-    @Deprecated
-    public SessionRoute findByWelinkSessionId(Long welinkSessionId) {
-        if (welinkSessionId == null) {
-            return null;
-        }
-        return repository.findByWelinkSessionId(welinkSessionId);
-    }
-
-    // ==================== Lifecycle (deprecated MySQL-based) ====================
-
-    /**
-     * @deprecated No longer needed. Replaced by message-driven lazy takeover.
-     */
-    @Deprecated
-    public void takeoverActiveRoutes(String ak) {
-        log.info("(deprecated) takeoverActiveRoutes called but skipped: ak={}", ak);
-    }
+    // ==================== Lifecycle (no-op, kept for caller compatibility) ====================
 
     /**
      * @deprecated No longer needed. Ownership relies on TTL expiry.
-     *             Cannot scan Redis for "all keys owned by this instance" without reverse index.
      */
     @Deprecated
     public void closeAllByInstance() {
@@ -298,39 +224,11 @@ public class SessionRouteService {
                 instanceId);
     }
 
-    // ==================== Cleanup (deprecated MySQL-based) ====================
-
-    /**
-     * @deprecated No longer needed. Redis TTL handles ownership expiry automatically.
-     */
-    @Deprecated
-    public void cleanupStaleRoutes(int activeTimeoutHours, int closedRetentionDays) {
-        log.info("(deprecated) cleanupStaleRoutes called but skipped. Redis TTL handles expiry.");
-    }
-
     public String getInstanceId() {
         return instanceId;
     }
 
     // ==================== Redis helpers ====================
-
-    /**
-     * Writes session ownership to Redis with configured TTL.
-     * Failures are non-fatal: logs WARN and continues.
-     */
-    private void writeCacheOwnership(String welinkSessionId, String owner) {
-        try {
-            redisTemplate.opsForValue().set(
-                    SESSION_CACHE_PREFIX + welinkSessionId,
-                    owner,
-                    Duration.ofSeconds(ownershipCacheTtlSeconds));
-            log.info("Cached session ownership: welinkSessionId={}, owner={}, ttl={}s",
-                    welinkSessionId, owner, ownershipCacheTtlSeconds);
-        } catch (Exception e) {
-            log.warn("Failed to write session ownership cache: welinkSessionId={}, error={}",
-                    welinkSessionId, e.getMessage());
-        }
-    }
 
     /**
      * Deletes session ownership from Redis.

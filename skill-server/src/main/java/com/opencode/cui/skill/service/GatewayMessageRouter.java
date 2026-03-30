@@ -675,27 +675,34 @@ public class GatewayMessageRouter {
             return;
         }
 
-        try {
-            Long numericId = ProtocolUtils.parseSessionId(sessionId);
-            if (numericId == null) {
-                log.warn("session_created has invalid sessionId={}, cannot update", sessionId);
-                return;
-            }
-            sessionService.updateToolSessionId(numericId, toolSessionId);
-            sessionRouteService.updateToolSessionId(numericId, "skill-server", toolSessionId);
-            retryPendingMessage(sessionId, ak, userId, toolSessionId);
-        } catch (Exception e) {
-            log.error("Failed to update tool session ID: sessionId={}, error={}", sessionId, e.getMessage());
-            rebuildService.clearPendingMessage(sessionId);
+        Long numericId = ProtocolUtils.parseSessionId(sessionId);
+        if (numericId == null) {
+            log.warn("session_created has invalid sessionId={}, cannot update", sessionId);
+            return;
         }
+
+        try {
+            sessionService.updateToolSessionId(numericId, toolSessionId);
+        } catch (Exception e) {
+            log.error("[ERROR] handleSessionCreated: toolSessionId 绑定失败, sessionId={}, error={}",
+                    sessionId, e.getMessage());
+            rebuildService.clearPendingMessage(sessionId);
+            return;
+        }
+
+        retryPendingMessage(sessionId, ak, userId, toolSessionId);
     }
 
     /** 重建完成后重试发送待处理的用户消息。 */
     private void retryPendingMessage(String sessionId, String ak, String userId, String toolSessionId) {
         String pendingText = rebuildService.consumePendingMessage(sessionId);
         if (pendingText == null) {
+            log.info("[SKIP] retryPendingMessage: reason=no_pending_message, sessionId={}", sessionId);
             return;
         }
+
+        log.info("[ENTRY] retryPendingMessage: sessionId={}, ak={}, textLength={}",
+                sessionId, ak, pendingText.length());
 
         ObjectNode chatPayload = objectMapper.createObjectNode();
         chatPayload.put("text", pendingText);
@@ -710,6 +717,9 @@ public class GatewayMessageRouter {
         DownstreamSender sender = downstreamSender;
         if (sender != null) {
             sender.sendInvokeToGateway(new InvokeCommand(ak, userId, sessionId, GatewayActions.CHAT, payloadStr));
+            log.info("[EXIT] retryPendingMessage: CHAT sent, sessionId={}, ak={}", sessionId, ak);
+        } else {
+            log.warn("[ERROR] retryPendingMessage: reason=no_downstream_sender, sessionId={}", sessionId);
         }
         broadcastStreamMessage(sessionId, userId, StreamMessage.sessionStatus("busy"));
     }
