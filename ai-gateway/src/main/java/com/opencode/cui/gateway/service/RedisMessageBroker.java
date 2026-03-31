@@ -14,7 +14,9 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -29,7 +31,9 @@ import java.util.function.Consumer;
  * <ul>
  *   <li>{@code conn:ak:{ak}} — Agent 连接在哪个 Gateway 实例上（KV + TTL，供 SS 查询）</li>
  *   <li>{@code gw:internal:agent:{ak}} — GW 内部中转用的 Agent 位置注册（KV + TTL，与 conn:ak 双写）</li>
- *   <li>{@code gw:internal:instances} — Gateway 实例聚合 HASH（由 GatewayInstanceRegistry 管理）</li>
+ *   <li>{@code gw:source-conn:{sourceType}:{sourceInstanceId}} — Source 连接注册 HASH（gwInstanceId → timestamp）</li>
+ *   <li>{@code gw:route:{toolSessionId}} — Session 路由映射（sourceType:sourceInstanceId）</li>
+ *   <li>{@code gw:route:w:{welinkSessionId}} — WeLink Session 路由映射（sourceType:sourceInstanceId）</li>
  *   <li>{@code gw:agent:user:{ak}} — AK→userId 绑定（保留）</li>
  *   <li>{@code auth:nonce:{nonce}} — 认证防重放（保留，由 AkSkAuthService 管理）</li>
  * </ul>
@@ -416,6 +420,242 @@ public class RedisMessageBroker {
             return;
         }
         redisTemplate.delete(agentUserKey(ak));
+    }
+
+    // ==================== Source 连接注册 (gw:source-conn) ====================
+
+    /** Key prefix for source connection registry: gw:source-conn:{sourceType}:{sourceInstanceId} */
+    private static final String SOURCE_CONN_KEY_PREFIX = "gw:source-conn:";
+
+    /** TTL for source connection HASH keys (2 hours). */
+    private static final Duration SOURCE_CONN_TTL = Duration.ofHours(2);
+
+    /**
+     * Registers a source connection in Redis.
+     * Called when a Source WebSocket connection is established.
+     *
+     * <p>Key: {@code gw:source-conn:{sourceType}:{sourceInstanceId}} (HASH)
+     * <br>Field: gwInstanceId, Value: epoch_seconds timestamp
+     *
+     * @param sourceType       source type, e.g. "skill-server"
+     * @param sourceInstanceId source instance ID
+     * @param gwInstanceId     this GW instance's ID
+     */
+    public void registerSourceConnection(String sourceType, String sourceInstanceId, String gwInstanceId) {
+        if (sourceType == null || sourceInstanceId == null || gwInstanceId == null) {
+            return;
+        }
+        String key = sourceConnKey(sourceType, sourceInstanceId);
+        String timestamp = String.valueOf(Instant.now().getEpochSecond());
+        redisTemplate.opsForHash().put(key, gwInstanceId, timestamp);
+        redisTemplate.expire(key, SOURCE_CONN_TTL);
+        log.info("RedisMessageBroker.registerSourceConnection: sourceType={}, sourceInstanceId={}, gwInstanceId={}",
+                sourceType, sourceInstanceId, gwInstanceId);
+    }
+
+    /**
+     * Unregisters a source connection from Redis.
+     * Called when a Source WebSocket connection is closed.
+     *
+     * @param sourceType       source type
+     * @param sourceInstanceId source instance ID
+     * @param gwInstanceId     this GW instance's ID
+     */
+    public void unregisterSourceConnection(String sourceType, String sourceInstanceId, String gwInstanceId) {
+        if (sourceType == null || sourceInstanceId == null || gwInstanceId == null) {
+            return;
+        }
+        String key = sourceConnKey(sourceType, sourceInstanceId);
+        redisTemplate.opsForHash().delete(key, gwInstanceId);
+        log.info("RedisMessageBroker.unregisterSourceConnection: sourceType={}, sourceInstanceId={}, gwInstanceId={}",
+                sourceType, sourceInstanceId, gwInstanceId);
+    }
+
+    /**
+     * Refreshes the heartbeat timestamp for a source connection.
+     *
+     * @param sourceType       source type
+     * @param sourceInstanceId source instance ID
+     * @param gwInstanceId     this GW instance's ID
+     */
+    public void refreshSourceConnectionHeartbeat(String sourceType, String sourceInstanceId, String gwInstanceId) {
+        if (sourceType == null || sourceInstanceId == null || gwInstanceId == null) {
+            return;
+        }
+        String key = sourceConnKey(sourceType, sourceInstanceId);
+        String timestamp = String.valueOf(Instant.now().getEpochSecond());
+        redisTemplate.opsForHash().put(key, gwInstanceId, timestamp);
+        redisTemplate.expire(key, SOURCE_CONN_TTL);
+    }
+
+    /**
+     * Returns all GW instances that hold connections to the specified source,
+     * with lazy cleanup of stale entries (older than 30 seconds).
+     *
+     * @param sourceType       source type
+     * @param sourceInstanceId source instance ID
+     * @return map of gwInstanceId to epoch seconds timestamp
+     */
+    public Map<String, Long> getSourceConnections(String sourceType, String sourceInstanceId) {
+        if (sourceType == null || sourceInstanceId == null) {
+            return Collections.emptyMap();
+        }
+        String key = sourceConnKey(sourceType, sourceInstanceId);
+        Map<Object, Object> entries = redisTemplate.opsForHash().entries(key);
+        if (entries.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        long now = Instant.now().getEpochSecond();
+        Map<String, Long> result = new HashMap<>();
+        for (Map.Entry<Object, Object> entry : entries.entrySet()) {
+            String gwId = String.valueOf(entry.getKey());
+            try {
+                long ts = Long.parseLong(String.valueOf(entry.getValue()));
+                if (now - ts > 30) {
+                    // Lazy cleanup: remove stale entry
+                    redisTemplate.opsForHash().delete(key, gwId);
+                    log.info("RedisMessageBroker.getSourceConnections: cleaned stale entry gwId={}, age={}s",
+                            gwId, now - ts);
+                } else {
+                    result.put(gwId, ts);
+                }
+            } catch (NumberFormatException e) {
+                redisTemplate.opsForHash().delete(key, gwId);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Cleans up all source connection entries belonging to this GW instance.
+     * Called on GW startup to handle crash-restart scenarios.
+     *
+     * <p>Scans all keys matching {@code gw:source-conn:*} and removes fields
+     * where the field name matches the given gwInstanceId.
+     *
+     * @param gwInstanceId this GW instance's ID
+     */
+    public void cleanupStaleSourceConnections(String gwInstanceId) {
+        if (gwInstanceId == null || gwInstanceId.isBlank()) {
+            return;
+        }
+        Set<String> keys = redisTemplate.keys(SOURCE_CONN_KEY_PREFIX + "*");
+        if (keys == null || keys.isEmpty()) {
+            return;
+        }
+        int cleaned = 0;
+        for (String key : keys) {
+            Long removed = redisTemplate.opsForHash().delete(key, gwInstanceId);
+            if (removed != null && removed > 0) {
+                cleaned++;
+            }
+        }
+        log.info("RedisMessageBroker.cleanupStaleSourceConnections: gwInstanceId={}, cleanedKeys={}",
+                gwInstanceId, cleaned);
+    }
+
+    private String sourceConnKey(String sourceType, String sourceInstanceId) {
+        return SOURCE_CONN_KEY_PREFIX + sourceType + ":" + sourceInstanceId;
+    }
+
+    // ==================== Session 路由映射 (gw:route) ====================
+
+    /** Key prefix for session route: gw:route:{toolSessionId} */
+    private static final String SESSION_ROUTE_KEY_PREFIX = "gw:route:";
+
+    /** Key prefix for welink session route: gw:route:w:{welinkSessionId} */
+    private static final String WELINK_SESSION_ROUTE_KEY_PREFIX = "gw:route:w:";
+
+    /** TTL for session route keys (2 hours). */
+    private static final Duration SESSION_ROUTE_TTL = Duration.ofHours(2);
+
+    /**
+     * Sets a session route mapping: toolSessionId -> sourceType:sourceInstanceId.
+     * Called when an invoke message arrives, to learn the source for this session.
+     *
+     * @param toolSessionId    tool session ID
+     * @param sourceType       source type
+     * @param sourceInstanceId source instance ID
+     */
+    public void setSessionRoute(String toolSessionId, String sourceType, String sourceInstanceId) {
+        if (toolSessionId == null || toolSessionId.isBlank() || sourceType == null || sourceInstanceId == null) {
+            return;
+        }
+        String key = SESSION_ROUTE_KEY_PREFIX + toolSessionId;
+        String value = sourceType + ":" + sourceInstanceId;
+        redisTemplate.opsForValue().set(key, value, SESSION_ROUTE_TTL);
+        log.info("RedisMessageBroker.setSessionRoute: toolSessionId={}, route={}", toolSessionId, value);
+    }
+
+    /**
+     * Sets a welink session route mapping: welinkSessionId -> sourceType:sourceInstanceId.
+     *
+     * @param welinkSessionId  welink session ID
+     * @param sourceType       source type
+     * @param sourceInstanceId source instance ID
+     */
+    public void setWelinkSessionRoute(String welinkSessionId, String sourceType, String sourceInstanceId) {
+        if (welinkSessionId == null || welinkSessionId.isBlank() || sourceType == null || sourceInstanceId == null) {
+            return;
+        }
+        String key = WELINK_SESSION_ROUTE_KEY_PREFIX + welinkSessionId;
+        String value = sourceType + ":" + sourceInstanceId;
+        redisTemplate.opsForValue().set(key, value, SESSION_ROUTE_TTL);
+        log.info("RedisMessageBroker.setWelinkSessionRoute: welinkSessionId={}, route={}", welinkSessionId, value);
+    }
+
+    /**
+     * Gets the session route for a toolSessionId.
+     *
+     * @param toolSessionId tool session ID
+     * @return "sourceType:sourceInstanceId" or null if not found
+     */
+    public String getSessionRoute(String toolSessionId) {
+        if (toolSessionId == null || toolSessionId.isBlank()) {
+            return null;
+        }
+        return redisTemplate.opsForValue().get(SESSION_ROUTE_KEY_PREFIX + toolSessionId);
+    }
+
+    /**
+     * Gets the session route for a welinkSessionId.
+     *
+     * @param welinkSessionId welink session ID
+     * @return "sourceType:sourceInstanceId" or null if not found
+     */
+    public String getWelinkSessionRoute(String welinkSessionId) {
+        if (welinkSessionId == null || welinkSessionId.isBlank()) {
+            return null;
+        }
+        return redisTemplate.opsForValue().get(WELINK_SESSION_ROUTE_KEY_PREFIX + welinkSessionId);
+    }
+
+    // ==================== to-source relay ====================
+
+    /**
+     * Publishes a to-source relay message to the target GW instance's relay channel.
+     *
+     * @param targetGwId             target GW instance ID
+     * @param targetSourceType       target source type
+     * @param targetSourceInstanceId target source instance ID
+     * @param payload                the message payload to deliver
+     */
+    public void publishToSourceRelay(String targetGwId, String targetSourceType,
+                                     String targetSourceInstanceId, String payload) {
+        if (targetGwId == null || targetSourceType == null || targetSourceInstanceId == null || payload == null) {
+            return;
+        }
+        try {
+            RelayMessage relayMessage = RelayMessage.toSource(targetSourceType, targetSourceInstanceId, payload);
+            String json = objectMapper.writeValueAsString(relayMessage);
+            publishToGwRelay(targetGwId, json);
+            log.info("RedisMessageBroker.publishToSourceRelay: targetGw={}, sourceType={}, sourceInstanceId={}",
+                    targetGwId, targetSourceType, targetSourceInstanceId);
+        } catch (Exception e) {
+            log.error("RedisMessageBroker.publishToSourceRelay: failed, targetGw={}, error={}",
+                    targetGwId, e.getMessage(), e);
+        }
     }
 
     // ==================== 废弃方法（Phase 1.3 SkillRelayService 重写后删除） ====================

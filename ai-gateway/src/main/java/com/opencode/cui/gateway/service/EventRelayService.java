@@ -88,6 +88,13 @@ public class EventRelayService {
             if (rawJson.contains("\"type\":\"relay\"")) {
                 // New format: RelayMessage wrapper
                 RelayMessage relayMessage = objectMapper.readValue(rawJson, RelayMessage.class);
+
+                // Handle to-source relay: deliver to a local Source WebSocket connection
+                if (RelayMessage.RELAY_TO_SOURCE.equals(relayMessage.relayType())) {
+                    handleToSourceRelay(relayMessage);
+                    return;
+                }
+
                 gatewayMessageJson = relayMessage.originalMessage();
                 relaySourceType = relayMessage.sourceType();
                 relayRoutingKeys = relayMessage.routingKeys();
@@ -119,6 +126,38 @@ public class EventRelayService {
         } catch (Exception e) {
             log.error("[ERROR] EventRelayService.handleGwRelayMessage: failed to process relay message: {}",
                     e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Handles a to-source relay message by delivering the payload to the local Source WebSocket connection.
+     *
+     * @param relayMessage the relay message with relayType="to-source"
+     */
+    private void handleToSourceRelay(RelayMessage relayMessage) {
+        String targetSourceType = relayMessage.targetSourceType();
+        String targetSourceInstanceId = relayMessage.targetSourceInstanceId();
+        String payload = relayMessage.originalMessage();
+
+        log.info("EventRelayService.handleToSourceRelay: targetSourceType={}, targetSourceInstanceId={}",
+                targetSourceType, targetSourceInstanceId);
+
+        WebSocketSession session = skillRelayService.findLocalSourceConnection(
+                targetSourceType, targetSourceInstanceId);
+        if (session != null) {
+            try {
+                synchronized (session) {
+                    session.sendMessage(new TextMessage(payload));
+                }
+                log.info("[EXIT->SOURCE] Delivered to-source relay: sourceType={}, sourceInstanceId={}",
+                        targetSourceType, targetSourceInstanceId);
+            } catch (IOException e) {
+                log.error("[ERROR] Failed to deliver to-source relay: sourceType={}, sourceInstanceId={}",
+                        targetSourceType, targetSourceInstanceId, e);
+            }
+        } else {
+            log.debug("No local connection for source {}/{}, discarding relay",
+                    targetSourceType, targetSourceInstanceId);
         }
     }
 

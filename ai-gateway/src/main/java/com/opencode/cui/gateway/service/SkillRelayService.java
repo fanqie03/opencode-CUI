@@ -3,6 +3,7 @@ package com.opencode.cui.gateway.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.model.RelayMessage;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -116,6 +117,15 @@ public class SkillRelayService {
         this.eventRelayService = eventRelayService;
     }
 
+    /**
+     * Cleans up stale source connection entries left by a previous crash of this GW instance.
+     */
+    @PostConstruct
+    public void cleanupStaleSourceConnectionsOnStartup() {
+        redisMessageBroker.cleanupStaleSourceConnections(gatewayInstanceId);
+        log.info("[ENTRY] SkillRelayService: cleaned up stale source-conn entries for gwInstanceId={}", gatewayInstanceId);
+    }
+
     // ==================== 连接管理 ====================
 
     /**
@@ -151,6 +161,9 @@ public class SkillRelayService {
         String nodeKey = ssInstanceId;
         hashRings.computeIfAbsent(sourceType, k -> new ConsistentHashRing<>(150))
                 .addNode(nodeKey, session);
+
+        // Register source connection in Redis for cross-cluster discovery
+        redisMessageBroker.registerSourceConnection(sourceType, ssInstanceId, gatewayInstanceId);
 
         log.info("[Mesh] Registered source session: sourceType={}, ssInstanceId={}, gwInstanceId={}, activeLinks={}, hashRingSize={}",
                 sourceType, ssInstanceId, gatewayInstanceId, getActiveConnectionCount(sourceType),
@@ -197,6 +210,11 @@ public class SkillRelayService {
 
         // 清除路由缓存中所有指向该 session 的条目
         invalidateRoutesForSession(session);
+
+        // Unregister source connection from Redis
+        if (ssInstanceId != null) {
+            redisMessageBroker.unregisterSourceConnection(sourceType, ssInstanceId, gatewayInstanceId);
+        }
 
         log.info("[Mesh] Removed source session: sourceType={}, ssInstanceId={}, gwInstanceId={}, activeLinks={}",
                 sourceType, ssInstanceId, gatewayInstanceId, getActiveConnectionCount(sourceType));
@@ -491,6 +509,19 @@ public class SkillRelayService {
         // V2: Also learn in legacy route cache for backward compatibility
         learnRouteFromInvoke(tracedMessage, session);
 
+        // Write session route to Redis for cross-cluster routing
+        String ssInstanceId = resolveSsInstanceId(session);
+        if (ssInstanceId != null) {
+            String toolSessionId = extractToolSessionIdFromPayload(tracedMessage);
+            if (toolSessionId != null && !toolSessionId.isBlank()) {
+                redisMessageBroker.setSessionRoute(toolSessionId, messageSource, ssInstanceId);
+            }
+            String welinkSessionId = tracedMessage.getWelinkSessionId();
+            if (welinkSessionId != null && !welinkSessionId.isBlank()) {
+                redisMessageBroker.setWelinkSessionRoute(welinkSessionId, messageSource, ssInstanceId);
+            }
+        }
+
         String ak = tracedMessage.getAk();
         GatewayMessage agentMessage = tracedMessage.withoutRoutingContext();
 
@@ -757,6 +788,31 @@ public class SkillRelayService {
         }
     }
 
+    // ==================== Source 连接查找 ====================
+
+    /**
+     * Finds a locally connected Source WebSocket session by sourceType and sourceInstanceId.
+     * Used by EventRelayService for to-source relay delivery.
+     *
+     * @param sourceType       source type, e.g. "skill-server"
+     * @param sourceInstanceId source instance ID
+     * @return the WebSocket session if found locally and open, null otherwise
+     */
+    public WebSocketSession findLocalSourceConnection(String sourceType, String sourceInstanceId) {
+        if (sourceType == null || sourceInstanceId == null) {
+            return null;
+        }
+        Map<String, WebSocketSession> pool = sourceTypeSessions.get(sourceType);
+        if (pool == null) {
+            return null;
+        }
+        WebSocketSession session = pool.get(sourceInstanceId);
+        if (session != null && session.isOpen()) {
+            return session;
+        }
+        return null;
+    }
+
     // ==================== 定时任务 ====================
 
     /**
@@ -768,6 +824,24 @@ public class SkillRelayService {
         log.info("[METRICS] relay: local={}, pubsub={}, pending={} | routing: hit={}, broadcast={}",
                 relayLocalCount.get(), relayPubsubCount.get(), relayPendingCount.get(),
                 routingHitCount.get(), routingBroadcastCount.get());
+    }
+
+    /**
+     * Periodically refreshes source connection heartbeats in Redis.
+     * Updates the timestamp for all locally connected Mesh source sessions.
+     */
+    @Scheduled(fixedDelay = 10_000)
+    public void refreshSourceConnectionHeartbeats() {
+        for (Map.Entry<String, Map<String, WebSocketSession>> typeEntry : sourceTypeSessions.entrySet()) {
+            String sourceType = typeEntry.getKey();
+            for (Map.Entry<String, WebSocketSession> instanceEntry : typeEntry.getValue().entrySet()) {
+                String ssInstanceId = instanceEntry.getKey();
+                WebSocketSession session = instanceEntry.getValue();
+                if (session.isOpen()) {
+                    redisMessageBroker.refreshSourceConnectionHeartbeat(sourceType, ssInstanceId, gatewayInstanceId);
+                }
+            }
+        }
     }
 
     /**

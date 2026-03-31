@@ -8,7 +8,6 @@ import com.opencode.cui.gateway.service.AgentRegistryService;
 import com.opencode.cui.gateway.service.AkSkAuthService;
 import com.opencode.cui.gateway.service.DeviceBindingService;
 import com.opencode.cui.gateway.service.EventRelayService;
-import com.opencode.cui.gateway.service.GatewayInstanceRegistry;
 import com.opencode.cui.gateway.service.RedisMessageBroker;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -82,7 +81,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
     private final DeviceBindingService deviceBindingService;
     private final EventRelayService eventRelayService;
     private final RedisMessageBroker redisMessageBroker;
-    private final GatewayInstanceRegistry gatewayInstanceRegistry;
+    private final String gatewayInstanceId;
     private final ObjectMapper objectMapper;
     private final StringRedisTemplate redisTemplate;
 
@@ -108,7 +107,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             DeviceBindingService deviceBindingService,
             EventRelayService eventRelayService,
             RedisMessageBroker redisMessageBroker,
-            GatewayInstanceRegistry gatewayInstanceRegistry,
+            @Value("${gateway.instance-id:${HOSTNAME:gateway-local}}") String gatewayInstanceId,
             ObjectMapper objectMapper,
             StringRedisTemplate redisTemplate) {
         this.akSkAuthService = akSkAuthService;
@@ -116,7 +115,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         this.deviceBindingService = deviceBindingService;
         this.eventRelayService = eventRelayService;
         this.redisMessageBroker = redisMessageBroker;
-        this.gatewayInstanceRegistry = gatewayInstanceRegistry;
+        this.gatewayInstanceId = gatewayInstanceId;
         this.objectMapper = objectMapper;
         this.redisTemplate = redisTemplate;
     }
@@ -293,7 +292,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             eventRelayService.removeAgentSession(ak);
 
             // v3: 条件删除 conn:ak（仅删本实例注册的，防误删已重连到其他 GW 的 Agent）
-            redisMessageBroker.conditionalRemoveConnAk(ak, gatewayInstanceRegistry.getInstanceId());
+            redisMessageBroker.conditionalRemoveConnAk(ak, gatewayInstanceId);
 
             // Phase 1.3: remove gw:internal:agent:{ak} in sync with conn:ak cleanup
             redisMessageBroker.removeInternalAgent(ak);
@@ -337,7 +336,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
 
         // 分布式锁：防止同一 AK 并发注册导致写入多条记录
         String lockKey = REGISTER_LOCK_PREFIX + akId;
-        String lockOwner = gatewayInstanceRegistry.getInstanceId() + ":" + Thread.currentThread().threadId();
+        String lockOwner = gatewayInstanceId + ":" + Thread.currentThread().threadId();
         Boolean acquired = redisTemplate.opsForValue()
                 .setIfAbsent(lockKey, lockOwner, REGISTER_LOCK_TTL_SECONDS, TimeUnit.SECONDS);
         if (acquired == null || !acquired) {
@@ -381,10 +380,10 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             eventRelayService.registerAgentSession(akId, userId, session);
 
             // v3: 注册 conn:ak → gatewayInstanceId（Source 服务查询用于下行精确投递）
-            redisMessageBroker.bindConnAk(akId, gatewayInstanceRegistry.getInstanceId(), CONN_AK_TTL);
+            redisMessageBroker.bindConnAk(akId, gatewayInstanceId, CONN_AK_TTL);
 
             // Phase 1.3: also write gw:internal:agent:{ak} for intra-GW routing
-            redisMessageBroker.bindInternalAgent(akId, gatewayInstanceRegistry.getInstanceId(), CONN_AK_TTL);
+            redisMessageBroker.bindInternalAgent(akId, gatewayInstanceId, CONN_AK_TTL);
 
             // 发送 register_ok 给客户端
             try {
