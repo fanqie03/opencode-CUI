@@ -400,42 +400,27 @@ class GatewayRelayServiceTest {
         }
 
         @Test
-        @DisplayName("sendInvokeToGateway 查 conn:ak 精确投递到目标 GW")
-        void sendInvokeUsesConnAkForPreciseDelivery() {
+        @DisplayName("sendInvokeToGateway sends via round-robin")
+        void sendInvokeSendsViaRoundRobin() {
                 when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-                when(redisMessageBroker.getConnAk("agent-1")).thenReturn("gw-az1-1");
-                when(gatewayRelayTarget.sendToGateway(eq("gw-az1-1"), any())).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
 
                 service.sendInvokeToGateway(
                                 new InvokeCommand("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}"));
 
-                verify(gatewayRelayTarget).sendToGateway(eq("gw-az1-1"), contains("invoke"));
-        }
-
-        @Test
-        @DisplayName("sendInvokeToGateway conn:ak miss 时广播到所有 GW")
-        void sendInvokeBroadcastsWhenConnAkMiss() {
-                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-                when(redisMessageBroker.getConnAk("agent-1")).thenReturn(null);
-                when(gatewayRelayTarget.broadcastToAllGateways(any())).thenReturn(true);
-
-                service.sendInvokeToGateway(
-                                new InvokeCommand("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}"));
-
-                verify(gatewayRelayTarget).broadcastToAllGateways(contains("invoke"));
+                verify(gatewayRelayTarget).sendToGateway(contains("invoke"));
         }
 
         @Test
         @DisplayName("sendInvokeToGateway serializes string welinkSessionId for create_session")
         void sendInvokeSerializesNumericWelinkSessionId() {
                 when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-                when(redisMessageBroker.getConnAk("agent-1")).thenReturn(null);
-                when(gatewayRelayTarget.broadcastToAllGateways(any())).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
 
                 service.sendInvokeToGateway(
                                 new InvokeCommand("agent-1", "user-1", "42", "create_session", "{\"title\":\"demo\"}"));
 
-                verify(gatewayRelayTarget).broadcastToAllGateways(contains("\"welinkSessionId\":\"42\""));
+                verify(gatewayRelayTarget).sendToGateway(contains("\"welinkSessionId\":\"42\""));
         }
 
         @Test
@@ -447,21 +432,6 @@ class GatewayRelayServiceTest {
                                 new InvokeCommand("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}"));
 
                 verify(gatewayRelayTarget, never()).sendToGateway(any());
-        }
-
-        @Test
-        @DisplayName("sendInvokeToGateway 精确投递失败时 fallback 广播")
-        void sendInvokeFallbacksToBroadcastOnPreciseFailure() {
-                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-                when(redisMessageBroker.getConnAk("agent-1")).thenReturn("gw-dead");
-                when(gatewayRelayTarget.sendToGateway(eq("gw-dead"), any())).thenReturn(false);
-                when(gatewayRelayTarget.broadcastToAllGateways(any())).thenReturn(true);
-
-                service.sendInvokeToGateway(
-                                new InvokeCommand("agent-1", "user-1", "session-1", "chat", "{\"text\":\"hello\"}"));
-
-                verify(gatewayRelayTarget).sendToGateway(eq("gw-dead"), contains("invoke"));
-                verify(gatewayRelayTarget).broadcastToAllGateways(contains("invoke"));
         }
 
         @Test
@@ -573,8 +543,7 @@ class GatewayRelayServiceTest {
                 // Step 2: user sends a new message → sendInvokeToGateway("chat") clears the
                 // mark
                 when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-                when(redisMessageBroker.getConnAk("test-ak")).thenReturn(null);
-                when(gatewayRelayTarget.broadcastToAllGateways(any())).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
                 service.sendInvokeToGateway(
                                 new InvokeCommand("test-ak", "user-1", "42", "chat", "{\"text\":\"hello\"}"));
 
@@ -718,14 +687,14 @@ class GatewayRelayServiceTest {
         @DisplayName("buildInvokeMessage injects assistantId into payload when resolved")
         void buildInvokeMessageInjectsAssistantId() throws Exception {
                 when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-                when(gatewayRelayTarget.sendViaHash(any(), any())).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
                 when(assistantIdResolverService.resolve("ak-001", "42")).thenReturn("persona-agent-id");
 
                 service.sendInvokeToGateway(
                                 new InvokeCommand("ak-001", "user-1", "42", "chat", "{\"text\":\"hello\"}"));
 
                 ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-                verify(gatewayRelayTarget).sendViaHash(eq("ak-001"), msgCaptor.capture());
+                verify(gatewayRelayTarget).sendToGateway(msgCaptor.capture());
 
                 JsonNode sent = objectMapper.readTree(msgCaptor.getValue());
                 assertEquals("persona-agent-id", sent.path("payload").path("assistantId").asText());
@@ -737,14 +706,14 @@ class GatewayRelayServiceTest {
         @DisplayName("buildInvokeMessage does not inject when resolver returns null")
         void buildInvokeMessageSkipsWhenResolverReturnsNull() throws Exception {
                 when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-                when(gatewayRelayTarget.sendViaHash(any(), any())).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
                 when(assistantIdResolverService.resolve("ak-001", "42")).thenReturn(null);
 
                 service.sendInvokeToGateway(
                                 new InvokeCommand("ak-001", "user-1", "42", "chat", "{\"text\":\"hello\"}"));
 
                 ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-                verify(gatewayRelayTarget).sendViaHash(eq("ak-001"), msgCaptor.capture());
+                verify(gatewayRelayTarget).sendToGateway(msgCaptor.capture());
 
                 JsonNode sent = objectMapper.readTree(msgCaptor.getValue());
                 assertTrue(sent.path("payload").path("assistantId").isMissingNode());
@@ -754,14 +723,14 @@ class GatewayRelayServiceTest {
         @DisplayName("buildInvokeMessage creates payload ObjectNode when payload is null")
         void buildInvokeMessageCreatesPayloadWhenNull() throws Exception {
                 when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-                when(gatewayRelayTarget.sendViaHash(any(), any())).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
                 when(assistantIdResolverService.resolve("ak-001", "42")).thenReturn("agent-id");
 
                 service.sendInvokeToGateway(
                                 new InvokeCommand("ak-001", "user-1", "42", "create_session", null));
 
                 ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-                verify(gatewayRelayTarget).sendViaHash(eq("ak-001"), msgCaptor.capture());
+                verify(gatewayRelayTarget).sendToGateway(msgCaptor.capture());
 
                 JsonNode sent = objectMapper.readTree(msgCaptor.getValue());
                 assertEquals("agent-id", sent.path("payload").path("assistantId").asText());
@@ -771,14 +740,14 @@ class GatewayRelayServiceTest {
         @DisplayName("buildInvokeMessage skips assistantId for non-chat/create_session actions")
         void buildInvokeMessageSkipsForNonChatActions() throws Exception {
                 when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
-                when(gatewayRelayTarget.sendViaHash(any(), any())).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
 
                 service.sendInvokeToGateway(
                                 new InvokeCommand("ak-001", "user-1", "42", "question_reply",
                                                 "{\"answer\":\"yes\",\"toolCallId\":\"tc-1\"}"));
 
                 ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-                verify(gatewayRelayTarget).sendViaHash(eq("ak-001"), msgCaptor.capture());
+                verify(gatewayRelayTarget).sendToGateway(msgCaptor.capture());
 
                 JsonNode sent = objectMapper.readTree(msgCaptor.getValue());
                 assertTrue(sent.path("payload").path("assistantId").isMissingNode());

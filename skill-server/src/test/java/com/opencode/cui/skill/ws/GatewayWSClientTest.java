@@ -2,6 +2,7 @@ package com.opencode.cui.skill.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.service.GatewayRelayService;
+import com.opencode.cui.skill.service.SessionRouteService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -14,14 +15,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** GatewayWSClient 单元测试：验证 Gateway WebSocket 客户端的消息处理。 */
+/** GatewayWSClient unit tests: verify Gateway WebSocket client behavior. */
 class GatewayWSClientTest {
 
+    private GatewayWSClient createClient() {
+        return new GatewayWSClient(
+                Mockito.mock(GatewayRelayService.class),
+                new ObjectMapper(),
+                Mockito.mock(SessionRouteService.class));
+    }
+
     @Test
-    @DisplayName("buildAuthProtocol 生成包含 source 和 instanceId 的 base64url 子协议")
+    @DisplayName("buildAuthProtocol generates base64url subprotocol with source and instanceId")
     void buildAuthProtocolContainsSourceAndInstanceId() throws Exception {
-        GatewayWSClient client = new GatewayWSClient(
-                Mockito.mock(GatewayRelayService.class), new ObjectMapper(), null, null);
+        GatewayWSClient client = createClient();
         ReflectionTestUtils.setField(client, "internalToken", "secret-token");
         ReflectionTestUtils.setField(client, "instanceId", "ss-az1-2");
 
@@ -38,47 +45,18 @@ class GatewayWSClientTest {
     }
 
     @Test
-    @DisplayName("无连接时 hasActiveConnection 返回 false")
+    @DisplayName("hasActiveConnection returns false when pool is not initialized")
     void hasActiveConnectionReturnsFalseWithNoConnections() {
-        GatewayWSClient client = new GatewayWSClient(
-                Mockito.mock(GatewayRelayService.class), new ObjectMapper(), null, null);
+        GatewayWSClient client = createClient();
 
         assertFalse(client.hasActiveConnection());
     }
 
     @Test
-    @DisplayName("无连接时 sendToGateway 返回 false")
+    @DisplayName("sendToGateway returns false when pool is not initialized")
     void sendToGatewayReturnsFalseWithNoConnections() {
-        GatewayWSClient client = new GatewayWSClient(
-                Mockito.mock(GatewayRelayService.class), new ObjectMapper(), null, null);
+        GatewayWSClient client = createClient();
 
         assertFalse(client.sendToGateway("test-message"));
-    }
-
-    @Test
-    @DisplayName("无连接时 sendToGateway(instanceId, message) 返回 false")
-    void sendToGatewayByInstanceReturnsFalseWithNoConnections() {
-        GatewayWSClient client = new GatewayWSClient(
-                Mockito.mock(GatewayRelayService.class), new ObjectMapper(), null, null);
-
-        assertFalse(client.sendToGateway("gw-1", "test-message"));
-    }
-
-    @Test
-    @DisplayName("无连接时 broadcastToAllGateways 返回 false")
-    void broadcastToAllGatewaysReturnsFalseWithNoConnections() {
-        GatewayWSClient client = new GatewayWSClient(
-                Mockito.mock(GatewayRelayService.class), new ObjectMapper(), null, null);
-
-        assertFalse(client.broadcastToAllGateways("test-message"));
-    }
-
-    @Test
-    @DisplayName("getConnectedInstanceIds 初始为空")
-    void getConnectedInstanceIdsInitiallyEmpty() {
-        GatewayWSClient client = new GatewayWSClient(
-                Mockito.mock(GatewayRelayService.class), new ObjectMapper(), null, null);
-
-        assertTrue(client.getConnectedInstanceIds().isEmpty());
     }
 }

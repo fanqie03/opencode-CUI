@@ -52,15 +52,11 @@ skill:
     allowed-origins: ${CORS_ORIGINS:*}
   gateway:
     ws-url: ${SKILL_GATEWAY_WS_URL:ws://localhost:8081/ws/skill}
+    connection-count: ${SKILL_GATEWAY_CONNECTION_COUNT:3}
     # Internal token for Skill Server -> AI-Gateway authentication
     internal-token: ${SKILL_SERVER_INTERNAL_TOKEN:changeme}
     reconnect-initial-delay-ms: 1000
     reconnect-max-delay-ms: 30000
-    # HTTP-based instance discovery (Phase 2)
-    discovery-url: ${GATEWAY_LB_URL:http://localhost:8081}/internal/instances
-    discovery-interval-ms: 10000
-    discovery-timeout-ms: 3000
-    discovery-fail-threshold: 3
   im:
     # IM platform API base URL for sending messages
     api-url: ${IM_API_URL:http://localhost:8080/api/im}
