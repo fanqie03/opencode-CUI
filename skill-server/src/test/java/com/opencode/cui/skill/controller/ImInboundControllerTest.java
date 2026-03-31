@@ -13,7 +13,7 @@ import com.opencode.cui.skill.service.GatewayApiClient;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImOutboundService;
 import com.opencode.cui.skill.service.ImSessionManager;
-import com.opencode.cui.skill.service.MessagePersistenceService;
+import com.opencode.cui.skill.service.SessionRebuildService;
 import com.opencode.cui.skill.service.SkillMessageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -55,8 +55,7 @@ class ImInboundControllerTest {
         @Mock
         private SkillMessageService messageService;
         @Mock
-        private MessagePersistenceService messagePersistenceService;
-
+        private SessionRebuildService rebuildService;
         private AssistantIdProperties assistantIdProperties;
         private ImInboundController controller;
 
@@ -74,7 +73,7 @@ class ImInboundControllerTest {
                                 contextInjectionService,
                                 gatewayRelayService,
                                 messageService,
-                                messagePersistenceService,
+                                rebuildService,
                                 new ObjectMapper());
                 // 默认 Agent 在线
                 lenient().when(gatewayApiClient.getAgentByAk(any()))
@@ -112,7 +111,6 @@ class ImInboundControllerTest {
 
                 assertEquals(HttpStatus.OK, response.getStatusCode());
                 verify(messageService).saveUserMessage(101L, "hello");
-                verify(messagePersistenceService).markPendingUserMessage(101L);
                 ArgumentCaptor<InvokeCommand> captor = ArgumentCaptor.forClass(InvokeCommand.class);
                 verify(gatewayRelayService).sendInvokeToGateway(captor.capture());
                 assertEquals("ak-001", captor.getValue().ak());

@@ -15,7 +15,6 @@ import com.opencode.cui.skill.config.AssistantIdProperties;
 import com.opencode.cui.skill.service.GatewayApiClient;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
-import com.opencode.cui.skill.service.MessagePersistenceService;
 
 import com.opencode.cui.skill.service.ProtocolUtils;
 import com.opencode.cui.skill.service.PayloadBuilder;
@@ -62,7 +61,6 @@ public class SkillMessageController {
     private final AssistantIdProperties assistantIdProperties;
     private final ImMessageService imMessageService;
     private final ObjectMapper objectMapper;
-    private final MessagePersistenceService messagePersistenceService;
     private final SessionAccessControlService accessControlService;
 
     public SkillMessageController(SkillMessageService messageService,
@@ -72,7 +70,6 @@ public class SkillMessageController {
             AssistantIdProperties assistantIdProperties,
             ImMessageService imMessageService,
             ObjectMapper objectMapper,
-            MessagePersistenceService messagePersistenceService,
             SessionAccessControlService accessControlService) {
         this.messageService = messageService;
         this.sessionService = sessionService;
@@ -81,7 +78,6 @@ public class SkillMessageController {
         this.assistantIdProperties = assistantIdProperties;
         this.imMessageService = imMessageService;
         this.objectMapper = objectMapper;
-        this.messagePersistenceService = messagePersistenceService;
         this.accessControlService = accessControlService;
     }
 
@@ -116,7 +112,6 @@ public class SkillMessageController {
 
         // 持久化用户消息
         SkillMessage message = messageService.saveUserMessage(numericSessionId, request.getContent());
-        messagePersistenceService.markPendingUserMessage(numericSessionId);
 
         // 路由到 AI-Gateway
         routeToGateway(session, sessionId, numericSessionId, request);

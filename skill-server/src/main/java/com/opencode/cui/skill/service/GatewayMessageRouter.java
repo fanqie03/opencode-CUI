@@ -414,11 +414,13 @@ public class GatewayMessageRouter {
             return;
         }
 
+        // user 角色事件是 OpenCode 回传的 echo，不需要持久化：
+        // miniapp 用户消息已由 SkillMessageController.sendMessage 保存
+        // IM 用户消息已由 ImInboundController 保存
         if ("user".equals(ProtocolUtils.normalizeRole(msg.getRole()))) {
-            handleUserToolEvent(sessionId, userId, msg, session);
-        } else {
-            handleAssistantToolEvent(sessionId, userId, msg, session);
+            return;
         }
+        handleAssistantToolEvent(sessionId, userId, msg, session);
     }
 
     /** 尝试激活 IDLE 会话，激活后广播 busy 状态。 */
@@ -440,39 +442,6 @@ public class GatewayMessageRouter {
             log.debug("Event ignored by translator for session {}", sessionId);
         }
         return msg;
-    }
-
-    /** 处理用户角色的 tool_event（仅处理 TEXT_DONE 类型，持久化用户消息）。 */
-    private void handleUserToolEvent(String sessionId, String userId, StreamMessage msg, SkillSession session) {
-        if (!StreamMessage.Types.TEXT_DONE.equals(msg.getType())) {
-            return;
-        }
-        String content = msg.getContent() != null ? msg.getContent() : "";
-        if (content.isBlank()) {
-            return;
-        }
-
-        Long numericSessionId = ProtocolUtils.parseSessionId(sessionId);
-        if (numericSessionId == null) {
-            log.warn("Cannot process user message: invalid sessionId={}", sessionId);
-            return;
-        }
-
-        if (session != null && !isMiniappSession(session)) {
-            persistenceService.consumePendingUserMessage(numericSessionId);
-            return;
-        }
-
-        try {
-            if (persistenceService.consumePendingUserMessage(numericSessionId)) {
-                log.debug("Skipping miniapp user message echo for session {}", sessionId);
-                return;
-            }
-            messageService.saveUserMessage(numericSessionId, content);
-        } catch (Exception e) {
-            log.error("Failed to persist user tool event for session {}: {}", sessionId, e.getMessage(), e);
-        }
-        broadcastStreamMessage(sessionId, userId, msg);
     }
 
     /** 处理助手角色的 tool_event（含权限回复合成、消息路由）。 */

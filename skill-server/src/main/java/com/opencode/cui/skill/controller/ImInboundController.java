@@ -14,7 +14,6 @@ import com.opencode.cui.skill.service.GatewayApiClient;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImOutboundService;
 import com.opencode.cui.skill.service.ImSessionManager;
-import com.opencode.cui.skill.service.MessagePersistenceService;
 import com.opencode.cui.skill.service.PayloadBuilder;
 import com.opencode.cui.skill.service.SessionRebuildService;
 import com.opencode.cui.skill.service.SkillMessageService;
@@ -54,7 +53,6 @@ public class ImInboundController {
     private final ContextInjectionService contextInjectionService; // 上下文注入服务：群聊时将历史消息拼入 prompt
     private final GatewayRelayService gatewayRelayService; // Gateway 通信服务：通过 WebSocket 转发消息到 AI Gateway
     private final SkillMessageService messageService; // 消息持久化服务：保存用户/助手消息到数据库
-    private final MessagePersistenceService messagePersistenceService; // 流式消息持久化：管理助手消息轮次和状态
     private final SessionRebuildService rebuildService; // 会话重建服务：预缓存消息供 session 重建后重发
     private final ObjectMapper objectMapper; // JSON 序列化工具
 
@@ -67,7 +65,6 @@ public class ImInboundController {
             ContextInjectionService contextInjectionService,
             GatewayRelayService gatewayRelayService,
             SkillMessageService messageService,
-            MessagePersistenceService messagePersistenceService,
             SessionRebuildService rebuildService,
             ObjectMapper objectMapper) {
         this.resolverService = resolverService;
@@ -78,7 +75,6 @@ public class ImInboundController {
         this.contextInjectionService = contextInjectionService;
         this.gatewayRelayService = gatewayRelayService;
         this.messageService = messageService;
-        this.messagePersistenceService = messagePersistenceService;
         this.rebuildService = rebuildService;
         this.objectMapper = objectMapper;
     }
@@ -195,7 +191,6 @@ public class ImInboundController {
         if (session.isImDirectSession()) {
             log.info("Direct session: persisting user message turn, skillSessionId={}", session.getId());
             messageService.saveUserMessage(session.getId(), request.content()); // 保存本轮用户消息
-            messagePersistenceService.markPendingUserMessage(session.getId()); // 标记用户消息待处理
         }
 
         // 预缓存消息到 Redis List：CHAT 发送后若 Agent 报 session_not_found 触发重建，

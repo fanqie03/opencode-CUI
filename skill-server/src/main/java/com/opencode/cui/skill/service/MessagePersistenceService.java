@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
  * 
  * InboundController 直接使用的方法：
  * - {@link #finalizeActiveAssistantTurn} — 结束当前助手回复轮次
- * - {@link #markPendingUserMessage} — 标记用户消息待处理
  */
 @Slf4j
 @Service
@@ -90,15 +89,6 @@ public class MessagePersistenceService {
         tracker.clearSession(sessionId);
     }
 
-    /** 标记有待处理的用户消息（在 ImInboundController 中发送新消息前调用） */
-    public void markPendingUserMessage(Long sessionId) {
-        tracker.markPendingUserMessage(sessionId);
-    }
-
-    /** 消费待处理的用户消息标记（助手开始回复时调用） */
-    public boolean consumePendingUserMessage(Long sessionId) {
-        return tracker.consumePendingUserMessage(sessionId);
-    }
 
     @Transactional(readOnly = true)
     public StreamMessage synthesizePermissionReplyFromToolOutcome(Long sessionId, StreamMessage msg) {
