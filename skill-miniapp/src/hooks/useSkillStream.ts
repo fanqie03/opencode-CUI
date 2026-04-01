@@ -595,23 +595,40 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
               ...message,
               parts: (message.parts ?? []).map((p) => {
                 if (p.type !== 'subtask' || p.subagentSessionId !== subagentSessionId) return p;
-                // 对于 text/thinking delta，合并到最后一个同类型 subPart
-                if ((msg.type === 'text.delta' || msg.type === 'thinking.delta') && p.subParts?.length) {
-                  const lastPart = p.subParts[p.subParts.length - 1];
-                  if (lastPart.type === subPart.type && lastPart.isStreaming) {
-                    return {
-                      ...p,
-                      subParts: [
-                        ...p.subParts.slice(0, -1),
-                        { ...lastPart, content: lastPart.content + (subPart.content ?? '') },
-                      ],
-                    };
+                const existing = p.subParts ?? [];
+
+                // text/thinking delta: 按 partId 合并到同一个 part
+                if ((msg.type === 'text.delta' || msg.type === 'thinking.delta') && msg.partId) {
+                  const idx = existing.findIndex((sp) => sp.partId === subPart.partId);
+                  if (idx >= 0) {
+                    const updated = [...existing];
+                    updated[idx] = { ...updated[idx], content: updated[idx].content + (msg.content ?? '') };
+                    return { ...p, subParts: updated };
                   }
                 }
-                return {
-                  ...p,
-                  subParts: [...(p.subParts ?? []), subPart],
-                };
+
+                // text.done / thinking.done: 按 partId 替换 delta，标记为非 streaming
+                if ((msg.type === 'text.done' || msg.type === 'thinking.done') && msg.partId) {
+                  const idx = existing.findIndex((sp) => sp.partId === subPart.partId);
+                  if (idx >= 0) {
+                    const updated = [...existing];
+                    updated[idx] = { ...subPart, content: msg.content ?? updated[idx].content };
+                    return { ...p, subParts: updated };
+                  }
+                }
+
+                // tool.update: 按 toolCallId upsert（更新已有或追加新的）
+                if (msg.type === 'tool.update' && subPart.toolCallId) {
+                  const idx = existing.findIndex((sp) => sp.type === 'tool' && sp.toolCallId === subPart.toolCallId);
+                  if (idx >= 0) {
+                    const updated = [...existing];
+                    updated[idx] = subPart;
+                    return { ...p, subParts: updated };
+                  }
+                }
+
+                // 其他情况：追加
+                return { ...p, subParts: [...existing, subPart] };
               }),
             };
           }),

@@ -348,8 +348,97 @@ export function normalizeHistoryMessage(raw: BackendMessage): Message {
 }
 
 export function normalizeHistoryMessages(rawMessages: BackendMessage[]): Message[] {
-  return rawMessages
+  const messages = rawMessages
     .map(normalizeHistoryMessage)
     // 过滤掉空白的用户消息（服务端 bug 产生的残留记录）
     .filter((msg) => !(msg.role === 'user' && !msg.content && (!msg.parts || msg.parts.length === 0)));
+
+  // 跨 message 合并 subagent parts 为虚拟 SubtaskBlock message（方案 B）
+  return mergeSubagentPartsAcrossMessages(messages);
+}
+
+/**
+ * 将分散在多条 message 中的 subagent parts 合并为独立的虚拟 SubtaskBlock message。
+ * 同一个 subagentSessionId 的所有 parts 合并到同一个 SubtaskBlock 中。
+ */
+function mergeSubagentPartsAcrossMessages(messages: Message[]): Message[] {
+  const subtaskMap = new Map<string, { parts: MessagePart[]; name: string; firstIndex: number }>();
+  const result: Message[] = [];
+
+  // 第一遍：收集所有 subagent parts，记录首次出现的位置
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const normalParts: MessagePart[] = [];
+    let hasSubagent = false;
+
+    for (const part of msg.parts ?? []) {
+      // groupPartsIntoSubtasks 已在单 message 内生成了 subtask type
+      if (part.type === 'subtask' && part.subagentSessionId) {
+        hasSubagent = true;
+        let entry = subtaskMap.get(part.subagentSessionId);
+        if (!entry) {
+          entry = { parts: [], name: part.subagentName ?? 'Subagent', firstIndex: i };
+          subtaskMap.set(part.subagentSessionId, entry);
+        }
+        // 合并 subParts
+        if (part.subParts) {
+          entry.parts.push(...part.subParts);
+        }
+      } else if (part.subagentSessionId) {
+        // 单独的 subagent part（未被 groupPartsIntoSubtasks 处理的情况）
+        hasSubagent = true;
+        let entry = subtaskMap.get(part.subagentSessionId);
+        if (!entry) {
+          entry = { parts: [], name: part.subagentName ?? 'Subagent', firstIndex: i };
+          subtaskMap.set(part.subagentSessionId, entry);
+        }
+        entry.parts.push(part);
+      } else {
+        normalParts.push(part);
+      }
+    }
+
+    // 只保留非 subagent 的 parts
+    if (hasSubagent) {
+      if (normalParts.length > 0 || msg.content) {
+        result.push({ ...msg, parts: normalParts.length > 0 ? normalParts : undefined });
+      }
+      // 如果 message 只有 subagent parts，跳过（不创建空消息）
+    } else {
+      result.push(msg);
+    }
+  }
+
+  // 第二遍：为每个 subagentSessionId 创建虚拟 SubtaskBlock message，插入到首次出现位置之后
+  const insertions: { index: number; message: Message }[] = [];
+  for (const [sessionId, entry] of subtaskMap) {
+    const virtualMsg: Message = {
+      id: `subtask-${sessionId}`,
+      role: 'assistant',
+      content: '',
+      contentType: 'plain',
+      timestamp: Date.now(),
+      isStreaming: false,
+      parts: [{
+        partId: `subtask-${sessionId}`,
+        type: 'subtask',
+        content: '',
+        isStreaming: false,
+        subagentSessionId: sessionId,
+        subagentName: entry.name,
+        subagentPrompt: '',
+        subagentStatus: 'completed',
+        subParts: entry.parts,
+      }],
+    };
+    insertions.push({ index: entry.firstIndex, message: virtualMsg });
+  }
+
+  // 按 index 降序插入（避免偏移）
+  insertions.sort((a, b) => b.index - a.index);
+  for (const { index, message } of insertions) {
+    result.splice(index + 1, 0, message);
+  }
+
+  return result;
 }
