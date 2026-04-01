@@ -353,8 +353,47 @@ export function normalizeHistoryMessages(rawMessages: BackendMessage[]): Message
     // 过滤掉空白的用户消息（服务端 bug 产生的残留记录）
     .filter((msg) => !(msg.role === 'user' && !msg.content && (!msg.parts || msg.parts.length === 0)));
 
-  // 跨 message 合并 subagent parts 为虚拟 SubtaskBlock message（方案 B）
-  return mergeSubagentPartsAcrossMessages(messages);
+  // 1. 合并连续的 assistant 消息（让刷新后与流式时效果一致）
+  const merged = mergeConsecutiveAssistantMessages(messages);
+  // 2. 跨 message 合并 subagent parts 为虚拟 SubtaskBlock message（方案 B）
+  return mergeSubagentPartsAcrossMessages(merged);
+}
+
+/**
+ * 合并连续的 assistant 消息为一条（合并 parts 和 content）。
+ * 流式时 StreamAssembler 会将同一轮对话的所有 parts 放入一条消息，
+ * 但后端历史 API 按 message 粒度返回，导致刷新后分散。
+ */
+function mergeConsecutiveAssistantMessages(messages: Message[]): Message[] {
+  const result: Message[] = [];
+
+  for (const msg of messages) {
+    const prev = result[result.length - 1];
+    if (
+      prev &&
+      prev.role === 'assistant' &&
+      msg.role === 'assistant' &&
+      !msg.content // 有独立文本内容的 assistant 消息不合并（它是一个完整的回复）
+    ) {
+      // 合并 parts 到前一条
+      prev.parts = [...(prev.parts ?? []), ...(msg.parts ?? [])];
+    } else if (
+      prev &&
+      prev.role === 'assistant' &&
+      msg.role === 'assistant' &&
+      msg.content &&
+      !prev.content &&
+      prev.parts?.length
+    ) {
+      // 前一条只有 parts 没有 content，当前有 content → 合并
+      prev.content = msg.content;
+      prev.parts = [...(prev.parts ?? []), ...(msg.parts ?? [])];
+    } else {
+      result.push({ ...msg });
+    }
+  }
+
+  return result;
 }
 
 /**
