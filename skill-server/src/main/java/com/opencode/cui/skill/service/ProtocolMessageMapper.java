@@ -115,6 +115,9 @@ public final class ProtocolMessageMapper {
             }
         }
 
+        builder.subagentSessionId(part.getSubagentSessionId())
+                .subagentName(part.getSubagentName());
+
         return builder.build();
     }
 

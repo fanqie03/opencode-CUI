@@ -30,6 +30,8 @@ interface BackendMessagePart {
   fileName?: string | null;
   fileUrl?: string | null;
   fileMime?: string | null;
+  subagentSessionId?: string | null;
+  subagentName?: string | null;
 }
 
 interface BackendMessage {
@@ -164,6 +166,8 @@ function normalizePart(raw: BackendMessagePart, index: number): MessagePart | nu
         type: 'text',
         content: raw.content ?? '',
         isStreaming: false,
+        subagentSessionId: raw.subagentSessionId ?? undefined,
+        subagentName: raw.subagentName ?? undefined,
       };
 
     case 'thinking':
@@ -174,6 +178,8 @@ function normalizePart(raw: BackendMessagePart, index: number): MessagePart | nu
         type: 'thinking',
         content: raw.content ?? '',
         isStreaming: false,
+        subagentSessionId: raw.subagentSessionId ?? undefined,
+        subagentName: raw.subagentName ?? undefined,
       };
 
     case 'question':
@@ -193,6 +199,8 @@ function normalizePart(raw: BackendMessagePart, index: number): MessagePart | nu
         answered: raw.answered === true
           || raw.status === 'completed'
           || raw.toolStatus === 'completed',
+        subagentSessionId: raw.subagentSessionId ?? undefined,
+        subagentName: raw.subagentName ?? undefined,
       };
 
     case 'permission': {
@@ -217,6 +225,8 @@ function normalizePart(raw: BackendMessagePart, index: number): MessagePart | nu
         permType: raw.permType ?? raw.toolName ?? undefined,
         permResolved: resolved,
         permissionResponse: raw.response ?? raw.output ?? raw.toolOutput ?? undefined,
+        subagentSessionId: raw.subagentSessionId ?? undefined,
+        subagentName: raw.subagentName ?? undefined,
       };
     }
 
@@ -235,6 +245,8 @@ function normalizePart(raw: BackendMessagePart, index: number): MessagePart | nu
           header: questionFields.header,
           question: questionFields.question,
           options: questionFields.options,
+          subagentSessionId: raw.subagentSessionId ?? undefined,
+          subagentName: raw.subagentName ?? undefined,
         };
       }
 
@@ -250,6 +262,8 @@ function normalizePart(raw: BackendMessagePart, index: number): MessagePart | nu
         toolInput,
         toolOutput: raw.output ?? raw.toolOutput ?? undefined,
         toolTitle: raw.title ?? raw.toolTitle ?? undefined,
+        subagentSessionId: raw.subagentSessionId ?? undefined,
+        subagentName: raw.subagentName ?? undefined,
       };
     }
 
@@ -263,11 +277,43 @@ function normalizePart(raw: BackendMessagePart, index: number): MessagePart | nu
         fileName: raw.fileName ?? undefined,
         fileUrl: raw.fileUrl ?? undefined,
         fileMime: raw.fileMime ?? undefined,
+        subagentSessionId: raw.subagentSessionId ?? undefined,
+        subagentName: raw.subagentName ?? undefined,
       };
 
     default:
       return null;
   }
+}
+
+function groupPartsIntoSubtasks(parts: MessagePart[]): MessagePart[] {
+  const result: MessagePart[] = [];
+  const subtaskMap = new Map<string, MessagePart>();
+
+  for (const part of parts) {
+    if (part.subagentSessionId) {
+      let subtask = subtaskMap.get(part.subagentSessionId);
+      if (!subtask) {
+        subtask = {
+          partId: `subtask-${part.subagentSessionId}`,
+          type: 'subtask',
+          content: '',
+          isStreaming: false,
+          subagentSessionId: part.subagentSessionId,
+          subagentName: part.subagentName ?? 'Subagent',
+          subagentPrompt: '',
+          subagentStatus: 'completed',
+          subParts: [],
+        };
+        subtaskMap.set(part.subagentSessionId, subtask);
+        result.push(subtask);
+      }
+      subtask.subParts!.push(part);
+    } else {
+      result.push(part);
+    }
+  }
+  return result;
 }
 
 function normalizeMeta(meta: string | Record<string, unknown> | null | undefined): Record<string, unknown> | undefined {
@@ -297,7 +343,7 @@ export function normalizeHistoryMessage(raw: BackendMessage): Message {
       : (typeof raw.seq === 'number' ? raw.seq : undefined),
     meta: normalizeMeta(raw.meta),
     isStreaming: false,
-    parts: parts.length > 0 ? parts : undefined,
+    parts: parts.length > 0 ? groupPartsIntoSubtasks(parts) : undefined,
   };
 }
 

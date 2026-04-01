@@ -97,4 +97,12 @@ public class ProtocolMessagePart {
 
     /** 文件 MIME 类型 */
     private String fileMime;
+
+    // ==================== Subagent 字段 ====================
+
+    /** Subagent 会话 ID */
+    private String subagentSessionId;
+
+    /** Subagent 名称 */
+    private String subagentName;
 }

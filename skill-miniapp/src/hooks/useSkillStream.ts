@@ -659,7 +659,6 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
       handleSubagentMessage(msg);
       return;
     }
-
     switch (msg.type) {
       case 'text.delta':
       case 'text.done':

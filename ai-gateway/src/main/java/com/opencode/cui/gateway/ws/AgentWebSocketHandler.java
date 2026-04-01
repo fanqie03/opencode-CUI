@@ -249,6 +249,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             return;
         }
 
+
         String userId = (String) session.getAttributes().get(ATTR_USER_ID);
         String akId = (String) session.getAttributes().get(ATTR_AK_ID);
 
@@ -444,8 +445,9 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
 
         long start = System.nanoTime();
         log.info(
-                "[ENTRY] AgentWSHandler.handleRelayToSkillServer: type={}, ak={}, welinkSessionId={}, toolSessionId={}",
-                message.getType(), ak, message.getWelinkSessionId(), message.getToolSessionId());
+                "[ENTRY] AgentWSHandler.handleRelayToSkillServer: type={}, ak={}, welinkSessionId={}, toolSessionId={}, subagentSessionId={}, subagentName={}",
+                message.getType(), ak, message.getWelinkSessionId(), message.getToolSessionId(),
+                message.getSubagentSessionId(), message.getSubagentName());
 
         eventRelayService.relayToSkillServer(ak, message);
 

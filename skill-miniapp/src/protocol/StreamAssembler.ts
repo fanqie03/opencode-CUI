@@ -129,6 +129,8 @@ export class StreamAssembler {
         const part = this.getOrCreatePart(id, 'text', msg.partSeq);
         part.content += msg.content ?? '';
         part.isStreaming = true;
+        part.subagentSessionId = msg.subagentSessionId ?? part.subagentSessionId;
+        part.subagentName = msg.subagentName ?? part.subagentName;
         break;
       }
 
@@ -139,6 +141,8 @@ export class StreamAssembler {
           part.content = msg.content;
         }
         part.isStreaming = false;
+        part.subagentSessionId = msg.subagentSessionId ?? part.subagentSessionId;
+        part.subagentName = msg.subagentName ?? part.subagentName;
         break;
       }
 
@@ -147,6 +151,8 @@ export class StreamAssembler {
         const part = this.getOrCreatePart(id, 'thinking', msg.partSeq);
         part.content += msg.content ?? '';
         part.isStreaming = true;
+        part.subagentSessionId = msg.subagentSessionId ?? part.subagentSessionId;
+        part.subagentName = msg.subagentName ?? part.subagentName;
         break;
       }
 
@@ -157,6 +163,8 @@ export class StreamAssembler {
           part.content = msg.content;
         }
         part.isStreaming = false;
+        part.subagentSessionId = msg.subagentSessionId ?? part.subagentSessionId;
+        part.subagentName = msg.subagentName ?? part.subagentName;
         break;
       }
 
@@ -171,6 +179,8 @@ export class StreamAssembler {
         if (msg.output) part.toolOutput = msg.output;
         if (msg.error) part.content = msg.error;
         part.isStreaming = msg.status === 'pending' || msg.status === 'running';
+        part.subagentSessionId = msg.subagentSessionId ?? part.subagentSessionId;
+        part.subagentName = msg.subagentName ?? part.subagentName;
         break;
       }
 
@@ -189,6 +199,8 @@ export class StreamAssembler {
         part.header = msg.header ?? questionFields.header ?? part.header;
         part.question = msg.question ?? questionFields.question ?? part.question;
         part.options = questionFields.options ?? normalizeQuestionOptions(msg.options) ?? part.options;
+        part.subagentSessionId = msg.subagentSessionId ?? part.subagentSessionId;
+        part.subagentName = msg.subagentName ?? part.subagentName;
         if (msg.status === 'completed' || msg.status === 'error') {
           part.answered = true;
         }
@@ -210,6 +222,8 @@ export class StreamAssembler {
         part.content = msg.title ?? msg.content ?? '';
         part.permResolved = false;
         part.isStreaming = false;
+        part.subagentSessionId = msg.subagentSessionId;
+        part.subagentName = msg.subagentName;
         break;
       }
 
@@ -230,6 +244,8 @@ export class StreamAssembler {
         part.fileUrl = msg.fileUrl;
         part.fileMime = msg.fileMime;
         part.isStreaming = false;
+        part.subagentSessionId = msg.subagentSessionId ?? part.subagentSessionId;
+        part.subagentName = msg.subagentName ?? part.subagentName;
         break;
       }
 
