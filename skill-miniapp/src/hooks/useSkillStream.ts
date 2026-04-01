@@ -509,6 +509,26 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
         break;
       }
 
+      case 'message.user': {
+        const messageId = msg.messageId;
+        if (!messageId) break;
+
+        // 发送方的乐观更新消息已在 knownUserMessageIdsRef 中，自动跳过
+        if (knownUserMessageIdsRef.current.has(messageId)) break;
+
+        const userMsg: Message = {
+          id: messageId,
+          role: 'user',
+          content: msg.content ?? '',
+          contentType: 'plain',
+          timestamp: msg.emittedAt ? new Date(msg.emittedAt).getTime() : Date.now(),
+          messageSeq: msg.messageSeq,
+        };
+
+        setMessages((prev) => upsertMessage(prev, userMsg));
+        break;
+      }
+
       case 'step.start':
         if (msg.messageId) {
           activeMessageIdsRef.current.add(msg.messageId);
