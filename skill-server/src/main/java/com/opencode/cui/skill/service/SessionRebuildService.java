@@ -36,6 +36,10 @@ public class SessionRebuildService {
     private static final String REBUILD_COUNTER_PREFIX = "ss:rebuild-counter:";
     /** 待重建消息 TTL */
     private static final Duration PENDING_MSG_TTL = Duration.ofMinutes(5);
+    /** 重建分布式锁 Redis key 前缀：ss:rebuild-lock:{sessionId} */
+    private static final String REBUILD_LOCK_PREFIX = "ss:rebuild-lock:";
+    /** 重建分布式锁 TTL */
+    private static final Duration REBUILD_LOCK_TTL = Duration.ofSeconds(15);
 
     private final ObjectMapper objectMapper;
     private final SkillSessionService sessionService;
@@ -171,6 +175,24 @@ public class SessionRebuildService {
         }
     }
 
+    /**
+     * 查看（不消费）待重建消息列表。
+     * 用于 rebuildFromStoredUserMessage 判断是否需要从 DB 补充消息。
+     *
+     * @return 当前待发消息列表（只读），空列表表示无待发消息
+     */
+    public List<String> peekPendingMessages(String sessionId) {
+        String key = PENDING_MSG_PREFIX + sessionId;
+        try {
+            List<String> messages = redisTemplate.opsForList().range(key, 0, -1);
+            return messages != null ? messages : Collections.emptyList();
+        } catch (Exception e) {
+            log.warn("[WARN] peekPendingMessages: Redis 操作失败, sessionId={}, error={}",
+                    sessionId, e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
     /** 清除会话的所有待重建消息。 */
     public void clearPendingMessages(String sessionId) {
         String key = PENDING_MSG_PREFIX + sessionId;
@@ -182,7 +204,7 @@ public class SessionRebuildService {
         }
     }
 
-    /** 从数据库中获取最近的用户消息并触发重建。 */
+    /** 从数据库中获取最近的用户消息并触发重建。加分布式锁防止并发重复重建。 */
     private void rebuildFromStoredUserMessage(String sessionId, RebuildCallback callback) {
         Long sessionIdLong = ProtocolUtils.parseSessionId(sessionId);
         if (sessionIdLong == null) {
@@ -190,20 +212,58 @@ public class SessionRebuildService {
             return;
         }
 
+        // --- 分布式锁：防止并发请求同时触发重建 ---
+        String lockKey = REBUILD_LOCK_PREFIX + sessionId;
+        String lockValue = java.util.UUID.randomUUID().toString();
+        boolean locked = false;
+        try {
+            locked = Boolean.TRUE.equals(
+                    redisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, REBUILD_LOCK_TTL));
+        } catch (Exception e) {
+            log.warn("[WARN] rebuildFromStoredUserMessage: 获取锁失败, 降级放行, sessionId={}, error={}",
+                    sessionId, e.getMessage());
+            locked = true; // Redis 故障时降级放行，允许单次重建
+        }
+
+        if (!locked) {
+            log.info("Rebuild already in progress for session={}, skipping (message in pending list)", sessionId);
+            return;
+        }
+
         try {
             SkillSession session = sessionService.getSession(sessionIdLong);
             sessionService.clearToolSessionId(sessionIdLong);
 
+            // 如果 Redis List 已有消息（来自 Case C 预缓存），跳过 DB 查询，避免重复追加
             String pendingMessage = null;
-            SkillMessage lastUserMsg = messageRepository.findLastUserMessage(sessionIdLong);
-            if (lastUserMsg != null && lastUserMsg.getContent() != null) {
-                pendingMessage = lastUserMsg.getContent();
+            List<String> existingPending = peekPendingMessages(sessionId);
+            if (existingPending.isEmpty()) {
+                SkillMessage lastUserMsg = messageRepository.findLastUserMessage(sessionIdLong);
+                if (lastUserMsg != null && lastUserMsg.getContent() != null) {
+                    pendingMessage = lastUserMsg.getContent();
+                }
+            } else {
+                log.info("Pending messages already exist for session={}, count={}, skipping DB lookup",
+                        sessionId, existingPending.size());
             }
 
             rebuildToolSession(sessionId, session, pendingMessage, callback);
         } catch (Exception e) {
             log.error("Failed to rebuild session {}: {}", sessionId, e.getMessage(), e);
             clearPendingMessages(sessionId);
+        } finally {
+            // 安全释放锁（仅释放自己持有的）
+            if (locked) {
+                try {
+                    String currentValue = redisTemplate.opsForValue().get(lockKey);
+                    if (lockValue.equals(currentValue)) {
+                        redisTemplate.delete(lockKey);
+                    }
+                } catch (Exception e) {
+                    log.warn("[WARN] rebuildFromStoredUserMessage: 释放锁失败, sessionId={}, error={}",
+                            sessionId, e.getMessage());
+                }
+            }
         }
     }
 

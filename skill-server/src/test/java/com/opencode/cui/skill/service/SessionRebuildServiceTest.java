@@ -11,11 +11,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.ListOperations;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -27,6 +33,15 @@ class SessionRebuildServiceTest {
 
     @Mock
     private SkillMessageRepository messageRepository;
+
+    @Mock
+    private StringRedisTemplate redisTemplate;
+
+    @Mock
+    private ValueOperations<String, String> valueOperations;
+
+    @Mock
+    private ListOperations<String, String> listOperations;
 
     private SessionRebuildService service;
 
@@ -56,16 +71,34 @@ class SessionRebuildServiceTest {
                 .build();
     }
 
+    /**
+     * 为指定 sessionId 配置 Redis 计数器 mock，模拟原子递增行为。
+     * 返回 AtomicLong 方便测试中检查计数器状态。
+     */
+    private AtomicLong stubRedisCounter(String sessionId) {
+        AtomicLong counter = new AtomicLong(0);
+        lenient().when(valueOperations.increment("ss:rebuild-counter:" + sessionId))
+                .thenAnswer(inv -> counter.incrementAndGet());
+        return counter;
+    }
+
     @BeforeEach
     void setUp() {
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        lenient().when(redisTemplate.opsForList()).thenReturn(listOperations);
+        // expire / delete 默认返回 true
+        lenient().when(redisTemplate.expire(anyString(), any())).thenReturn(true);
+        lenient().when(redisTemplate.delete(anyString())).thenReturn(true);
+
         // maxRebuildAttempts=3, rebuildCooldownSeconds=30
-        service = new SessionRebuildService(new ObjectMapper(), sessionService, messageRepository, 3, 30);
+        service = new SessionRebuildService(new ObjectMapper(), sessionService, messageRepository, redisTemplate, 3, 30);
     }
 
     @Test
     @DisplayName("在限额内的重建次数：3 次都应发送 invoke 并广播 retry 状态")
     void rebuildToolSession_shouldAllowAttemptsWithinLimit() {
         String sessionId = "1001";
+        stubRedisCounter(sessionId);
         SkillSession session = buildSession(1001L, "user-1", "ak-abc", "测试会话");
         CapturingCallback cb = new CapturingCallback();
 
@@ -87,6 +120,7 @@ class SessionRebuildServiceTest {
     @DisplayName("超出限额：第 4 次应阻断 invoke 并广播含「重建已达上限」的错误消息，同时清除 toolSessionId")
     void rebuildToolSession_shouldBlockAfterMaxAttempts() {
         String sessionId = "1002";
+        stubRedisCounter(sessionId);
         SkillSession session = buildSession(1002L, "user-2", "ak-def", "溢出会话");
         CapturingCallback cb = new CapturingCallback();
 
@@ -115,6 +149,8 @@ class SessionRebuildServiceTest {
     @Test
     @DisplayName("不同会话拥有独立计数器：会话 A 耗尽后，会话 B 仍可正常重建")
     void rebuildToolSession_differentSessionsShouldHaveSeparateCounters() {
+        stubRedisCounter("2001");
+        stubRedisCounter("2002");
         SkillSession sessionA = buildSession(2001L, "user-a", "ak-aaa", "会话A");
         SkillSession sessionB = buildSession(2002L, "user-b", "ak-bbb", "会话B");
         CapturingCallback cbA = new CapturingCallback();
@@ -137,9 +173,14 @@ class SessionRebuildServiceTest {
     }
 
     @Test
-    @DisplayName("超限后 consumePendingMessage 应返回 null（待重建消息已被清除）")
+    @DisplayName("超限后 consumePendingMessages 应返回空列表（待重建消息已被清除）")
     void rebuildToolSession_blockedAttemptShouldClearPendingMessages() {
         String sessionId = "3001";
+        stubRedisCounter(sessionId);
+        // consumePendingMessages 调用 range 后 delete，超限后 clearPendingMessages 已 delete 过
+        // range 返回空列表模拟消息已清除
+        when(listOperations.range("ss:pending-rebuild:" + sessionId, 0, -1))
+                .thenReturn(Collections.emptyList());
         SkillSession session = buildSession(3001L, "user-3", "ak-ghi", "消息清理会话");
         CapturingCallback cb = new CapturingCallback();
 
@@ -152,7 +193,10 @@ class SessionRebuildServiceTest {
         service.rebuildToolSession(sessionId, session, "待重试消息", cb);
 
         // 超限后，待重建消息缓存应已清空
-        String pending = service.consumePendingMessage(sessionId);
-        assertNull(pending, "超限后 consumePendingMessage 应返回 null");
+        List<String> pending = service.consumePendingMessages(sessionId);
+        assertTrue(pending.isEmpty(), "超限后 consumePendingMessages 应返回空列表");
+
+        // 验证 clearPendingMessages 被调用（delete 对应 key）
+        verify(redisTemplate, atLeastOnce()).delete("ss:pending-rebuild:" + sessionId);
     }
 }

@@ -542,6 +542,9 @@ public class GatewayMessageRouter {
                 log.error("Failed to persist tool_done for session {}: {}", sessionId, e.getMessage(), e);
             }
         }
+
+        // 清理该 session 的预缓存消息，防止累积
+        rebuildService.clearPendingMessages(sessionId);
     }
 
     /** 处理 tool_error：会话重建/错误广播/IM 转发/持久化。 */
