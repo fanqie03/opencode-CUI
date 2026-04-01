@@ -113,8 +113,8 @@ const App: React.FC = () => {
   );
 
   const handlePermissionDecision = useCallback(
-    (permissionId: string, response: 'once' | 'always' | 'reject') => {
-      void replyPermission(permissionId, response);
+    (permissionId: string, response: 'once' | 'always' | 'reject', subagentSessionId?: string) => {
+      void replyPermission(permissionId, response, subagentSessionId);
     },
     [replyPermission],
   );

@@ -13,7 +13,7 @@ export interface UseSkillStreamReturn {
   agentStatus: AgentStatus;
   socketReady: boolean;
   sendMessage: (text: string, options?: { toolCallId?: string }) => Promise<void>;
-  replyPermission: (permissionId: string, response: 'once' | 'always' | 'reject') => Promise<void>;
+  replyPermission: (permissionId: string, response: 'once' | 'always' | 'reject', subagentSessionId?: string) => Promise<void>;
   error: string | null;
 }
 
@@ -1025,14 +1025,14 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
   );
 
   const replyPermissionFn = useCallback(
-    async (permissionId: string, response: 'once' | 'always' | 'reject') => {
+    async (permissionId: string, response: 'once' | 'always' | 'reject', subagentSessionId?: string) => {
       if (!sessionId) {
         return;
       }
 
       setError(null);
       try {
-        await api.replyPermission(sessionId, permissionId, response);
+        await api.replyPermission(sessionId, permissionId, response, subagentSessionId);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to reply permission';
         setError(message);

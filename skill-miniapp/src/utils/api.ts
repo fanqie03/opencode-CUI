@@ -315,12 +315,13 @@ export function replyPermission(
   sessionId: string | number,
   permissionId: string,
   response: 'once' | 'always' | 'reject',
+  subagentSessionId?: string,
 ): Promise<{ welinkSessionId: string; permissionId: string; response: string }> {
   return request<{ welinkSessionId: string; permissionId: string; response: string }>(
     `/api/skill/sessions/${sessionId}/permissions/${permissionId}`,
     {
       method: 'POST',
-      body: JSON.stringify({ response }),
+      body: JSON.stringify({ response, subagentSessionId }),
     },
   );
 }

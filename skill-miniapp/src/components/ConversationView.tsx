@@ -6,7 +6,7 @@ interface ConversationViewProps {
   messages: Message[];
   loading?: boolean;
   onQuestionAnswer?: (answer: string, toolCallId?: string) => void;
-  onPermissionDecision?: (permissionId: string, response: 'once' | 'always' | 'reject') => void;
+  onPermissionDecision?: (permissionId: string, response: 'once' | 'always' | 'reject', subagentSessionId?: string) => void;
 }
 
 export const ConversationView: React.FC<ConversationViewProps> = ({
