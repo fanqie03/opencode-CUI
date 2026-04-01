@@ -4,6 +4,6 @@
     "private": true,
     "description": "OpenCode CUI - AI Gateway + Skill Server + PC Agent",
     "dependencies": {
-        "@opencode-cui/message-bridge": "file:./plugins/message-bridge"
+        "@wecode/skill-opencode-plugin": "file:./plugins/agent-plugin/plugins/message-bridge"
     }
 }

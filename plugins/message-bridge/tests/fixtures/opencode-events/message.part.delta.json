@@ -1,9 +1,0 @@
-{
-  "type": "message.part.delta",
-  "properties": {
-    "sessionID": "ses_fixture_delta",
-    "messageID": "msg_fixture_delta",
-    "partID": "prt_fixture_delta",
-    "delta": "hello"
-  }
-}
