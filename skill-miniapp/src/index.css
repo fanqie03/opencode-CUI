@@ -1290,6 +1290,17 @@ body {
     color: var(--text-primary, #e6edf3); white-space: pre-wrap;
 }
 
+/* Pending interaction badge */
+.subtask-block__pending-badge {
+    font-size: 11px;
+    color: #fff;
+    background: var(--danger, #f85149);
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-weight: 500;
+    animation: subtask-pulse 1.5s ease-in-out infinite;
+}
+
 /* Permission/Question source label */
 .permission-card__source,
 .question-card__source {

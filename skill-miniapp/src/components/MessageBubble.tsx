@@ -77,7 +77,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         );
 
       case 'subtask':
-        return <SubtaskBlock key={part.partId} part={part} />;
+        return (
+          <SubtaskBlock
+            key={part.partId}
+            part={part}
+            onPermissionDecision={onPermissionDecision}
+            onQuestionAnswer={onQuestionAnswer}
+          />
+        );
 
       case 'file':
         return (

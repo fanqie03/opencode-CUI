@@ -657,56 +657,30 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
         }
       }
 
-      // permission.ask / question: 冒泡到主对话流（创建临时 bubble 消息）
-      if (type === 'permission.ask' || type === 'question') {
-        const bubbleKey = msg.permissionId ?? msg.toolCallId ?? '';
-        const bubbleId = `bubble-${subagentSessionId}-${bubbleKey}`;
-        const bubblePart = streamMessageToSubPart(msg);
-        if (bubblePart) {
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === bubbleId)) return prev;
-            return [
-              ...prev,
-              {
-                id: bubbleId,
-                role: 'assistant' as const,
-                content: '',
-                contentType: 'plain' as const,
-                timestamp: Date.now(),
-                isStreaming: false,
-                parts: [bubblePart],
-              },
-            ];
-          });
-        }
-      }
-
-      // permission.reply: OpenCode 已处理（包括 auto-resolve 的）
-      // 移除对应 bubble + SubtaskBlock 内的 permission
+      // permission.reply: 更新 SubtaskBlock 内 permission subPart 状态为已处理
       if (type === 'permission.reply') {
         const replyPermId = msg.permissionId;
-        setMessages((prev) => {
-          // 1. 移除匹配的 bubble
-          const filtered = replyPermId
-            ? prev.filter((m) => !(m.id.startsWith('bubble-') && m.id.endsWith(`-${replyPermId}`)))
-            : prev;
-          // 2. 从 SubtaskBlock 内移除已处理的 permission subPart
-          return filtered.map((message) => {
-            if (message.id !== virtualMessageId) return message;
-            return {
-              ...message,
-              parts: (message.parts ?? []).map((p) => {
-                if (p.type !== 'subtask' || p.subagentSessionId !== subagentSessionId) return p;
-                return {
-                  ...p,
-                  subParts: (p.subParts ?? []).filter(
-                    (sp) => !(sp.type === 'permission' && sp.permissionId === replyPermId),
-                  ),
-                };
-              }),
-            };
-          });
-        });
+        if (replyPermId) {
+          setMessages((prev) =>
+            prev.map((message) => {
+              if (message.id !== virtualMessageId) return message;
+              return {
+                ...message,
+                parts: (message.parts ?? []).map((p) => {
+                  if (p.type !== 'subtask' || p.subagentSessionId !== subagentSessionId) return p;
+                  return {
+                    ...p,
+                    subParts: (p.subParts ?? []).map((sp) =>
+                      sp.type === 'permission' && sp.permissionId === replyPermId
+                        ? { ...sp, permResolved: true, permissionResponse: msg.response }
+                        : sp,
+                    ),
+                  };
+                }),
+              };
+            }),
+          );
+        }
       }
     },
     [setMessages],
@@ -735,15 +709,8 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
         break;
 
       case 'permission.reply': {
-        // 1. 移除 subagent 冒泡的 bubble（如果有）
-        const replyPermId = msg.permissionId;
-        if (replyPermId) {
-          setMessages((prev) => prev.filter(
-            (m) => !(m.id.startsWith('bubble-') && m.id.endsWith(`-${replyPermId}`)),
-          ));
-        }
-        // 2. 只有主会话的 reply 才走 applyStreamedMessage（更新已有 permission part 状态）
-        //    subagent 的 reply 没有有效的 messageId，会创建孤立消息，所以跳过
+        // 主会话的 reply 走 applyStreamedMessage 更新已有 permission part 状态
+        // subagent 的 reply 在 handleSubagentMessage 中处理（更新 SubtaskBlock 内 permission 状态）
         const replyMsgId = msg.messageId ?? msg.sourceMessageId;
         if (replyMsgId && !replyMsgId.startsWith('subtask-')) {
           applyStreamedMessage(msg);
@@ -1028,13 +995,6 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
     async (permissionId: string, response: 'once' | 'always' | 'reject', subagentSessionId?: string) => {
       if (!sessionId) {
         return;
-      }
-
-      // 立即移除 subagent 的 permission bubble（乐观更新，点击即消失）
-      if (permissionId) {
-        setMessages((prev) => prev.filter(
-          (m) => !(m.id.startsWith('bubble-') && m.id.endsWith(`-${permissionId}`)),
-        ));
       }
 
       setError(null);
