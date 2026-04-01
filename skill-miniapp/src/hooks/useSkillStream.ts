@@ -686,6 +686,7 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
       if (type === 'permission.reply') {
         const bubbleKey = msg.permissionId ?? '';
         const bubbleId = `bubble-${subagentSessionId}-${bubbleKey}`;
+        console.log('[DEBUG] subagent permission.reply:', { bubbleId, permissionId: msg.permissionId, subagentSessionId });
         setMessages((prev) => {
           // 1. 移除 bubble 消息
           const filtered = prev.filter((m) => m.id !== bubbleId);
@@ -734,15 +735,15 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
         break;
 
       case 'permission.reply': {
-        applyStreamedMessage(msg);
-        // 移除 subagent 冒泡的 permission bubble（如果有）
-        const replyPermId = msg.permissionId
-          ?? msg.permissionId as string | undefined;
+        // 移除 subagent 冒泡的 bubble（如果有）
+        const replyPermId = msg.permissionId;
         if (replyPermId) {
           setMessages((prev) => prev.filter(
-            (m) => !m.id.startsWith('bubble-') || !m.id.endsWith(`-${replyPermId}`),
+            (m) => !(m.id.startsWith('bubble-') && m.id.endsWith(`-${replyPermId}`)),
           ));
         }
+        // permission.reply 不走 applyStreamedMessage（不创建新消息）
+        // PermissionCard 已通过 local state 显示"已处理"状态
         break;
       }
 
