@@ -1,0 +1,4 @@
+[submodule "plugins/agent-plugin"]
+	path = plugins/agent-plugin
+	url = https://github.com/yuzhangCZ/agent-plugin.git
+	branch = main

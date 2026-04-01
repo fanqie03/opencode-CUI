@@ -296,12 +296,13 @@ public class SkillRelayService {
         // Legacy 路径：投递到 LEGACY 连接（无 instanceId 的 Source 服务）。
         // LEGACY 连接不在 V2 hashRings 中，必须并行投递而非 fallback，
         // 否则 V2 广播"成功"后会短路 Legacy，导致旧版 Source 永远收不到消息。
-        boolean legacyDelivered = false;
-        if (legacyStrategy.getActiveConnectionCount() > 0) {
-            legacyDelivered = legacyStrategy.relayToSkill(message);
-            if (legacyDelivered) {
-                log.info("[Legacy] Parallel delivery: type={}, ak={}", message.getType(), message.getAk());
-            }
+        // 注意：不检查本地 getActiveConnectionCount()，因为 Legacy 策略内部有
+        // Redis owner relay 机制，即使本 GW Pod 没有 Legacy 连接，也能中继到
+        // 持有 Legacy 连接的其他 GW Pod。跳过此调用会导致跨 Pod 场景下
+        // session_created 等关键消息丢失（旧版 SS 的 toolSessionId 为空）。
+        boolean legacyDelivered = legacyStrategy.relayToSkill(message);
+        if (legacyDelivered) {
+            log.info("[Legacy] Parallel delivery: type={}, ak={}", message.getType(), message.getAk());
         }
 
         return v2Delivered || legacyDelivered;
