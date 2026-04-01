@@ -657,12 +657,30 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
         }
       }
 
-      // permission/question 冒泡到主对话流
+      // permission/question 冒泡：直接创建独立的虚拟消息（不走 StreamAssembler）
       if (type === 'permission.ask' || type === 'question') {
-        applyStreamedMessage(msg);
+        const bubbleId = `bubble-${subagentSessionId}-${msg.permissionId ?? msg.toolCallId ?? Date.now()}`;
+        const bubblePart = streamMessageToSubPart(msg);
+        if (bubblePart) {
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === bubbleId)) return prev;
+            return [
+              ...prev,
+              {
+                id: bubbleId,
+                role: 'assistant' as const,
+                content: '',
+                contentType: 'plain' as const,
+                timestamp: Date.now(),
+                isStreaming: false,
+                parts: [bubblePart],
+              },
+            ];
+          });
+        }
       }
     },
-    [applyStreamedMessage, setMessages],
+    [setMessages],
   );
 
   const handleStreamMessage = useCallback((msg: StreamMessage) => {

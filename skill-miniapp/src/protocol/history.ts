@@ -362,82 +362,81 @@ export function normalizeHistoryMessages(rawMessages: BackendMessage[]): Message
  * 同一个 subagentSessionId 的所有 parts 合并到同一个 SubtaskBlock 中。
  */
 function mergeSubagentPartsAcrossMessages(messages: Message[]): Message[] {
-  const subtaskMap = new Map<string, { parts: MessagePart[]; name: string; firstIndex: number }>();
+  // 收集所有 subagent parts，按 subagentSessionId 分组
+  const subtaskMap = new Map<string, { parts: MessagePart[]; name: string }>();
+
+  for (const msg of messages) {
+    for (const part of msg.parts ?? []) {
+      const sid = part.type === 'subtask' ? part.subagentSessionId : part.subagentSessionId;
+      if (!sid) continue;
+      let entry = subtaskMap.get(sid);
+      if (!entry) {
+        entry = { parts: [], name: part.subagentName ?? 'Subagent' };
+        subtaskMap.set(sid, entry);
+      }
+      if (part.type === 'subtask' && part.subParts) {
+        entry.parts.push(...part.subParts);
+      } else {
+        entry.parts.push(part);
+      }
+    }
+  }
+
+  if (subtaskMap.size === 0) return messages;
+
+  // 重建消息列表：移除 subagent parts，在首次出现位置插入虚拟消息
+  const inserted = new Set<string>();
   const result: Message[] = [];
 
-  // 第一遍：收集所有 subagent parts，记录首次出现的位置
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    const normalParts: MessagePart[] = [];
-    let hasSubagent = false;
+  for (const msg of messages) {
+    const parts = msg.parts ?? [];
+    const normalParts = parts.filter(
+      (p) => !p.subagentSessionId && p.type !== 'subtask',
+    );
 
-    for (const part of msg.parts ?? []) {
-      // groupPartsIntoSubtasks 已在单 message 内生成了 subtask type
-      if (part.type === 'subtask' && part.subagentSessionId) {
-        hasSubagent = true;
-        let entry = subtaskMap.get(part.subagentSessionId);
-        if (!entry) {
-          entry = { parts: [], name: part.subagentName ?? 'Subagent', firstIndex: i };
-          subtaskMap.set(part.subagentSessionId, entry);
-        }
-        // 合并 subParts
-        if (part.subParts) {
-          entry.parts.push(...part.subParts);
-        }
-      } else if (part.subagentSessionId) {
-        // 单独的 subagent part（未被 groupPartsIntoSubtasks 处理的情况）
-        hasSubagent = true;
-        let entry = subtaskMap.get(part.subagentSessionId);
-        if (!entry) {
-          entry = { parts: [], name: part.subagentName ?? 'Subagent', firstIndex: i };
-          subtaskMap.set(part.subagentSessionId, entry);
-        }
-        entry.parts.push(part);
-      } else {
-        normalParts.push(part);
-      }
+    // 找到本条消息涉及的 subagentSessionId（按出现顺序）
+    const sidsInMsg: string[] = [];
+    for (const p of parts) {
+      const sid = p.type === 'subtask' ? p.subagentSessionId : p.subagentSessionId;
+      if (sid && !sidsInMsg.includes(sid)) sidsInMsg.push(sid);
     }
 
-    // 只保留非 subagent 的 parts
-    if (hasSubagent) {
-      if (normalParts.length > 0 || msg.content) {
-        result.push({ ...msg, parts: normalParts.length > 0 ? normalParts : undefined });
-      }
-      // 如果 message 只有 subagent parts，跳过（不创建空消息）
-    } else {
+    // 在首次出现位置前插入虚拟 SubtaskBlock
+    for (const sid of sidsInMsg) {
+      if (inserted.has(sid)) continue;
+      inserted.add(sid);
+      const entry = subtaskMap.get(sid)!;
+      result.push({
+        id: `subtask-${sid}`,
+        role: 'assistant',
+        content: '',
+        contentType: 'plain',
+        timestamp: msg.timestamp,
+        isStreaming: false,
+        parts: [{
+          partId: `subtask-${sid}`,
+          type: 'subtask',
+          content: '',
+          isStreaming: false,
+          subagentSessionId: sid,
+          subagentName: entry.name,
+          subagentPrompt: '',
+          subagentStatus: 'completed',
+          subParts: entry.parts,
+        }],
+      });
+    }
+
+    // 保留有内容的非 subagent 消息
+    if (normalParts.length > 0 || (msg.content && !sidsInMsg.length)) {
+      result.push(normalParts.length < parts.length
+        ? { ...msg, parts: normalParts.length > 0 ? normalParts : undefined }
+        : msg,
+      );
+    } else if (sidsInMsg.length === 0) {
+      // 无 subagent 也无 parts 的消息（如用户消息）
       result.push(msg);
     }
-  }
-
-  // 第二遍：为每个 subagentSessionId 创建虚拟 SubtaskBlock message，插入到首次出现位置之后
-  const insertions: { index: number; message: Message }[] = [];
-  for (const [sessionId, entry] of subtaskMap) {
-    const virtualMsg: Message = {
-      id: `subtask-${sessionId}`,
-      role: 'assistant',
-      content: '',
-      contentType: 'plain',
-      timestamp: Date.now(),
-      isStreaming: false,
-      parts: [{
-        partId: `subtask-${sessionId}`,
-        type: 'subtask',
-        content: '',
-        isStreaming: false,
-        subagentSessionId: sessionId,
-        subagentName: entry.name,
-        subagentPrompt: '',
-        subagentStatus: 'completed',
-        subParts: entry.parts,
-      }],
-    };
-    insertions.push({ index: entry.firstIndex, message: virtualMsg });
-  }
-
-  // 按 index 降序插入（避免偏移）
-  insertions.sort((a, b) => b.index - a.index);
-  for (const { index, message } of insertions) {
-    result.splice(index + 1, 0, message);
   }
 
   return result;
