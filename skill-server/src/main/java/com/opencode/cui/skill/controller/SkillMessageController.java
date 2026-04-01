@@ -21,6 +21,7 @@ import com.opencode.cui.skill.service.PayloadBuilder;
 import com.opencode.cui.skill.service.ProtocolMessageMapper;
 import com.opencode.cui.skill.service.SessionAccessControlService;
 import com.opencode.cui.skill.service.SkillMessageService;
+import com.opencode.cui.skill.service.GatewayMessageRouter;
 import com.opencode.cui.skill.service.SkillSessionService;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -62,6 +63,7 @@ public class SkillMessageController {
     private final ImMessageService imMessageService;
     private final ObjectMapper objectMapper;
     private final SessionAccessControlService accessControlService;
+    private final GatewayMessageRouter messageRouter;
 
     public SkillMessageController(SkillMessageService messageService,
             SkillSessionService sessionService,
@@ -70,7 +72,8 @@ public class SkillMessageController {
             AssistantIdProperties assistantIdProperties,
             ImMessageService imMessageService,
             ObjectMapper objectMapper,
-            SessionAccessControlService accessControlService) {
+            SessionAccessControlService accessControlService,
+            GatewayMessageRouter messageRouter) {
         this.messageService = messageService;
         this.sessionService = sessionService;
         this.gatewayRelayService = gatewayRelayService;
@@ -79,6 +82,7 @@ public class SkillMessageController {
         this.imMessageService = imMessageService;
         this.objectMapper = objectMapper;
         this.accessControlService = accessControlService;
+        this.messageRouter = messageRouter;
     }
 
     /**
@@ -112,6 +116,15 @@ public class SkillMessageController {
 
         // 持久化用户消息
         SkillMessage message = messageService.saveUserMessage(numericSessionId, request.getContent());
+
+        // 广播用户消息到同会话所有 WebSocket 连接（纯广播，不持久化——消息已由 saveUserMessage 入库）
+        messageRouter.broadcastStreamMessage(
+                sessionId, session.getUserId(),
+                StreamMessage.userMessage(
+                        message.getMessageId(),
+                        message.getSeq(),
+                        message.getContent(),
+                        sessionId));
 
         // 路由到 AI-Gateway
         routeToGateway(session, sessionId, numericSessionId, request);
