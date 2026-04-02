@@ -898,9 +898,37 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
         }
         break;
 
-      case 'streaming':
-        restoreStreamingMessage(msg);
+      case 'streaming': {
+        // 将 streaming parts 当作历史消息处理（复用 mergeSubagentPartsAcrossMessages 等逻辑）
+        // 这样 mid-conversation 刷新和 history 加载的效果完全一致
+        const streamParts = Array.isArray(msg.parts) ? msg.parts : [];
+        if (streamParts.length > 0) {
+          const normalized = normalizeHistoryMessages([{
+            id: msg.messageId,
+            role: msg.role ?? 'assistant',
+            parts: streamParts,
+            contentType: 'markdown',
+          }]);
+          if (normalized.length > 0) {
+            setMessages((prev) => {
+              let next = [...prev];
+              for (const nm of normalized) {
+                next = upsertMessage(next, {
+                  ...nm,
+                  isStreaming: msg.sessionStatus !== 'idle',
+                });
+              }
+              return next;
+            });
+            if (msg.sessionStatus !== 'idle') {
+              setIsStreaming(true);
+            }
+          }
+        } else if (msg.sessionStatus === 'idle') {
+          finalizeAllStreamingMessages();
+        }
         break;
+      }
 
       default:
         break;
