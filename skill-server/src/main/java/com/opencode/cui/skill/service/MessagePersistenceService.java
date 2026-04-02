@@ -211,6 +211,11 @@ public class MessagePersistenceService {
 
     private boolean persistPermissionPart(Long sessionId, StreamMessage msg,
             ActiveMessageTracker.ActiveMessageRef active) {
+        // permission.reply 没有 active message 时（常见于 subagent 权限回复），
+        // 直接按 permissionId 更新已有 permission part 的 status 和 response
+        if (active == null && StreamMessage.Types.PERMISSION_REPLY.equals(msg.getType())) {
+            return updatePermissionReplyByPermissionId(sessionId, msg);
+        }
         if (active == null) {
             return false;
         }
@@ -247,6 +252,36 @@ public class MessagePersistenceService {
         partRepository.upsert(part);
         log.debug("Persisted permission part: sessionId={}, protocolId={}, permissionId={}, type={}",
                 sessionId, active.protocolMessageId(), permissionId, msg.getType());
+        return true;
+    }
+
+    /**
+     * 通过 permissionId 直接更新已有 permission part 的 status 和 response。
+     * 用于 subagent 的 permission.reply，此时无法通过 ActiveMessageTracker 找到关联的消息。
+     */
+    private boolean updatePermissionReplyByPermissionId(Long sessionId, StreamMessage msg) {
+        var permission = msg.getPermission();
+        if (permission == null || permission.getPermissionId() == null) {
+            return false;
+        }
+        String permissionId = permission.getPermissionId();
+        String response = permission.getResponse();
+        String status = msg.getStatus() != null ? msg.getStatus() : "completed";
+
+        // 通过 (session_id, part_id) 查找已有的 permission.ask part
+        // partId 在 persistPermissionPart 中设为 permissionId
+        SkillMessagePart existing = partRepository.findByPartId(sessionId, permissionId);
+        if (existing == null) {
+            log.debug("No existing permission part to update: sessionId={}, permissionId={}", sessionId, permissionId);
+            return false;
+        }
+
+        existing.setToolStatus(status);
+        existing.setToolOutput(response);
+        existing.setUpdatedAt(null); // 让 SQL 使用 NOW()
+        partRepository.upsert(existing);
+        log.info("Updated permission reply by permissionId: sessionId={}, permissionId={}, response={}",
+                sessionId, permissionId, response);
         return true;
     }
 
