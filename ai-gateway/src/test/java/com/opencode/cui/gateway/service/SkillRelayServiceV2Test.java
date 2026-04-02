@@ -415,9 +415,12 @@ class SkillRelayServiceV2Test {
     class LegacyFallbackTests {
 
         @Test
-        @DisplayName("relayToSkill should NOT fallback to legacy when legacy-relay is disabled")
+        @DisplayName("relayToSkill always calls legacy (for cross-Pod Redis relay), returns false when both fail")
         void relayToSkill_legacyDisabled_noFallback() {
-            // No connections, legacy-relay disabled (default)
+            // No Mesh connections, Legacy always attempted for cross-Pod relay capability.
+            // Legacy returns false when resolveMessageSource finds no agent-source binding.
+            when(legacyStrategy.relayToSkill(any())).thenReturn(false);
+
             GatewayMessage msg = GatewayMessage.builder()
                     .type(GatewayMessage.Type.TOOL_EVENT)
                     .toolSessionId("T1")
@@ -427,7 +430,9 @@ class SkillRelayServiceV2Test {
             boolean result = service.relayToSkill(msg);
 
             assertFalse(result);
-            verify(legacyStrategy, never()).relayToSkill(any());
+            // Legacy is always called — removed getActiveConnectionCount guard
+            // to support cross-Pod relay via Redis owner mechanism
+            verify(legacyStrategy).relayToSkill(any());
         }
     }
 }

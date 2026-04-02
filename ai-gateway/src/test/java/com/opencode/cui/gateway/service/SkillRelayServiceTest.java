@@ -437,9 +437,11 @@ class SkillRelayServiceTest {
         }
 
         @Test
-        @DisplayName("V2 路由失败时不调用 Legacy（legacy-relay 默认关闭）")
+        @DisplayName("V2 路由失败时仍调用 Legacy（跨 Pod Redis relay 支持）")
         void relayToSkill_v2Fails_noLegacyWhenDisabled() {
-            // No connections, legacy-relay disabled (default)
+            // Legacy always called for cross-Pod relay, returns false when no source binding
+            when(legacyStrategy.relayToSkill(any(GatewayMessage.class))).thenReturn(false);
+
             GatewayMessage msg = GatewayMessage.builder()
                     .type(GatewayMessage.Type.TOOL_EVENT)
                     .source(SOURCE_TYPE_SKILL)
@@ -448,13 +450,14 @@ class SkillRelayServiceTest {
             boolean result = service.relayToSkill(msg);
 
             assertFalse(result);
-            verify(legacyStrategy, never()).relayToSkill(any(GatewayMessage.class));
+            verify(legacyStrategy).relayToSkill(any(GatewayMessage.class));
         }
 
         @Test
-        @DisplayName("V2 路由成功时不调用 Legacy")
+        @DisplayName("V2 路由成功时仍并行调用 Legacy（旧版 SS 并行投递）")
         void relayToSkill_meshSucceeds_noLegacy() throws Exception {
             registerSs1();
+            when(legacyStrategy.relayToSkill(any(GatewayMessage.class))).thenReturn(false);
 
             GatewayMessage msg = GatewayMessage.builder()
                     .type(GatewayMessage.Type.TOOL_EVENT)
@@ -463,7 +466,8 @@ class SkillRelayServiceTest {
 
             service.relayToSkill(msg);
 
-            verify(legacyStrategy, never()).relayToSkill(any(GatewayMessage.class));
+            // Legacy is always called in parallel (for old SS cross-Pod relay)
+            verify(legacyStrategy).relayToSkill(any(GatewayMessage.class));
         }
 
         @Test
