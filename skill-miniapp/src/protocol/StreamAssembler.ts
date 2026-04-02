@@ -291,6 +291,17 @@ export class StreamAssembler {
     return false;
   }
 
+  /** Mark a permission part as resolved (used by replyPermission to keep assembler in sync) */
+  resolvePermission(permissionId: string, response: string): boolean {
+    const partId = this.findPermissionPartId(permissionId);
+    if (!partId) return false;
+    const part = this.parts.get(partId);
+    if (!part) return false;
+    part.permResolved = true;
+    part.permissionResponse = response;
+    return true;
+  }
+
   /** Mark the entire message as done */
   complete(): void {
     this.completed = true;
