@@ -900,20 +900,7 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
 
       case 'streaming': {
         // 将 streaming parts 当作历史消息处理（复用 mergeSubagentPartsAcrossMessages 等逻辑）
-        // 过滤掉已处理的 permission（DB snapshot 已有正确的最终状态）
-        // 保留未处理的 permission.ask（可能还在等待用户审批）
-        const streamParts = (Array.isArray(msg.parts) ? msg.parts : [])
-          .filter((p: Record<string, unknown>) => {
-            const t = (p.type ?? p.partType ?? '') as string;
-            if (t === 'permission.reply') return false;
-            if (t === 'permission' || t === 'permission.ask') {
-              // 已处理的 permission 不需要（snapshot 里已有）
-              const status = (p.status ?? p.toolStatus ?? '') as string;
-              const response = (p.response ?? p.toolOutput ?? '') as string;
-              if (status === 'completed' || status === 'resolved' || response) return false;
-            }
-            return true;
-          });
+        const streamParts = Array.isArray(msg.parts) ? msg.parts : [];
         if (streamParts.length > 0) {
           const normalized = normalizeHistoryMessages([{
             id: msg.messageId,
