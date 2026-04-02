@@ -900,8 +900,9 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
 
       case 'streaming': {
         // 将 streaming parts 当作历史消息处理（复用 mergeSubagentPartsAcrossMessages 等逻辑）
-        // 这样 mid-conversation 刷新和 history 加载的效果完全一致
-        const streamParts = Array.isArray(msg.parts) ? msg.parts : [];
+        // 过滤掉 permission.reply（DB snapshot 已有正确的最终状态，避免覆盖）
+        const streamParts = (Array.isArray(msg.parts) ? msg.parts : [])
+          .filter((p: Record<string, unknown>) => p.type !== 'permission.reply');
         if (streamParts.length > 0) {
           const normalized = normalizeHistoryMessages([{
             id: msg.messageId,
