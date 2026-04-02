@@ -99,11 +99,12 @@ export function useSkillSession(): UseSkillSessionReturn {
 
   const updateSessionTitle = useCallback(
     (sessionId: string, title: string) => {
+      if (!title) return;
       setSessions((prev) =>
-        prev.map((s) => (s.id === sessionId && !s.title ? { ...s, title } : s)),
+        prev.map((s) => (s.id === sessionId && s.title !== title ? { ...s, title } : s)),
       );
       setCurrentSession((prev) =>
-        prev && prev.id === sessionId && !prev.title ? { ...prev, title } : prev,
+        prev && prev.id === sessionId && prev.title !== title ? { ...prev, title } : prev,
       );
     },
     [],

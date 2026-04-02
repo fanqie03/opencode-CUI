@@ -188,10 +188,10 @@
         WHERE id = #{id}
     </update>
 
-    <update id="updateTitleIfEmpty">
+    <update id="updateTitle">
         UPDATE skill_session
         SET title = #{title}, last_active_at = NOW()
-        WHERE id = #{id} AND (title IS NULL OR title = '')
+        WHERE id = #{id} AND NOT (title <![CDATA[<=>]]> #{title})
     </update>
 
     <update id="activateSession">

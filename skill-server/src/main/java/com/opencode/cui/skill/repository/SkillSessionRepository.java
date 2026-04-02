@@ -94,8 +94,8 @@ public interface SkillSessionRepository {
          */
         int activateSession(@Param("id") Long id);
 
-        /** 仅当标题为空时更新会话标题 */
-        int updateTitleIfEmpty(@Param("id") Long id, @Param("title") String title);
+        /** 当标题发生变化时更新会话标题 */
+        int updateTitle(@Param("id") Long id, @Param("title") String title);
 
         /**
          * 清除会话的工具会话 ID（工具会话失效时调用）。

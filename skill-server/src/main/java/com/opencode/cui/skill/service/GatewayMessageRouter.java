@@ -481,9 +481,9 @@ public class GatewayMessageRouter {
     /** 路由助手消息：MiniApp 走广播+缓冲，IM 走出站转发。 */
     private void routeAssistantMessage(String sessionId, String userId, StreamMessage msg,
             SkillSession session, Long numericId) {
-        // 回填会话标题（空则写入，两条路径共用）
+        // 同步会话标题（标题变化时更新）
         if (StreamMessage.Types.SESSION_TITLE.equals(msg.getType()) && numericId != null) {
-            sessionService.updateTitleIfEmpty(numericId, msg.getTitle());
+            sessionService.updateTitle(numericId, msg.getTitle());
         }
 
         if (session != null && !isMiniappSession(session)) {
