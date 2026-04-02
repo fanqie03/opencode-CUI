@@ -1067,6 +1067,13 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
         return;
       }
 
+      // 同步更新 StreamAssembler，防止后续 applyStreamedMessage 重建 parts 时覆盖 permResolved
+      for (const assembler of assemblersRef.current.values()) {
+        if (assembler.resolvePermission(permissionId, response)) {
+          break;
+        }
+      }
+
       // 立即更新 messages state 中 permission part 的 permResolved
       // 防止后续 re-render 时 PermissionCard 的 useEffect 重置 resolved 状态
       setMessages((prev) =>
