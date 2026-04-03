@@ -59,6 +59,10 @@ public class OpenCodeEventTranslator {
             case "session.updated" -> translateSessionUpdated(event);
             case "session.error" -> translateSessionError(event);
             case "question.asked" -> translateQuestionAsked(event);
+            // question.replied / question.rejected: 不生成 StreamMessage。
+            // Question 完成状态已由 message.part.updated (tool=question, status=completed) 覆盖，
+            // 这里再生成会导致前端出现重复卡片。
+            case "question.replied", "question.rejected" -> null;
             default -> {
                 log.debug("Ignoring OpenCode event type: {}", eventType);
                 yield null;
@@ -442,7 +446,9 @@ public class OpenCodeEventTranslator {
                 props.path("sessionID").asText(null),
                 props.path("messageID").asText(null))
                 .permission(PermissionInfo.builder()
-                        .permissionId(props.path("id").asText(null))
+                        .permissionId(ProtocolUtils.firstNonBlank(
+                        props.path("id").asText(null),
+                        props.path("requestID").asText(null)))
                         .permType(props.path("type").asText(props.path("permission").asText(null)))
                         .metadata(jsonNodeToMap(props.get("metadata")))
                         .response(response)
@@ -497,6 +503,9 @@ public class OpenCodeEventTranslator {
                 props.path("decision").asText(null));
         if (raw == null || raw.isBlank()) {
             raw = props.path("answer").asText(null);
+        }
+        if (raw == null || raw.isBlank()) {
+            raw = props.path("reply").asText(null);
         }
         if (raw == null || raw.isBlank()) {
             return null;

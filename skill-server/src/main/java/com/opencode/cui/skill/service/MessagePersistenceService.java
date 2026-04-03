@@ -285,27 +285,6 @@ public class MessagePersistenceService {
         return true;
     }
 
-    /**
-     * 由 Controller 调用：用户点击权限审批按钮后，直接将 response 持久化到数据库。
-     * 确保刷新后 permission 状态不丢失（不依赖 synthesize 间接机制）。
-     */
-    @Transactional
-    public boolean persistPermissionReply(Long sessionId, String permissionId, String response) {
-        SkillMessagePart existing = partRepository.findByPartId(sessionId, permissionId);
-        if (existing == null) {
-            log.debug("No existing permission part to update: sessionId={}, permissionId={}",
-                    sessionId, permissionId);
-            return false;
-        }
-        existing.setToolStatus("completed");
-        existing.setToolOutput(response);
-        existing.setUpdatedAt(null); // 让 SQL 使用 NOW()
-        partRepository.upsert(existing);
-        log.info("Persisted permission reply from controller: sessionId={}, permissionId={}, response={}",
-                sessionId, permissionId, response);
-        return true;
-    }
-
     private boolean persistFilePart(Long sessionId, StreamMessage msg,
             ActiveMessageTracker.ActiveMessageRef active) {
         if (active == null) {

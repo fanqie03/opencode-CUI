@@ -540,4 +540,82 @@ class OpenCodeEventTranslatorTest {
     assertEquals("perm-3", translated.getPermission().getPermissionId());
     assertEquals("command", translated.getPermission().getPermType());
   }
+
+  @Test
+  @DisplayName("permission.replied with reply field is mapped to permission.reply with correct response")
+  void translatesPermissionRepliedEvent() throws Exception {
+    var event = objectMapper.readTree("""
+        {
+          "type": "permission.replied",
+          "properties": {
+            "sessionID": "sess-perm",
+            "requestID": "perm-replied-1",
+            "reply": "once"
+          }
+        }
+        """);
+
+    StreamMessage translated = translator.translate(event);
+
+    assertNotNull(translated);
+    assertEquals(StreamMessage.Types.PERMISSION_REPLY, translated.getType());
+    assertNotNull(translated.getPermission());
+    assertEquals("perm-replied-1", translated.getPermission().getPermissionId());
+    assertEquals("once", translated.getPermission().getResponse());
+  }
+
+  @Test
+  @DisplayName("permission.replied with always reply is normalized to always")
+  void translatesPermissionRepliedAlways() throws Exception {
+    var event = objectMapper.readTree("""
+        {
+          "type": "permission.replied",
+          "properties": {
+            "sessionID": "sess-perm",
+            "requestID": "perm-replied-2",
+            "reply": "always"
+          }
+        }
+        """);
+
+    StreamMessage translated = translator.translate(event);
+
+    assertNotNull(translated);
+    assertEquals(StreamMessage.Types.PERMISSION_REPLY, translated.getType());
+    assertEquals("perm-replied-2", translated.getPermission().getPermissionId());
+    assertEquals("always", translated.getPermission().getResponse());
+  }
+
+  @Test
+  @DisplayName("question.replied is ignored (handled by message.part.updated)")
+  void questionRepliedReturnsNull() throws Exception {
+    var event = objectMapper.readTree("""
+        {
+          "type": "question.replied",
+          "properties": {
+            "sessionID": "sess-q",
+            "requestID": "q-replied-1",
+            "answers": [{"answer": "Option A"}]
+          }
+        }
+        """);
+
+    assertNull(translator.translate(event));
+  }
+
+  @Test
+  @DisplayName("question.rejected is ignored (handled by message.part.updated)")
+  void questionRejectedReturnsNull() throws Exception {
+    var event = objectMapper.readTree("""
+        {
+          "type": "question.rejected",
+          "properties": {
+            "sessionID": "sess-q",
+            "requestID": "q-rejected-1"
+          }
+        }
+        """);
+
+    assertNull(translator.translate(event));
+  }
 }
