@@ -489,6 +489,103 @@ public class RedisMessageBroker {
         redisTemplate.expire(key, SOURCE_CONN_TTL);
     }
 
+    // ==================== 4-param overloads (connection-level, gwInstanceId#sessionId) ====================
+
+    /**
+     * Registers a source connection with connection-level granularity.
+     * Writes compound field {@code gwInstanceId#sessionId} AND compat field {@code gwInstanceId}
+     * (dual-write) so that legacy callers reading the HASH still find a value.
+     *
+     * @param sourceType       source type, e.g. "skill-server"
+     * @param sourceInstanceId source instance ID
+     * @param gwInstanceId     this GW instance's ID
+     * @param sessionId        the specific WebSocket session ID for this connection
+     */
+    public void registerSourceConnection(String sourceType, String sourceInstanceId,
+            String gwInstanceId, String sessionId) {
+        if (sourceType == null || sourceInstanceId == null || gwInstanceId == null || sessionId == null) {
+            return;
+        }
+        String key = sourceConnKey(sourceType, sourceInstanceId);
+        String timestamp = String.valueOf(Instant.now().getEpochSecond());
+        String compoundField = gwInstanceId + "#" + sessionId;
+        redisTemplate.opsForHash().put(key, compoundField, timestamp);
+        // dual-write compat field so legacy readers find at least one entry
+        redisTemplate.opsForHash().put(key, gwInstanceId, timestamp);
+        redisTemplate.expire(key, SOURCE_CONN_TTL);
+        log.info("RedisMessageBroker.registerSourceConnection: sourceType={}, sourceInstanceId={}, gwInstanceId={}, sessionId={}",
+                sourceType, sourceInstanceId, gwInstanceId, sessionId);
+    }
+
+    /**
+     * Unregisters a source connection by its compound field {@code gwInstanceId#sessionId}.
+     * The compat field {@code gwInstanceId} is intentionally NOT deleted here because other
+     * concurrent connections from the same GW instance may still be alive.
+     *
+     * @param sourceType       source type
+     * @param sourceInstanceId source instance ID
+     * @param gwInstanceId     this GW instance's ID
+     * @param sessionId        the specific WebSocket session ID for this connection
+     */
+    public void unregisterSourceConnection(String sourceType, String sourceInstanceId,
+            String gwInstanceId, String sessionId) {
+        if (sourceType == null || sourceInstanceId == null || gwInstanceId == null || sessionId == null) {
+            return;
+        }
+        String key = sourceConnKey(sourceType, sourceInstanceId);
+        String compoundField = gwInstanceId + "#" + sessionId;
+        redisTemplate.opsForHash().delete(key, compoundField);
+        log.info("RedisMessageBroker.unregisterSourceConnection: sourceType={}, sourceInstanceId={}, gwInstanceId={}, sessionId={}",
+                sourceType, sourceInstanceId, gwInstanceId, sessionId);
+    }
+
+    /**
+     * Refreshes the heartbeat for a specific connection (compound field) and also refreshes
+     * the compat field so that legacy readers see an up-to-date timestamp.
+     *
+     * @param sourceType       source type
+     * @param sourceInstanceId source instance ID
+     * @param gwInstanceId     this GW instance's ID
+     * @param sessionId        the specific WebSocket session ID for this connection
+     */
+    public void refreshSourceConnectionHeartbeat(String sourceType, String sourceInstanceId,
+            String gwInstanceId, String sessionId) {
+        if (sourceType == null || sourceInstanceId == null || gwInstanceId == null || sessionId == null) {
+            return;
+        }
+        String key = sourceConnKey(sourceType, sourceInstanceId);
+        String timestamp = String.valueOf(Instant.now().getEpochSecond());
+        String compoundField = gwInstanceId + "#" + sessionId;
+        redisTemplate.opsForHash().put(key, compoundField, timestamp);
+        // dual-write compat field
+        redisTemplate.opsForHash().put(key, gwInstanceId, timestamp);
+        redisTemplate.expire(key, SOURCE_CONN_TTL);
+    }
+
+    /**
+     * Extracts unique GW instance IDs from a source-connection map whose keys may be either
+     * compound ({@code gwInstanceId#sessionId}) or plain legacy ({@code gwInstanceId}).
+     *
+     * @param sourceConnections map of HASH field → timestamp (as returned by
+     *                          {@link #getSourceConnections})
+     * @return set of unique gwInstanceIds; empty set if input is null or empty
+     */
+    public Set<String> extractUniqueGwInstances(Map<String, Long> sourceConnections) {
+        if (sourceConnections == null || sourceConnections.isEmpty()) {
+            return Collections.emptySet();
+        }
+        Set<String> result = new HashSet<>();
+        for (String field : sourceConnections.keySet()) {
+            int sep = field.indexOf('#');
+            if (sep > 0) {
+                result.add(field.substring(0, sep));
+            } else {
+                result.add(field);
+            }
+        }
+        return result;
+    }
+
     /**
      * Returns all GW instances that hold connections to the specified source,
      * with lazy cleanup of stale entries (older than 30 seconds).
@@ -545,14 +642,19 @@ public class RedisMessageBroker {
         if (keys == null || keys.isEmpty()) {
             return;
         }
+        String prefix = gwInstanceId + "#";
         int cleaned = 0;
         for (String key : keys) {
-            Long removed = redisTemplate.opsForHash().delete(key, gwInstanceId);
-            if (removed != null && removed > 0) {
-                cleaned++;
+            Map<Object, Object> entries = redisTemplate.opsForHash().entries(key);
+            for (Object fieldObj : entries.keySet()) {
+                String field = String.valueOf(fieldObj);
+                if (field.equals(gwInstanceId) || field.startsWith(prefix)) {
+                    redisTemplate.opsForHash().delete(key, field);
+                    cleaned++;
+                }
             }
         }
-        log.info("RedisMessageBroker.cleanupStaleSourceConnections: gwInstanceId={}, cleanedKeys={}",
+        log.info("RedisMessageBroker.cleanupStaleSourceConnections: gwInstanceId={}, cleanedFields={}",
                 gwInstanceId, cleaned);
     }
 
@@ -576,10 +678,13 @@ public class RedisMessageBroker {
         for (String key : keys) {
             Map<Object, Object> entries = redisTemplate.opsForHash().entries(key);
             for (Map.Entry<Object, Object> entry : entries.entrySet()) {
-                String gwId = String.valueOf(entry.getKey());
+                String field = String.valueOf(entry.getKey());
                 try {
                     long ts = Long.parseLong(String.valueOf(entry.getValue()));
                     if (now - ts <= 30) {
+                        // extract gwInstanceId: strip sessionId suffix from compound field
+                        int sep = field.indexOf('#');
+                        String gwId = sep > 0 ? field.substring(0, sep) : field;
                         gwIds.add(gwId);
                     }
                 } catch (NumberFormatException ignored) {

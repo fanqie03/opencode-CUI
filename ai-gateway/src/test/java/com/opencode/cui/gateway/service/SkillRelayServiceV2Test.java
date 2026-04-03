@@ -16,6 +16,7 @@ import org.springframework.web.socket.WebSocketSession;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -45,6 +46,8 @@ class SkillRelayServiceV2Test {
     private EventRelayService eventRelayService;
     @Mock
     private WebSocketSession ss1Session;
+    @Mock
+    private WebSocketSession ss1SessionB;
     @Mock
     private WebSocketSession ss2Session;
     @Mock
@@ -93,6 +96,13 @@ class SkillRelayServiceV2Test {
         lenient().when(bpSession.getAttributes()).thenReturn(mutableAttrs(SOURCE_TYPE_BOT, "bp-1"));
         lenient().when(bpSession.isOpen()).thenReturn(true);
         service.registerSourceSession(bpSession);
+    }
+
+    private void registerSs1B() {
+        lenient().when(ss1SessionB.getId()).thenReturn("ss1-link-b");
+        lenient().when(ss1SessionB.getAttributes()).thenReturn(mutableAttrs(SOURCE_TYPE_SKILL, "ss-1"));
+        lenient().when(ss1SessionB.isOpen()).thenReturn(true);
+        service.registerSourceSession(ss1SessionB);
     }
 
     // ==================== V2 upstream routing with known route ====================
@@ -433,6 +443,159 @@ class SkillRelayServiceV2Test {
             // Legacy is always called — removed getActiveConnectionCount guard
             // to support cross-Pod relay via Redis owner mechanism
             verify(legacyStrategy).relayToSkill(any());
+        }
+    }
+
+    // ==================== Heartbeat refresh ====================
+
+    @Nested
+    @DisplayName("Heartbeat refresh with connection-level granularity")
+    class HeartbeatTests {
+
+        @Test
+        @DisplayName("refreshSourceConnectionHeartbeats should call Redis with sessionId for each open session")
+        void heartbeat_callsRedisWithSessionId() {
+            registerSs1();
+            registerSs1B();
+
+            service.refreshSourceConnectionHeartbeats();
+
+            verify(redisMessageBroker).refreshSourceConnectionHeartbeat(
+                    eq(SOURCE_TYPE_SKILL), eq("ss-1"), eq(INSTANCE_ID), eq("ss1-link"));
+            verify(redisMessageBroker).refreshSourceConnectionHeartbeat(
+                    eq(SOURCE_TYPE_SKILL), eq("ss-1"), eq(INSTANCE_ID), eq("ss1-link-b"));
+        }
+
+        @Test
+        @DisplayName("refreshSourceConnectionHeartbeats should skip and clean closed sessions")
+        void heartbeat_skipsClosedSessions() {
+            registerSs1();
+            registerSs1B();
+
+            // Close ss1SessionB
+            when(ss1SessionB.isOpen()).thenReturn(false);
+
+            service.refreshSourceConnectionHeartbeats();
+
+            // Only ss1Session should be refreshed
+            verify(redisMessageBroker).refreshSourceConnectionHeartbeat(
+                    eq(SOURCE_TYPE_SKILL), eq("ss-1"), eq(INSTANCE_ID), eq("ss1-link"));
+            verify(redisMessageBroker, never()).refreshSourceConnectionHeartbeat(
+                    eq(SOURCE_TYPE_SKILL), eq("ss-1"), eq(INSTANCE_ID), eq("ss1-link-b"));
+
+            // Stale session should be unregistered
+            verify(redisMessageBroker).unregisterSourceConnection(
+                    eq(SOURCE_TYPE_SKILL), eq("ss-1"), eq(INSTANCE_ID), eq("ss1-link-b"));
+
+            // Hash ring should only have 1 node left
+            ConsistentHashRing<WebSocketSession> ring = service.getHashRing(SOURCE_TYPE_SKILL);
+            assertNotNull(ring);
+            assertEquals(1, ring.size());
+        }
+    }
+
+    // ==================== L2 Redis routing with connection-level fields ====================
+
+    @Nested
+    @DisplayName("L2 Redis routing with connection-level fields")
+    class L2RoutingTests {
+
+        @Test
+        @DisplayName("L2 should extract gwInstanceId from compound field and relay correctly")
+        void l2Routing_extractsGwIdFromCompoundField() throws Exception {
+            // No local connections — force L2 path
+            when(redisMessageBroker.getSessionRoute("T1")).thenReturn("skill-server:ss-pod-0");
+
+            Map<String, Long> gwMap = Map.of(
+                    "gw-remote#sess-a1", 100L,
+                    "gw-remote#sess-a2", 100L);
+            when(redisMessageBroker.getSourceConnections("skill-server", "ss-pod-0")).thenReturn(gwMap);
+            when(redisMessageBroker.extractUniqueGwInstances(gwMap)).thenReturn(Set.of("gw-remote"));
+
+            GatewayMessage msg = GatewayMessage.builder()
+                    .type(GatewayMessage.Type.TOOL_EVENT)
+                    .toolSessionId("T1")
+                    .source(SOURCE_TYPE_SKILL)
+                    .build();
+
+            boolean result = service.relayToSkill(msg);
+
+            assertTrue(result);
+            verify(redisMessageBroker).publishToSourceRelay(
+                    eq("gw-remote"), eq("skill-server"), eq("ss-pod-0"), anyString());
+        }
+    }
+
+    // ==================== Connection-level (multi-session per instance) ====================
+
+    @Nested
+    @DisplayName("Connection-level tests (multiple sessions per SS instance)")
+    class ConnectionLevelTests {
+
+        @Test
+        @DisplayName("Two sessions from same instanceId should produce hash ring size = 2")
+        void twoSessionsSameInstance_hashRingSizeTwo() {
+            registerSs1();
+            registerSs1B();
+
+            ConsistentHashRing<WebSocketSession> ring = service.getHashRing(SOURCE_TYPE_SKILL);
+            assertNotNull(ring);
+            assertEquals(2, ring.size());
+        }
+
+        @Test
+        @DisplayName("Remove one session should leave hash ring size = 1")
+        void removeOneSession_hashRingSizeOne() {
+            registerSs1();
+            registerSs1B();
+
+            service.removeSourceSession(ss1Session);
+
+            ConsistentHashRing<WebSocketSession> ring = service.getHashRing(SOURCE_TYPE_SKILL);
+            assertNotNull(ring);
+            assertEquals(1, ring.size());
+        }
+
+        @Test
+        @DisplayName("Register calls Redis with sessionId (4-param)")
+        void register_callsRedisWithSessionId() {
+            registerSs1();
+
+            verify(redisMessageBroker).registerSourceConnection(
+                    eq(SOURCE_TYPE_SKILL), eq("ss-1"), eq(INSTANCE_ID), eq("ss1-link"));
+        }
+
+        @Test
+        @DisplayName("Remove calls Redis unregister with sessionId (4-param)")
+        void remove_callsRedisUnregisterWithSessionId() {
+            registerSs1();
+            service.removeSourceSession(ss1Session);
+
+            verify(redisMessageBroker).unregisterSourceConnection(
+                    eq(SOURCE_TYPE_SKILL), eq("ss-1"), eq(INSTANCE_ID), eq("ss1-link"));
+        }
+
+        @Test
+        @DisplayName("getActiveSourceConnectionCount counts all connections")
+        void getActiveSourceConnectionCount_countsAll() {
+            registerSs1();
+            registerSs1B();
+            registerSs2();
+
+            when(legacyStrategy.getActiveConnectionCount()).thenReturn(0);
+
+            assertEquals(3, service.getActiveSourceConnectionCount());
+        }
+
+        @Test
+        @DisplayName("findLocalSourceConnection returns an open session")
+        void findLocalSourceConnection_returnsOpenSession() {
+            registerSs1();
+            registerSs1B();
+
+            WebSocketSession found = service.findLocalSourceConnection(SOURCE_TYPE_SKILL, "ss-1");
+            assertNotNull(found);
+            assertTrue(found.isOpen());
         }
     }
 }

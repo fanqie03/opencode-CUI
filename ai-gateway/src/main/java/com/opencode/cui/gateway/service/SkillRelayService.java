@@ -18,9 +18,9 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -56,9 +56,9 @@ public class SkillRelayService {
     private final LegacySkillRelayStrategy legacyStrategy;
 
     /**
-     * [Mesh] Source 实例连接池：source_type → { ssInstanceId → WebSocketSession }
+     * [Mesh] Source 实例连接池：source_type → { ssInstanceId → { sessionId → WebSocketSession } }
      */
-    private final Map<String, Map<String, WebSocketSession>> sourceTypeSessions = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Map<String, WebSocketSession>>> sourceTypeSessions = new ConcurrentHashMap<>();
 
     /**
      * [V2] Consistent hash ring per source type for deterministic upstream routing.
@@ -170,20 +170,22 @@ public class SkillRelayService {
             ssInstanceId = session.getId(); // fallback 用 WS session ID
         }
 
+        String sessionId = session.getId();
         sourceTypeSessions
                 .computeIfAbsent(sourceType, ignored -> new ConcurrentHashMap<>())
-                .put(ssInstanceId, session);
+                .computeIfAbsent(ssInstanceId, ignored -> new ConcurrentHashMap<>())
+                .put(sessionId, session);
 
         // V2: update consistent hash ring for this source type
-        String nodeKey = ssInstanceId;
+        String nodeKey = ssInstanceId + "#" + sessionId;
         hashRings.computeIfAbsent(sourceType, k -> new ConsistentHashRing<>(150))
                 .addNode(nodeKey, session);
 
         // Register source connection in Redis for cross-cluster discovery
-        redisMessageBroker.registerSourceConnection(sourceType, ssInstanceId, gatewayInstanceId);
+        redisMessageBroker.registerSourceConnection(sourceType, ssInstanceId, gatewayInstanceId, sessionId);
 
-        log.info("[Mesh] Registered source session: sourceType={}, ssInstanceId={}, gwInstanceId={}, activeLinks={}, hashRingSize={}",
-                sourceType, ssInstanceId, gatewayInstanceId, getActiveConnectionCount(sourceType),
+        log.info("[Mesh] Registered source session: sourceType={}, ssInstanceId={}, sessionId={}, gwInstanceId={}, activeLinks={}, hashRingSize={}",
+                sourceType, ssInstanceId, sessionId, gatewayInstanceId, getActiveConnectionCount(sourceType),
                 hashRings.containsKey(sourceType) ? hashRings.get(sourceType).size() : 0);
     }
 
@@ -202,24 +204,38 @@ public class SkillRelayService {
             return;
         }
 
-        Map<String, WebSocketSession> pool = sourceTypeSessions.get(sourceType);
-        if (pool == null) {
+        Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(sourceType);
+        if (instanceMap == null) {
             return;
         }
 
         String ssInstanceId = resolveSsInstanceId(session);
-        if (ssInstanceId != null) {
-            pool.remove(ssInstanceId, session); // 仅当 value 是同一连接时才删除，防止误删重连后的新连接
-        }
-        // 也按 linkId 清理（兼容 fallback 情况）
-        pool.remove(session.getId(), session);
+        String sessionId = session.getId();
 
-        if (pool.isEmpty()) {
-            sourceTypeSessions.remove(sourceType, pool);
+        if (ssInstanceId != null) {
+            Map<String, WebSocketSession> sessionMap = instanceMap.get(ssInstanceId);
+            if (sessionMap != null) {
+                sessionMap.remove(sessionId, session);
+                if (sessionMap.isEmpty()) {
+                    instanceMap.remove(ssInstanceId, sessionMap);
+                }
+            }
+        }
+        // Also try by linkId as ssInstanceId fallback
+        Map<String, WebSocketSession> fallbackMap = instanceMap.get(sessionId);
+        if (fallbackMap != null) {
+            fallbackMap.remove(sessionId, session);
+            if (fallbackMap.isEmpty()) {
+                instanceMap.remove(sessionId, fallbackMap);
+            }
+        }
+
+        if (instanceMap.isEmpty()) {
+            sourceTypeSessions.remove(sourceType, instanceMap);
         }
 
         // V2: remove from consistent hash ring
-        String nodeKey = (ssInstanceId != null) ? ssInstanceId : session.getId();
+        String nodeKey = ((ssInstanceId != null) ? ssInstanceId : sessionId) + "#" + sessionId;
         hashRings.computeIfPresent(sourceType, (k, ring) -> {
             ring.removeNode(nodeKey);
             return ring.isEmpty() ? null : ring;
@@ -230,11 +246,11 @@ public class SkillRelayService {
 
         // Unregister source connection from Redis
         if (ssInstanceId != null) {
-            redisMessageBroker.unregisterSourceConnection(sourceType, ssInstanceId, gatewayInstanceId);
+            redisMessageBroker.unregisterSourceConnection(sourceType, ssInstanceId, gatewayInstanceId, sessionId);
         }
 
-        log.info("[Mesh] Removed source session: sourceType={}, ssInstanceId={}, gwInstanceId={}, activeLinks={}",
-                sourceType, ssInstanceId, gatewayInstanceId, getActiveConnectionCount(sourceType));
+        log.info("[Mesh] Removed source session: sourceType={}, ssInstanceId={}, sessionId={}, gwInstanceId={}, activeLinks={}",
+                sourceType, ssInstanceId, sessionId, gatewayInstanceId, getActiveConnectionCount(sourceType));
     }
 
     // ==================== 路由缓存 ====================
@@ -425,7 +441,8 @@ public class SkillRelayService {
 
         // Query Redis: which GWs hold this Source connection?
         Map<String, Long> gwMap = redisMessageBroker.getSourceConnections(targetSourceType, targetSourceInstanceId);
-        for (String targetGwId : gwMap.keySet()) {
+        Set<String> uniqueGwIds = redisMessageBroker.extractUniqueGwInstances(gwMap);
+        for (String targetGwId : uniqueGwIds) {
             if (!gatewayInstanceId.equals(targetGwId)) {
                 try {
                     String messageJson = objectMapper.writeValueAsString(message);
@@ -549,9 +566,10 @@ public class SkillRelayService {
             }
             // Fallback: find any open session in this sourceType pool
             if (target == null || !target.isOpen()) {
-                Map<String, WebSocketSession> pool = sourceTypeSessions.get(st);
-                if (pool != null) {
-                    target = pool.values().stream()
+                Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(st);
+                if (instanceMap != null) {
+                    target = instanceMap.values().stream()
+                            .flatMap(m -> m.values().stream())
                             .filter(WebSocketSession::isOpen)
                             .findFirst()
                             .orElse(null);
@@ -587,22 +605,24 @@ public class SkillRelayService {
      * Broadcasts to all SS connections of the specified source_type.
      */
     private boolean broadcastToSourceType(String sourceType, GatewayMessage message) {
-        Map<String, WebSocketSession> pool = sourceTypeSessions.get(sourceType);
-        if (pool == null || pool.isEmpty()) {
+        Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(sourceType);
+        if (instanceMap == null || instanceMap.isEmpty()) {
             log.warn("No source instances for type: {}, type={}", sourceType, message.getType());
             return false;
         }
 
         int sent = 0;
-        for (WebSocketSession ss : pool.values()) {
-            if (ss.isOpen()) {
-                sendToSession(ss, message);
-                sent++;
+        for (Map<String, WebSocketSession> sessionMap : instanceMap.values()) {
+            for (WebSocketSession ss : sessionMap.values()) {
+                if (ss.isOpen()) {
+                    sendToSession(ss, message);
+                    sent++;
+                }
             }
         }
 
-        log.info("Broadcast to source_type={}: sent to {}/{} instances, msgType={}",
-                sourceType, sent, pool.size(), message.getType());
+        log.info("Broadcast to source_type={}: sent to {} connections, msgType={}",
+                sourceType, sent, message.getType());
         return sent > 0;
     }
 
@@ -911,8 +931,10 @@ public class SkillRelayService {
 
     private String inferSingleActiveSourceType() {
         String resolved = null;
-        for (Map.Entry<String, Map<String, WebSocketSession>> entry : sourceTypeSessions.entrySet()) {
-            boolean hasOpen = entry.getValue().values().stream().anyMatch(WebSocketSession::isOpen);
+        for (Map.Entry<String, Map<String, Map<String, WebSocketSession>>> entry : sourceTypeSessions.entrySet()) {
+            boolean hasOpen = entry.getValue().values().stream()
+                    .flatMap(m -> m.values().stream())
+                    .anyMatch(WebSocketSession::isOpen);
             if (hasOpen) {
                 if (resolved != null) {
                     return null; // 多个活跃 source_type，无法推断
@@ -925,18 +947,21 @@ public class SkillRelayService {
 
     public int getActiveSourceConnectionCount() {
         int meshCount = (int) sourceTypeSessions.values().stream()
-                .map(Map::values)
-                .flatMap(Collection::stream)
+                .flatMap(instanceMap -> instanceMap.values().stream())
+                .flatMap(sessionMap -> sessionMap.values().stream())
                 .filter(WebSocketSession::isOpen)
                 .count();
         return meshCount + legacyStrategy.getActiveConnectionCount();
     }
 
     private int getActiveConnectionCount(String sourceType) {
-        Map<String, WebSocketSession> pool = sourceTypeSessions.get(sourceType);
-        if (pool == null)
+        Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(sourceType);
+        if (instanceMap == null)
             return 0;
-        return (int) pool.values().stream().filter(WebSocketSession::isOpen).count();
+        return (int) instanceMap.values().stream()
+                .flatMap(sessionMap -> sessionMap.values().stream())
+                .filter(WebSocketSession::isOpen)
+                .count();
     }
 
     private boolean sendToSession(WebSocketSession session, GatewayMessage message) {
@@ -989,15 +1014,18 @@ public class SkillRelayService {
         if (sourceType == null || sourceInstanceId == null) {
             return null;
         }
-        Map<String, WebSocketSession> pool = sourceTypeSessions.get(sourceType);
-        if (pool == null) {
+        Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(sourceType);
+        if (instanceMap == null) {
             return null;
         }
-        WebSocketSession session = pool.get(sourceInstanceId);
-        if (session != null && session.isOpen()) {
-            return session;
+        Map<String, WebSocketSession> sessionMap = instanceMap.get(sourceInstanceId);
+        if (sessionMap == null) {
+            return null;
         }
-        return null;
+        return sessionMap.values().stream()
+                .filter(WebSocketSession::isOpen)
+                .findFirst()
+                .orElse(null);
     }
 
     // ==================== 定时任务 ====================
@@ -1020,15 +1048,50 @@ public class SkillRelayService {
      */
     @Scheduled(fixedDelay = 10_000)
     public void refreshSourceConnectionHeartbeats() {
-        for (Map.Entry<String, Map<String, WebSocketSession>> typeEntry : sourceTypeSessions.entrySet()) {
+        record StaleEntry(String sourceType, String ssInstanceId, String sessionId) {}
+        List<StaleEntry> staleEntries = new ArrayList<>();
+
+        for (Map.Entry<String, Map<String, Map<String, WebSocketSession>>> typeEntry : sourceTypeSessions.entrySet()) {
             String sourceType = typeEntry.getKey();
-            for (Map.Entry<String, WebSocketSession> instanceEntry : typeEntry.getValue().entrySet()) {
+            for (Map.Entry<String, Map<String, WebSocketSession>> instanceEntry : typeEntry.getValue().entrySet()) {
                 String ssInstanceId = instanceEntry.getKey();
-                WebSocketSession session = instanceEntry.getValue();
-                if (session.isOpen()) {
-                    redisMessageBroker.refreshSourceConnectionHeartbeat(sourceType, ssInstanceId, gatewayInstanceId);
+                for (Map.Entry<String, WebSocketSession> sessionEntry : instanceEntry.getValue().entrySet()) {
+                    String sessionId = sessionEntry.getKey();
+                    WebSocketSession session = sessionEntry.getValue();
+                    if (session.isOpen()) {
+                        redisMessageBroker.refreshSourceConnectionHeartbeat(sourceType, ssInstanceId, gatewayInstanceId, sessionId);
+                    } else {
+                        staleEntries.add(new StaleEntry(sourceType, ssInstanceId, sessionId));
+                    }
                 }
             }
+        }
+
+        for (StaleEntry stale : staleEntries) {
+            Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(stale.sourceType());
+            if (instanceMap != null) {
+                Map<String, WebSocketSession> sessionMap = instanceMap.get(stale.ssInstanceId());
+                if (sessionMap != null) {
+                    sessionMap.remove(stale.sessionId());
+                    if (sessionMap.isEmpty()) {
+                        instanceMap.remove(stale.ssInstanceId());
+                    }
+                }
+                if (instanceMap.isEmpty()) {
+                    sourceTypeSessions.remove(stale.sourceType());
+                }
+            }
+
+            String nodeKey = stale.ssInstanceId() + "#" + stale.sessionId();
+            hashRings.computeIfPresent(stale.sourceType(), (k, ring) -> {
+                ring.removeNode(nodeKey);
+                return ring.isEmpty() ? null : ring;
+            });
+
+            redisMessageBroker.unregisterSourceConnection(stale.sourceType(), stale.ssInstanceId(), gatewayInstanceId, stale.sessionId());
+
+            log.info("[Mesh] Lazy-cleaned stale session during heartbeat: sourceType={}, ssInstanceId={}, sessionId={}",
+                    stale.sourceType(), stale.ssInstanceId(), stale.sessionId());
         }
     }
 
