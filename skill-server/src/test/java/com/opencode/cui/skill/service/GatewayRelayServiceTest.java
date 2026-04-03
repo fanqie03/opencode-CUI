@@ -67,7 +67,7 @@ class GatewayRelayServiceTest {
                 // ownership 检查默认放行，确保消息不被 SKIP
                 org.mockito.Mockito.lenient().when(sessionRouteService.ensureRouteOwnership(any(), any(), any())).thenReturn(true);
                 org.mockito.Mockito.lenient().when(sessionRouteService.isMySession(any())).thenReturn(true);
-                org.mockito.Mockito.lenient().when(sessionRouteService.isMyToolSession(any())).thenReturn(true);
+                org.mockito.Mockito.lenient().when(sessionRouteService.isMySession(any())).thenReturn(true);
                 // Make getOwnerInstance return LOCAL_INSTANCE so route() processes locally
                 org.mockito.Mockito.lenient().when(sessionRouteService.getOwnerInstance(any())).thenReturn(LOCAL_INSTANCE);
                 org.mockito.Mockito.lenient().when(skillInstanceRegistry.getInstanceId()).thenReturn(LOCAL_INSTANCE);

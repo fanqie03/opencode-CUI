@@ -1,6 +1,5 @@
 package com.opencode.cui.skill.service;
 
-import com.opencode.cui.skill.repository.SessionRouteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -37,9 +36,6 @@ import static org.mockito.Mockito.when;
 class SessionRouteServiceTest {
 
     @Mock
-    private SessionRouteRepository repository;
-
-    @Mock
     private StringRedisTemplate redisTemplate;
 
     @Mock
@@ -54,7 +50,7 @@ class SessionRouteServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        service = new SessionRouteService(repository, redisTemplate, INSTANCE_ID, TTL_SECONDS);
+        service = new SessionRouteService(redisTemplate, INSTANCE_ID, TTL_SECONDS);
     }
 
     @Nested
@@ -269,26 +265,10 @@ class SessionRouteServiceTest {
     class DeprecatedTests {
 
         @Test
-        @DisplayName("takeoverActiveRoutes is no-op")
-        void takeoverActiveRoutesIsNoop() {
-            service.takeoverActiveRoutes("ak-1");
-            // Should not interact with repository
-            verify(repository, never()).takeoverByAk(anyString(), anyString());
-        }
-
-        @Test
         @DisplayName("closeAllByInstance is no-op")
         void closeAllByInstanceIsNoop() {
+            // Should not throw
             service.closeAllByInstance();
-            verify(repository, never()).closeAllBySourceInstance(anyString());
-        }
-
-        @Test
-        @DisplayName("cleanupStaleRoutes is no-op")
-        void cleanupStaleRoutesIsNoop() {
-            service.cleanupStaleRoutes(24, 7);
-            verify(repository, never()).closeStaleActiveRoutes(any());
-            verify(repository, never()).purgeClosedBefore(any());
         }
     }
 }

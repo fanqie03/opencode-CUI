@@ -1,6 +1,5 @@
 package com.opencode.cui.skill.service;
 
-import com.opencode.cui.skill.repository.SessionRouteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -37,9 +36,6 @@ class SessionRouteServiceCacheTest {
     private static final String CACHE_PREFIX = "ss:internal:session:";
 
     @Mock
-    private SessionRouteRepository repository;
-
-    @Mock
     private StringRedisTemplate redisTemplate;
 
     @Mock
@@ -50,7 +46,7 @@ class SessionRouteServiceCacheTest {
     @BeforeEach
     void setUp() {
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        service = new SessionRouteService(repository, redisTemplate, INSTANCE_ID, TTL_SECONDS);
+        service = new SessionRouteService(redisTemplate, INSTANCE_ID, TTL_SECONDS);
     }
 
     // ==================== getOwnerInstance ====================
@@ -67,8 +63,6 @@ class SessionRouteServiceCacheTest {
             String result = service.getOwnerInstance("12345");
 
             assertEquals(INSTANCE_ID, result);
-            // No MySQL interaction at all
-            verify(repository, never()).findByWelinkSessionId(any());
         }
 
         @Test
@@ -79,8 +73,6 @@ class SessionRouteServiceCacheTest {
             String result = service.getOwnerInstance("12345");
 
             assertNull(result);
-            // No MySQL interaction
-            verify(repository, never()).findByWelinkSessionId(any());
         }
 
         @Test
@@ -91,7 +83,6 @@ class SessionRouteServiceCacheTest {
             String result = service.getOwnerInstance("12345");
 
             assertNull(result);
-            verify(repository, never()).findByWelinkSessionId(any());
         }
 
         @Test
@@ -123,8 +114,6 @@ class SessionRouteServiceCacheTest {
                     eq(CACHE_PREFIX + "12345"),
                     eq(INSTANCE_ID),
                     eq(Duration.ofSeconds(TTL_SECONDS)));
-            // No MySQL insert
-            verify(repository, never()).insert(any());
         }
 
         @Test
@@ -165,8 +154,6 @@ class SessionRouteServiceCacheTest {
             service.closeRoute(12345L, "skill-server");
 
             verify(redisTemplate).delete(CACHE_PREFIX + "12345");
-            // No MySQL update
-            verify(repository, never()).updateStatus(any(), any(), any());
         }
 
         @Test
@@ -197,8 +184,6 @@ class SessionRouteServiceCacheTest {
             boolean result = service.ensureRouteOwnership("12345", "ak-1", "user-123");
 
             assertTrue(result);
-            verify(repository, never()).findByWelinkSessionId(any());
-            verify(repository, never()).insert(any());
         }
 
         @Test
@@ -213,7 +198,6 @@ class SessionRouteServiceCacheTest {
             boolean result = service.ensureRouteOwnership("12345", "ak-1", "user-123");
 
             assertFalse(result);
-            verify(repository, never()).findByWelinkSessionId(any());
         }
     }
 }
