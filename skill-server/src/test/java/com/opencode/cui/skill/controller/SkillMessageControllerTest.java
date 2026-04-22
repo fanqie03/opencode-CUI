@@ -11,6 +11,7 @@ import com.opencode.cui.skill.config.AssistantIdProperties;
 import com.opencode.cui.skill.model.AgentSummary;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.service.AssistantInfoService;
+import com.opencode.cui.skill.service.AssistantOfflineMessageProvider;
 import com.opencode.cui.skill.service.GatewayApiClient;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
@@ -60,6 +61,8 @@ class SkillMessageControllerTest {
     private AssistantInfoService assistantInfoService;
     @Mock
     private AssistantScopeDispatcher scopeDispatcher;
+    @Mock
+    private AssistantOfflineMessageProvider offlineMessageProvider;
 
     private AssistantIdProperties assistantIdProperties;
     private SkillMessageController controller;
@@ -69,10 +72,12 @@ class SkillMessageControllerTest {
         assistantIdProperties = new AssistantIdProperties();
         assistantIdProperties.setEnabled(true);
         assistantIdProperties.setTargetToolType("assistant");
+        lenient().when(offlineMessageProvider.get()).thenReturn("MOCK_OFFLINE_MSG");
         controller = new SkillMessageController(
                 messageService, sessionService, gatewayRelayService,
                 gatewayApiClient, assistantIdProperties, imMessageService, new ObjectMapper(),
-                accessControlService, messageRouter, assistantInfoService, scopeDispatcher);
+                accessControlService, messageRouter, assistantInfoService, scopeDispatcher,
+                offlineMessageProvider);
         // 默认 scopeDispatcher 返回 personal 策略（requiresOnlineCheck=true）
         com.opencode.cui.skill.service.scope.AssistantScopeStrategy personalStrategy =
                 org.mockito.Mockito.mock(com.opencode.cui.skill.service.scope.AssistantScopeStrategy.class);
@@ -316,6 +321,7 @@ class SkillMessageControllerTest {
         var response = controller.replyPermission("1", "1", "p-abc", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(503, response.getBody().getCode());
+        assertEquals("MOCK_OFFLINE_MSG", response.getBody().getErrormsg());
         verify(gatewayRelayService, never()).sendInvokeToGateway(any());
     }
 
@@ -388,11 +394,12 @@ class SkillMessageControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
 
         // 验证保存了系统错误消息
-        verify(messageService).saveSystemMessage(eq(1L), contains("任务下发失败"));
+        verify(messageService).saveSystemMessage(eq(1L), eq("MOCK_OFFLINE_MSG"));
         // 验证通过 WebSocket 广播了错误
         ArgumentCaptor<StreamMessage> msgCaptor = ArgumentCaptor.forClass(StreamMessage.class);
         verify(gatewayRelayService).publishProtocolMessage(eq("1"), msgCaptor.capture());
         assertEquals(StreamMessage.Types.ERROR, msgCaptor.getValue().getType());
+        assertEquals("MOCK_OFFLINE_MSG", msgCaptor.getValue().getError());
         // 验证没有调用 Gateway 发送 invoke
         verify(gatewayRelayService, never()).sendInvokeToGateway(any());
     }

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
@@ -147,6 +148,64 @@ class SysConfigServiceTest {
         verify(sysConfigMapper).deleteById(99L);
         // 不主动删缓存，缓存自然过期
         verify(redisTemplate, never()).delete(anyString());
+    }
+
+    // ------------------------------------------------------------------ Redis resilience
+
+    @Test
+    @DisplayName("getValue: Redis 读异常时降级直查 DB 并返回值")
+    void getValueFallsBackToDbOnRedisReadFailure() {
+        when(valueOps.get("ss:config:SYSTEM:site_name"))
+                .thenThrow(new RedisConnectionFailureException("redis down"));
+
+        SysConfig config = buildConfig(1L, "SYSTEM", "site_name", "OpenCode", 1);
+        when(sysConfigMapper.findByTypeAndKey("SYSTEM", "site_name")).thenReturn(config);
+
+        String result = service.getValue("SYSTEM", "site_name");
+
+        assertEquals("OpenCode", result);
+        verify(sysConfigMapper).findByTypeAndKey("SYSTEM", "site_name");
+    }
+
+    @Test
+    @DisplayName("getValue: Redis 写异常时不抛，返回 DB 值")
+    void getValueReturnsDbValueWhenRedisWriteFails() {
+        when(valueOps.get("ss:config:SYSTEM:site_name")).thenReturn(null);
+
+        SysConfig config = buildConfig(1L, "SYSTEM", "site_name", "OpenCode", 1);
+        when(sysConfigMapper.findByTypeAndKey("SYSTEM", "site_name")).thenReturn(config);
+
+        doThrow(new RedisConnectionFailureException("redis down"))
+                .when(valueOps).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
+
+        assertDoesNotThrow(() -> {
+            String result = service.getValue("SYSTEM", "site_name");
+            assertEquals("OpenCode", result);
+        });
+    }
+
+    @Test
+    @DisplayName("create: Redis delete 异常时 DB 写入仍成功（不触发事务回滚）")
+    void createSucceedsWhenRedisEvictFails() {
+        SysConfig config = buildConfig(null, "SYSTEM", "new_key", "new_value", 1);
+        doThrow(new RedisConnectionFailureException("redis down"))
+                .when(redisTemplate).delete("ss:config:SYSTEM:new_key");
+
+        assertDoesNotThrow(() -> service.create(config));
+
+        verify(sysConfigMapper).insert(config);
+    }
+
+    @Test
+    @DisplayName("update: Redis delete 异常时 DB 更新仍成功（不触发事务回滚）")
+    void updateSucceedsWhenRedisEvictFails() {
+        SysConfig config = buildConfig(42L, "SYSTEM", "exist_key", "new_value", 1);
+        doThrow(new RedisConnectionFailureException("redis down"))
+                .when(redisTemplate).delete("ss:config:SYSTEM:exist_key");
+
+        assertDoesNotThrow(() -> service.update(config));
+
+        verify(sysConfigMapper).update(config);
     }
 
     // ------------------------------------------------------------------ helper

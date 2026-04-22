@@ -25,6 +25,9 @@ public class ExternalInvokeRequest {
     /** 助手账号 */
     private String assistantAccount;
 
+    /** 本次消息/回复/重建的发起用户账号（信封必填） */
+    private String senderUserAccount;
+
     /** action 专属数据 */
     private JsonNode payload;
 

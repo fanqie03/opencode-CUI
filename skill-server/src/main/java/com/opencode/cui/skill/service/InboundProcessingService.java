@@ -34,8 +34,6 @@ import java.util.Map;
 @Service
 public class InboundProcessingService {
 
-    private static final String AGENT_OFFLINE_MESSAGE = "任务下发失败，请检查助理是否离线，确保助理在线后重试";
-
     private final AssistantAccountResolverService resolverService;
     private final AssistantIdProperties assistantIdProperties;
     private final GatewayApiClient gatewayApiClient;
@@ -50,6 +48,7 @@ public class InboundProcessingService {
     private final StreamMessageEmitter emitter;
     private final DeliveryProperties deliveryProperties;
     private final RedisMessageBroker redisMessageBroker;
+    private final AssistantOfflineMessageProvider offlineMessageProvider;
 
     public InboundProcessingService(
             AssistantAccountResolverService resolverService,
@@ -65,7 +64,8 @@ public class InboundProcessingService {
             AssistantScopeDispatcher scopeDispatcher,
             StreamMessageEmitter emitter,
             DeliveryProperties deliveryProperties,
-            RedisMessageBroker redisMessageBroker) {
+            RedisMessageBroker redisMessageBroker,
+            AssistantOfflineMessageProvider offlineMessageProvider) {
         this.resolverService = resolverService;
         this.assistantIdProperties = assistantIdProperties;
         this.gatewayApiClient = gatewayApiClient;
@@ -80,6 +80,7 @@ public class InboundProcessingService {
         this.emitter = emitter;
         this.deliveryProperties = deliveryProperties;
         this.redisMessageBroker = redisMessageBroker;
+        this.offlineMessageProvider = offlineMessageProvider;
     }
 
     /**
@@ -113,19 +114,8 @@ public class InboundProcessingService {
                 assistantAccount, ak, ownerWelinkId);
 
         // 第 2 步：Agent 在线检查（开关控制，业务助手跳过）
-        AssistantScopeStrategy scopeStrategy = scopeDispatcher.getStrategy(
-                assistantInfoService.getCachedScope(ak));
-        if (assistantIdProperties.isEnabled() && scopeStrategy.requiresOnlineCheck()) {
-            if (gatewayApiClient.getAgentByAk(ak) == null) {
-                log.warn("[SKIP] processChat: reason=agent_offline, ak={}, sessionType={}, sessionId={}",
-                        ak, sessionType, sessionId);
-                handleAgentOffline(businessDomain, sessionType, sessionId, ak, assistantAccount);
-                // 离线时查找已有 session 返回其 ID
-                SkillSession offlineSession = sessionManager.findSession(businessDomain, sessionType, sessionId, ak);
-                return InboundResult.ok(sessionId,
-                        offlineSession != null ? String.valueOf(offlineSession.getId()) : null);
-            }
-        }
+        InboundResult offline = checkAgentOnline(businessDomain, sessionType, sessionId, ak, assistantAccount);
+        if (offline != null) return offline;
 
         // 第 3 步：上下文注入
         String prompt = contextInjectionService.resolvePrompt(sessionType, content, chatHistory);
@@ -193,6 +183,7 @@ public class InboundProcessingService {
      * @param sessionType       会话类型
      * @param sessionId         业务侧会话 ID
      * @param assistantAccount  助手账号
+     * @param senderUserAccount 发送者账号（信封层必填）
      * @param content           回复内容
      * @param toolCallId        工具调用 ID
      * @param subagentSessionId 子代理会话 ID（可为 null）
@@ -200,6 +191,7 @@ public class InboundProcessingService {
      */
     public InboundResult processQuestionReply(String businessDomain, String sessionType,
                                                String sessionId, String assistantAccount,
+                                               String senderUserAccount,
                                                String content, String toolCallId,
                                                String subagentSessionId, String inboundSource) {
         AssistantResolveResult resolveResult = resolverService.resolve(assistantAccount);
@@ -215,11 +207,16 @@ public class InboundProcessingService {
                     session != null ? String.valueOf(session.getId()) : null);
         }
 
+        // 在线检查（404 后置：保留 session 不存在 → 404 语义；session 存在 + 离线 → 503）
+        InboundResult offline = checkAgentOnline(businessDomain, sessionType, sessionId, ak, assistantAccount);
+        if (offline != null) return offline;
+
         String targetToolSessionId = subagentSessionId != null ? subagentSessionId : session.getToolSessionId();
         Map<String, String> payloadFields = new LinkedHashMap<>();
         payloadFields.put("answer", content);
         payloadFields.put("toolCallId", toolCallId);
         payloadFields.put("toolSessionId", targetToolSessionId);
+        payloadFields.put("sendUserAccount", senderUserAccount);
         gatewayRelayService.sendInvokeToGateway(new InvokeCommand(
                 ak, ownerWelinkId, String.valueOf(session.getId()),
                 GatewayActions.QUESTION_REPLY,
@@ -236,6 +233,7 @@ public class InboundProcessingService {
      * @param sessionType       会话类型
      * @param sessionId         业务侧会话 ID
      * @param assistantAccount  助手账号
+     * @param senderUserAccount 发送者账号（信封层必填）
      * @param permissionId      权限请求 ID
      * @param response          用户应答（once / always / reject）
      * @param subagentSessionId 子代理会话 ID（可为 null）
@@ -243,6 +241,7 @@ public class InboundProcessingService {
      */
     public InboundResult processPermissionReply(String businessDomain, String sessionType,
                                                  String sessionId, String assistantAccount,
+                                                 String senderUserAccount,
                                                  String permissionId, String response,
                                                  String subagentSessionId, String inboundSource) {
         AssistantResolveResult resolveResult = resolverService.resolve(assistantAccount);
@@ -258,11 +257,16 @@ public class InboundProcessingService {
                     session != null ? String.valueOf(session.getId()) : null);
         }
 
+        // 在线检查（404 后置：同 processQuestionReply）
+        InboundResult offline = checkAgentOnline(businessDomain, sessionType, sessionId, ak, assistantAccount);
+        if (offline != null) return offline;
+
         String targetToolSessionId = subagentSessionId != null ? subagentSessionId : session.getToolSessionId();
         Map<String, String> payloadFields = new LinkedHashMap<>();
         payloadFields.put("permissionId", permissionId);
         payloadFields.put("response", response);
         payloadFields.put("toolSessionId", targetToolSessionId);
+        payloadFields.put("sendUserAccount", senderUserAccount);
         gatewayRelayService.sendInvokeToGateway(new InvokeCommand(
                 ak, ownerWelinkId, String.valueOf(session.getId()),
                 GatewayActions.PERMISSION_REPLY,
@@ -288,14 +292,16 @@ public class InboundProcessingService {
      * 处理会话重建请求。
      * session 存在时请求新的 toolSession，不存在时异步创建。
      *
-     * @param businessDomain   业务域
-     * @param sessionType      会话类型
-     * @param sessionId        业务侧会话 ID
-     * @param assistantAccount 助手账号
+     * @param businessDomain    业务域
+     * @param sessionType       会话类型
+     * @param sessionId         业务侧会话 ID
+     * @param assistantAccount  助手账号
+     * @param senderUserAccount 发送者账号（信封层必填）
      * @return 处理结果
      */
     public InboundResult processRebuild(String businessDomain, String sessionType,
-                                         String sessionId, String assistantAccount) {
+                                         String sessionId, String assistantAccount,
+                                         String senderUserAccount) {
         AssistantResolveResult resolveResult = resolverService.resolve(assistantAccount);
         if (resolveResult == null) {
             return InboundResult.error(404, "Invalid assistant account");
@@ -303,13 +309,16 @@ public class InboundProcessingService {
         String ak = resolveResult.ak();
         String ownerWelinkId = resolveResult.ownerWelinkId();
 
+        InboundResult offline = checkAgentOnline(businessDomain, sessionType, sessionId, ak, assistantAccount);
+        if (offline != null) return offline;
+
         SkillSession session = sessionManager.findSession(businessDomain, sessionType, sessionId, ak);
         if (session != null) {
             sessionManager.requestToolSession(session, null);
             return InboundResult.ok(sessionId, String.valueOf(session.getId()));
         } else {
             sessionManager.createSessionAsync(businessDomain, sessionType, sessionId,
-                    ak, ownerWelinkId, assistantAccount, null, null);
+                    ak, ownerWelinkId, assistantAccount, senderUserAccount, null);
             SkillSession created = sessionManager.findSession(businessDomain, sessionType, sessionId, ak);
             return InboundResult.ok(sessionId,
                     created != null ? String.valueOf(created.getId()) : null);
@@ -325,6 +334,31 @@ public class InboundProcessingService {
     }
 
     /**
+     * 返回 null 表示在线（或跳过检查），调用方继续主流程。
+     * 返回非 null 表示离线，调用方直接 return 该结果
+     * （已带好 code=503、errormsg、session IDs，并已执行 handleAgentOffline 副作用）。
+     */
+    private InboundResult checkAgentOnline(String businessDomain, String sessionType,
+                                           String sessionId, String ak,
+                                           String assistantAccount) {
+        if (!assistantIdProperties.isEnabled()) return null;
+        AssistantScopeStrategy scopeStrategy = scopeDispatcher.getStrategy(
+                assistantInfoService.getCachedScope(ak));
+        if (!scopeStrategy.requiresOnlineCheck()) return null;
+        if (gatewayApiClient.getAgentByAk(ak) != null) return null;
+
+        log.warn("[SKIP] checkAgentOnline: reason=agent_offline, ak={}, domain={}, sessionType={}, sessionId={}",
+                ak, businessDomain, sessionType, sessionId);
+        SkillSession existing = sessionManager.findSession(businessDomain, sessionType, sessionId, ak);
+        handleAgentOffline(businessDomain, sessionType, sessionId, ak, assistantAccount);
+        return InboundResult.error(
+                503,
+                offlineMessageProvider.get(),
+                sessionId,
+                existing != null ? String.valueOf(existing.getId()) : null);
+    }
+
+    /**
      * Agent 离线处理：通过 StreamMessageEmitter 发送离线提示（enrich + deliver），
      * 并在单聊 session 中持久化系统消息。
      */
@@ -332,15 +366,16 @@ public class InboundProcessingService {
                                      String sessionId, String ak, String assistantAccount) {
         SkillSession session = sessionManager.findSession(businessDomain, sessionType, sessionId, ak);
         if (session != null) {
+            String offlineMessage = offlineMessageProvider.get();
             StreamMessage offlineMsg = StreamMessage.builder()
                     .type(StreamMessage.Types.ERROR)
-                    .error(AGENT_OFFLINE_MESSAGE)
+                    .error(offlineMessage)
                     .build();
             emitter.emitToSession(session,
                     String.valueOf(session.getId()), null, offlineMsg);
             if (session.isImDirectSession()) {
                 try {
-                    messageService.saveSystemMessage(session.getId(), AGENT_OFFLINE_MESSAGE);
+                    messageService.saveSystemMessage(session.getId(), offlineMessage);
                 } catch (Exception e) {
                     log.error("Failed to persist agent_offline message: {}", e.getMessage());
                 }

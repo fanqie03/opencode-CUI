@@ -47,11 +47,15 @@ public class SysConfigService {
     public String getValue(String configType, String configKey) {
         String cacheKey = buildCacheKey(configType, configKey);
 
-        // 1. 尝试读缓存
-        String cached = redisTemplate.opsForValue().get(cacheKey);
-        if (cached != null) {
-            log.debug("Config cache hit: {}", cacheKey);
-            return cached;
+        // 1. 尝试读缓存（Redis 故障时降级直查 DB）
+        try {
+            String cached = redisTemplate.opsForValue().get(cacheKey);
+            if (cached != null) {
+                log.debug("Config cache hit: {}", cacheKey);
+                return cached;
+            }
+        } catch (RuntimeException e) {
+            log.warn("Redis read failed for {}, falling back to DB: {}", cacheKey, e.getMessage());
         }
 
         // 2. 缓存未命中，查 DB
@@ -67,10 +71,14 @@ public class SysConfigService {
             return null;
         }
 
-        // 4. status=1，写缓存并返回
+        // 4. status=1，写缓存并返回（Redis 故障时静默）
         String value = config.getConfigValue();
-        redisTemplate.opsForValue().set(cacheKey, value, CACHE_TTL_MINUTES, TimeUnit.MINUTES);
-        log.debug("Config loaded from DB and cached: {}", cacheKey);
+        try {
+            redisTemplate.opsForValue().set(cacheKey, value, CACHE_TTL_MINUTES, TimeUnit.MINUTES);
+            log.debug("Config loaded from DB and cached: {}", cacheKey);
+        } catch (RuntimeException e) {
+            log.warn("Redis write failed for {}: {}", cacheKey, e.getMessage());
+        }
         return value;
     }
 
@@ -127,7 +135,11 @@ public class SysConfigService {
 
     private void evictCache(String configType, String configKey) {
         String cacheKey = buildCacheKey(configType, configKey);
-        redisTemplate.delete(cacheKey);
-        log.debug("Config cache evicted: {}", cacheKey);
+        try {
+            redisTemplate.delete(cacheKey);
+            log.debug("Config cache evicted: {}", cacheKey);
+        } catch (RuntimeException e) {
+            log.warn("Redis evict failed for {}: {}", cacheKey, e.getMessage());
+        }
     }
 }

@@ -17,6 +17,7 @@ import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
 
 import com.opencode.cui.skill.service.AssistantInfoService;
+import com.opencode.cui.skill.service.AssistantOfflineMessageProvider;
 import com.opencode.cui.skill.service.ProtocolUtils;
 import com.opencode.cui.skill.service.PayloadBuilder;
 import com.opencode.cui.skill.service.ProtocolMessageMapper;
@@ -56,8 +57,6 @@ public class SkillMessageController {
     /** 合法的权限响应值集合 */
     private static final Set<String> VALID_PERMISSION_RESPONSES = Set.of("once", "always", "reject");
     private static final int MAX_HISTORY_PAGE_SIZE = 200;
-    /** Agent 离线提示消息 */
-    private static final String AGENT_OFFLINE_MESSAGE = "任务下发失败，请检查助理是否离线，确保助理在线后重试";
 
     private final SkillMessageService messageService;
     private final SkillSessionService sessionService;
@@ -70,6 +69,7 @@ public class SkillMessageController {
     private final GatewayMessageRouter messageRouter;
     private final AssistantInfoService assistantInfoService;
     private final AssistantScopeDispatcher scopeDispatcher;
+    private final AssistantOfflineMessageProvider offlineMessageProvider;
 
     public SkillMessageController(SkillMessageService messageService,
             SkillSessionService sessionService,
@@ -81,7 +81,8 @@ public class SkillMessageController {
             SessionAccessControlService accessControlService,
             GatewayMessageRouter messageRouter,
             AssistantInfoService assistantInfoService,
-            AssistantScopeDispatcher scopeDispatcher) {
+            AssistantScopeDispatcher scopeDispatcher,
+            AssistantOfflineMessageProvider offlineMessageProvider) {
         this.messageService = messageService;
         this.sessionService = sessionService;
         this.gatewayRelayService = gatewayRelayService;
@@ -93,6 +94,7 @@ public class SkillMessageController {
         this.messageRouter = messageRouter;
         this.assistantInfoService = assistantInfoService;
         this.scopeDispatcher = scopeDispatcher;
+        this.offlineMessageProvider = offlineMessageProvider;
     }
 
     /**
@@ -166,13 +168,13 @@ public class SkillMessageController {
                 log.warn("[SKIP] SkillMessageController.routeToGateway: reason=agent_offline, sessionId={}, ak={}",
                         sessionId, session.getAk());
                 try {
-                    messageService.saveSystemMessage(numericSessionId, AGENT_OFFLINE_MESSAGE);
+                    messageService.saveSystemMessage(numericSessionId, offlineMessageProvider.get());
                 } catch (Exception e) {
                     log.error("Failed to persist agent_offline message for session {}: {}", sessionId, e.getMessage());
                 }
                 gatewayRelayService.publishProtocolMessage(sessionId, StreamMessage.builder()
                         .type(StreamMessage.Types.ERROR)
-                        .error(AGENT_OFFLINE_MESSAGE)
+                        .error(offlineMessageProvider.get())
                         .build());
                 return;
             }
@@ -385,7 +387,7 @@ public class SkillMessageController {
             if (agent == null) {
                 log.warn("[SKIP] replyPermission: reason=agent_offline, sessionId={}, ak={}",
                         sessionId, session.getAk());
-                return ResponseEntity.ok(ApiResponse.error(503, AGENT_OFFLINE_MESSAGE));
+                return ResponseEntity.ok(ApiResponse.error(503, offlineMessageProvider.get()));
             }
         }
 

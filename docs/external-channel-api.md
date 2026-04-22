@@ -1,5 +1,8 @@
 # External Channel 接口文档
 
+> ⚠️ **协议变更（v1.4.0 起生效）**：`senderUserAccount` 已从 `chat` 的 payload 移到信封层，且所有 action 必填。
+> 调用方必须在信封层传该字段，否则返回 HTTP 400。
+
 > 为 IM 及其他业务模块提供的 WebSocket 推送通道 + REST 入站接口。
 
 ---
@@ -51,6 +54,7 @@ External Channel 提供两个接口：
   "sessionType": "direct",
   "sessionId": "session-001",
   "assistantAccount": "assistant-001",
+  "senderUserAccount": "user-001",
   "payload": { ... }
 }
 ```
@@ -64,6 +68,7 @@ External Channel 提供两个接口：
 | `sessionType` | String | 是 | 会话类型：`group`（群聊）/ `direct`（单聊） |
 | `sessionId` | String | 是 | 业务侧会话 ID |
 | `assistantAccount` | String | 是 | 助手账号（用于解析对应的 AK 和 Agent） |
+| `senderUserAccount` | String | 是 | 本次消息/回复/重建的发起用户账号 |
 | `payload` | Object | 是 | 各 action 的专属数据（JSON 对象） |
 
 ### 1.3 各 Action 的 Payload 定义
@@ -99,6 +104,7 @@ External Channel 提供两个接口：
   "sessionType": "direct",
   "sessionId": "dm-001",
   "assistantAccount": "assistant-001",
+  "senderUserAccount": "user-001",
   "payload": {
     "content": "帮我查一下今天的天气",
     "msgType": "text"
@@ -115,6 +121,7 @@ External Channel 提供两个接口：
   "sessionType": "group",
   "sessionId": "grp-001",
   "assistantAccount": "assistant-001",
+  "senderUserAccount": "user-001",
   "payload": {
     "content": "总结一下上面的讨论",
     "msgType": "text",
@@ -159,6 +166,7 @@ External Channel 提供两个接口：
   "sessionType": "direct",
   "sessionId": "dm-001",
   "assistantAccount": "assistant-001",
+  "senderUserAccount": "user-001",
   "payload": {
     "content": "A",
     "toolCallId": "toolu_functions.question:0"
@@ -199,6 +207,7 @@ External Channel 提供两个接口：
   "sessionType": "direct",
   "sessionId": "dm-001",
   "assistantAccount": "assistant-001",
+  "senderUserAccount": "user-001",
   "payload": {
     "permissionId": "per_d897d347c001WFYI2DbWVsuMuA",
     "response": "once"
@@ -225,6 +234,7 @@ External Channel 提供两个接口：
   "sessionType": "direct",
   "sessionId": "dm-001",
   "assistantAccount": "assistant-001",
+  "senderUserAccount": "user-001",
   "payload": {}
 }
 ```
@@ -288,6 +298,7 @@ External Channel 提供两个接口：
 | `payload.toolCallId is required for question_reply` | question_reply 缺少 toolCallId |
 | `payload.permissionId is required` | permission_reply 缺少 permissionId |
 | `payload.response must be once/always/reject` | response 值不合法 |
+| `senderUserAccount is required` | 缺少信封字段 senderUserAccount（任何 action） |
 
 **HTTP 401（认证失败）**
 
@@ -1249,6 +1260,7 @@ resp = requests.post(f"{SS_URL}/api/external/invoke",
         "sessionType": "direct",
         "sessionId": "my-session-001",
         "assistantAccount": "my-assistant",
+        "senderUserAccount": "user-001",
         "payload": {"content": "你好", "msgType": "text"}
     })
 print(f"Invoke: {resp.json()}")
@@ -1279,6 +1291,7 @@ while True:
                     "sessionType": "direct",
                     "sessionId": "my-session-001",
                     "assistantAccount": "my-assistant",
+                    "senderUserAccount": "user-001",
                     "payload": {"permissionId": perm_id, "response": "once"}
                 })
         elif msg_type == "question":
@@ -1294,6 +1307,7 @@ while True:
                     "sessionType": "direct",
                     "sessionId": "my-session-001",
                     "assistantAccount": "my-assistant",
+                    "senderUserAccount": "user-001",
                     "payload": {"content": answer, "toolCallId": tool_call_id}
                 })
         elif msg_type == "session.status":

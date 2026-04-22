@@ -60,23 +60,26 @@ public class ExternalInboundController {
             case "chat" -> processingService.processChat(
                     request.getBusinessDomain(), request.getSessionType(),
                     request.getSessionId(), request.getAssistantAccount(),
-                    request.payloadString("senderUserAccount"),
+                    request.getSenderUserAccount(),
                     request.payloadString("content"), request.payloadString("msgType"),
                     request.payloadString("imageUrl"), parseChatHistory(request.getPayload()),
                     "EXTERNAL");
             case "question_reply" -> processingService.processQuestionReply(
                     request.getBusinessDomain(), request.getSessionType(),
                     request.getSessionId(), request.getAssistantAccount(),
+                    request.getSenderUserAccount(),
                     request.payloadString("content"), request.payloadString("toolCallId"),
                     request.payloadString("subagentSessionId"), "EXTERNAL");
             case "permission_reply" -> processingService.processPermissionReply(
                     request.getBusinessDomain(), request.getSessionType(),
                     request.getSessionId(), request.getAssistantAccount(),
+                    request.getSenderUserAccount(),
                     request.payloadString("permissionId"), request.payloadString("response"),
                     request.payloadString("subagentSessionId"), "EXTERNAL");
             case "rebuild" -> processingService.processRebuild(
                     request.getBusinessDomain(), request.getSessionType(),
-                    request.getSessionId(), request.getAssistantAccount());
+                    request.getSessionId(), request.getAssistantAccount(),
+                    request.getSenderUserAccount());
             default -> InboundResult.error(400, "Unknown action: " + request.getAction());
         };
 
@@ -108,6 +111,7 @@ public class ExternalInboundController {
         if (request.getSessionType() == null || !VALID_SESSION_TYPES.contains(request.getSessionType())) return "Invalid sessionType";
         if (request.getSessionId() == null || request.getSessionId().isBlank()) return "sessionId is required";
         if (request.getAssistantAccount() == null || request.getAssistantAccount().isBlank()) return "assistantAccount is required";
+        if (request.getSenderUserAccount() == null || request.getSenderUserAccount().isBlank()) return "senderUserAccount is required";
         return null;
     }
 

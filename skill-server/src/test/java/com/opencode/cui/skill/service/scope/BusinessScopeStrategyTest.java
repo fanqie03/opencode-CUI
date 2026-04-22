@@ -108,4 +108,27 @@ class BusinessScopeStrategyTest {
         assertNotNull(result);
         verify(cloudRequestBuilder).buildCloudRequest(eq("app-123"), any(CloudRequestContext.class));
     }
+
+    @Test
+    @DisplayName("buildInvoke(chat) extracts sendUserAccount from command.payload to CloudRequestContext")
+    void buildInvoke_chat_extractsSendUserAccount() {
+        // 作用域说明：action=chat。q/p reply 在 business scope 的序列化尚未实现（见 spec 4.2.5），
+        // 本用例不覆盖 q/p reply 场景，避免误导性测试。
+        String payload = "{\"content\":\"hello\",\"sendUserAccount\":\"user-001\","
+                + "\"assistantAccount\":\"asst-1\",\"toolSessionId\":\"tool-1\"}";
+        InvokeCommand command = new InvokeCommand("ak-1", "owner-1", "session-1", "chat", payload);
+        AssistantInfo info = new AssistantInfo();
+        info.setAssistantScope("business");
+        info.setAppId("app-123");
+        when(cloudRequestBuilder.buildCloudRequest(any(), any(CloudRequestContext.class)))
+                .thenReturn(objectMapper.createObjectNode());
+
+        strategy.buildInvoke(command, info);
+
+        ArgumentCaptor<CloudRequestContext> ctx = ArgumentCaptor.forClass(CloudRequestContext.class);
+        verify(cloudRequestBuilder).buildCloudRequest(eq("app-123"), ctx.capture());
+        assertEquals("user-001", ctx.getValue().getSendUserAccount(),
+                "sendUserAccount should be extracted from command.payload");
+        assertEquals("asst-1", ctx.getValue().getAssistantAccount());
+    }
 }
