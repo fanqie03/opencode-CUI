@@ -69,8 +69,8 @@ public class GatewayRelayService {
         // 向 MessageRouter 注入路由响应发送能力（Task 2.10）
         messageRouter.setRouteResponseSender(new GatewayMessageRouter.RouteResponseSender() {
             @Override
-            public void sendRouteConfirm(String toolSessionId, String welinkSessionId) {
-                GatewayRelayService.this.sendRouteConfirm(toolSessionId, welinkSessionId);
+            public boolean sendRouteConfirm(String toolSessionId, String welinkSessionId) {
+                return GatewayRelayService.this.sendRouteConfirm(toolSessionId, welinkSessionId);
             }
 
             @Override
@@ -250,8 +250,10 @@ public class GatewayRelayService {
      *
      * @param toolSessionId  OpenCode 侧会话 ID
      * @param welinkSessionId SS 侧会话 ID（可为 null）
+     * @return true 表示已成功投递到 GW；false 表示因序列化失败或无活跃连接而未投递。
+     *         调用方（{@link GatewayMessageRouter#maybeSendRouteConfirm}）依赖该返回值实现 cache-after-success。
      */
-    public void sendRouteConfirm(String toolSessionId, String welinkSessionId) {
+    public boolean sendRouteConfirm(String toolSessionId, String welinkSessionId) {
         log.info("[ENTRY] GatewayRelayService.sendRouteConfirm: toolSessionId={}, welinkSessionId={}",
                 toolSessionId, welinkSessionId);
 
@@ -271,17 +273,18 @@ public class GatewayRelayService {
             messageText = objectMapper.writeValueAsString(message);
         } catch (JsonProcessingException e) {
             log.error("[ERROR] GatewayRelayService.sendRouteConfirm: serialize_failed, toolSessionId={}", toolSessionId, e);
-            return;
+            return false;
         }
 
         GatewayRelayTarget relayTarget = gatewayRelayTarget;
         if (relayTarget == null || !relayTarget.hasActiveConnection()) {
             log.warn("[SKIP] GatewayRelayService.sendRouteConfirm: reason=no_connection, toolSessionId={}", toolSessionId);
-            return;
+            return false;
         }
 
         boolean sent = relayTarget.sendToGateway(messageText);
         log.info("[EXIT] GatewayRelayService.sendRouteConfirm: toolSessionId={}, sent={}", toolSessionId, sent);
+        return sent;
     }
 
     /**

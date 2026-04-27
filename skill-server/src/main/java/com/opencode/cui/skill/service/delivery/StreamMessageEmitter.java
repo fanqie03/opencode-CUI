@@ -75,7 +75,9 @@ public class StreamMessageEmitter {
         if (!"user".equals(ProtocolUtils.normalizeRole(msg.getRole()))) {
             Long numericId = ProtocolUtils.parseSessionId(sessionId);
             if (numericId != null) {
-                persistenceService.prepareMessageContext(numericId, msg);
+                // Read-only enrich: never trigger finalize/saveMessage from the WS delivery path,
+                // so a hook failure cannot block emit. Inbound persistIfFinal owns active swaps.
+                persistenceService.applyMessageContextIfPresent(numericId, msg);
             }
         }
     }

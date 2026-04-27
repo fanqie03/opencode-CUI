@@ -1,10 +1,12 @@
 package com.opencode.cui.skill.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.ExistenceStatus;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.ApiResponse;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.service.AssistantAccountResolverService;
 import com.opencode.cui.skill.service.AssistantInfoService;
 import com.opencode.cui.skill.service.GatewayActions;
 import com.opencode.cui.skill.service.GatewayRelayService;
@@ -46,19 +48,22 @@ public class SkillSessionController {
     private final ObjectMapper objectMapper;
     private final AssistantInfoService assistantInfoService;
     private final AssistantScopeDispatcher scopeDispatcher;
+    private final AssistantAccountResolverService assistantAccountResolverService;
 
     public SkillSessionController(SkillSessionService sessionService,
             GatewayRelayService gatewayRelayService,
             SessionAccessControlService accessControlService,
             ObjectMapper objectMapper,
             AssistantInfoService assistantInfoService,
-            AssistantScopeDispatcher scopeDispatcher) {
+            AssistantScopeDispatcher scopeDispatcher,
+            AssistantAccountResolverService assistantAccountResolverService) {
         this.sessionService = sessionService;
         this.gatewayRelayService = gatewayRelayService;
         this.accessControlService = accessControlService;
         this.objectMapper = objectMapper;
         this.assistantInfoService = assistantInfoService;
         this.scopeDispatcher = scopeDispatcher;
+        this.assistantAccountResolverService = assistantAccountResolverService;
     }
 
     /**
@@ -72,6 +77,28 @@ public class SkillSessionController {
         long start = System.nanoTime();
         log.info("[ENTRY] createSession: ak={}, userId={}", request.getAk(), userIdCookie);
         String resolvedUserId = accessControlService.requireUserId(userIdCookie);
+
+        // 助理删除校验：null/blank 按开关处理；非空 → 三态判定（NOT_EXISTS 拒绝，EXISTS/UNKNOWN 放行）
+        String assistantAccount = request.getAssistantAccount();
+        if (assistantAccount == null || assistantAccount.isBlank()) {
+            if (!assistantAccountResolverService.isSkipOnNullAssistantAccount()) {
+                log.warn("[BLOCK] createSession: reason=no_assistant_account, decision=block, userId={}",
+                        userIdCookie);
+                return ResponseEntity.ok(ApiResponse.error(400, "assistantAccount is required"));
+            }
+            log.info("[SKIP] createSession: reason=no_assistant_account, decision=allow, userId={}", userIdCookie);
+        } else {
+            ExistenceStatus status = assistantAccountResolverService.check(assistantAccount);
+            if (status == ExistenceStatus.NOT_EXISTS) {
+                log.info("[SKIP] createSession: reason=assistant_not_exists, decision=block, assistantAccount={}, userId={}",
+                        assistantAccount, userIdCookie);
+                return ResponseEntity.ok(ApiResponse.error(410, assistantAccountResolverService.getDeletionMessage()));
+            }
+            if (status == ExistenceStatus.UNKNOWN) {
+                log.warn("[WARN] createSession: reason=assistant_check_unknown, decision=allow-unknown, assistantAccount={}, userId={}",
+                        assistantAccount, userIdCookie);
+            }
+        }
 
         SkillSession session = sessionService.createSession(
                 resolvedUserId,

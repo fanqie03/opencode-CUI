@@ -1,12 +1,17 @@
 package com.opencode.cui.skill.config;
 
+import com.github.benmanes.caffeine.cache.Ticker;
 import com.opencode.cui.skill.ws.ExternalStreamHandler;
 import com.opencode.cui.skill.ws.SkillStreamHandler;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
+
+import java.time.Clock;
 
 /**
  * Skill Server 核心配置类。
@@ -46,5 +51,26 @@ public class SkillConfig implements WebSocketConfigurer {
         registry.addHandler(externalStreamHandler, "/ws/external/stream")
                 .addInterceptors(externalStreamHandler)
                 .setAllowedOrigins("*");
+    }
+
+    /**
+     * 系统 Clock，用于 {@link com.opencode.cui.skill.service.GatewayMessageRouter}
+     * 计算 route_confirm 去重 cache 的时间戳。测试可通过 {@link ConditionalOnMissingBean}
+     * 注入 fake clock 控制虚拟时间。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public Clock systemClock() {
+        return Clock.systemUTC();
+    }
+
+    /**
+     * 系统 Ticker，用于 Caffeine cache 过期判定（route_confirm 去重 cache）。
+     * 测试可注入 FakeTicker 推进虚拟时间，跳过真实墙钟等待。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public Ticker systemTicker() {
+        return Ticker.systemTicker();
     }
 }

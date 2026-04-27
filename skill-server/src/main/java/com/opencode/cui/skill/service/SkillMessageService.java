@@ -206,11 +206,13 @@ public class SkillMessageService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
+                    messageHistoryCacheService.invalidateLatestHistory(sessionId);
                     triggerAsyncLatestHistoryRefresh(sessionId);
                 }
             });
             return;
         }
+        messageHistoryCacheService.invalidateLatestHistory(sessionId);
         triggerAsyncLatestHistoryRefresh(sessionId);
     }
 

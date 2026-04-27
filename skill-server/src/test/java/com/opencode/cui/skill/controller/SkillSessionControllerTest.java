@@ -1,8 +1,10 @@
 package com.opencode.cui.skill.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.ExistenceStatus;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.service.AssistantAccountResolverService;
 import com.opencode.cui.skill.service.AssistantInfoService;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ProtocolException;
@@ -38,6 +40,8 @@ class SkillSessionControllerTest {
     private AssistantInfoService assistantInfoService;
     @Mock
     private AssistantScopeDispatcher scopeDispatcher;
+    @Mock
+    private AssistantAccountResolverService assistantAccountResolverService;
 
     private SkillSessionController controller;
 
@@ -50,9 +54,13 @@ class SkillSessionControllerTest {
         org.mockito.Mockito.lenient().when(personalStrategy.requiresOnlineCheck()).thenReturn(true);
         org.mockito.Mockito.lenient().when(scopeDispatcher.getStrategy(any())).thenReturn(personalStrategy);
         org.mockito.Mockito.lenient().when(assistantInfoService.getCachedScope(any())).thenReturn("personal");
+        // 默认 resolver 行为：开关 ON（null 放行），非 null 返 EXISTS
+        org.mockito.Mockito.lenient().when(assistantAccountResolverService.isSkipOnNullAssistantAccount()).thenReturn(true);
+        org.mockito.Mockito.lenient().when(assistantAccountResolverService.getDeletionMessage()).thenReturn("该助理已被删除");
+        org.mockito.Mockito.lenient().when(assistantAccountResolverService.check(any())).thenReturn(ExistenceStatus.EXISTS);
 
         controller = new SkillSessionController(sessionService, gatewayRelayService, accessControlService,
-                new ObjectMapper(), assistantInfoService, scopeDispatcher);
+                new ObjectMapper(), assistantInfoService, scopeDispatcher, assistantAccountResolverService);
     }
 
     @Test
@@ -174,5 +182,102 @@ class SkillSessionControllerTest {
 
         assertThrows(IllegalArgumentException.class,
                 () -> controller.abortSession("1", "999"));
+    }
+
+    // ==================== 助理删除校验 ====================
+
+    @Test
+    @DisplayName("createSession: null assistantAccount + 开关 ON → 放行 200")
+    void createSessionNullAssistantAccountSkipOn() {
+        when(assistantAccountResolverService.isSkipOnNullAssistantAccount()).thenReturn(true);
+        SkillSession session = new SkillSession();
+        session.setId(1L);
+        session.setStatus(SkillSession.Status.ACTIVE);
+        when(accessControlService.requireUserId("1")).thenReturn("1");
+        when(sessionService.createSession(any(), any(), any(), any(), any(), any(), any())).thenReturn(session);
+
+        var request = new SkillSessionController.CreateSessionRequest();
+        request.setAk("3");
+        request.setTitle("Test");
+        // assistantAccount 为 null
+
+        var response = controller.createSession("1", request);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(0, response.getBody().getCode());
+        verify(sessionService).createSession(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("createSession: null assistantAccount + 开关 OFF → 400 'assistantAccount is required'")
+    void createSessionNullAssistantAccountSkipOffReturns400() {
+        when(assistantAccountResolverService.isSkipOnNullAssistantAccount()).thenReturn(false);
+        when(accessControlService.requireUserId("1")).thenReturn("1");
+
+        var request = new SkillSessionController.CreateSessionRequest();
+        request.setAk("3");
+        // assistantAccount 为 null
+
+        var response = controller.createSession("1", request);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(400, response.getBody().getCode());
+        verify(sessionService, never()).createSession(any(), any(), any(), any(), any(), any(), any());
+        verify(gatewayRelayService, never()).sendInvokeToGateway(any());
+    }
+
+    @Test
+    @DisplayName("createSession: NOT_EXISTS → 410 + deletion message（不落 DB 不发 Gateway）")
+    void createSessionAssistantNotExistsReturns410() {
+        when(accessControlService.requireUserId("1")).thenReturn("1");
+        when(assistantAccountResolverService.check("deleted-acc")).thenReturn(ExistenceStatus.NOT_EXISTS);
+
+        var request = new SkillSessionController.CreateSessionRequest();
+        request.setAk("3");
+        request.setAssistantAccount("deleted-acc");
+
+        var response = controller.createSession("1", request);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(410, response.getBody().getCode());
+        assertEquals("该助理已被删除", response.getBody().getErrormsg());
+        verify(sessionService, never()).createSession(any(), any(), any(), any(), any(), any(), any());
+        verify(gatewayRelayService, never()).sendInvokeToGateway(any());
+    }
+
+    @Test
+    @DisplayName("createSession: UNKNOWN → 继续放行（best-effort 阻断）")
+    void createSessionAssistantUnknownAllows() {
+        when(accessControlService.requireUserId("1")).thenReturn("1");
+        when(assistantAccountResolverService.check("unknown-acc")).thenReturn(ExistenceStatus.UNKNOWN);
+        SkillSession session = new SkillSession();
+        session.setId(1L);
+        session.setStatus(SkillSession.Status.ACTIVE);
+        when(sessionService.createSession(any(), any(), any(), any(), any(), any(), any())).thenReturn(session);
+
+        var request = new SkillSessionController.CreateSessionRequest();
+        request.setAk("3");
+        request.setAssistantAccount("unknown-acc");
+
+        var response = controller.createSession("1", request);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(0, response.getBody().getCode());
+        verify(sessionService).createSession(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("createSession: EXISTS → 放行 200（happy path）")
+    void createSessionAssistantExistsAllows() {
+        when(accessControlService.requireUserId("1")).thenReturn("1");
+        when(assistantAccountResolverService.check("exists-acc")).thenReturn(ExistenceStatus.EXISTS);
+        SkillSession session = new SkillSession();
+        session.setId(1L);
+        session.setStatus(SkillSession.Status.ACTIVE);
+        when(sessionService.createSession(any(), any(), any(), any(), any(), any(), any())).thenReturn(session);
+
+        var request = new SkillSessionController.CreateSessionRequest();
+        request.setAk("3");
+        request.setAssistantAccount("exists-acc");
+
+        var response = controller.createSession("1", request);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(0, response.getBody().getCode());
     }
 }

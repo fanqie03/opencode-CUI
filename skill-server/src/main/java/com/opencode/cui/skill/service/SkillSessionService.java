@@ -30,16 +30,19 @@ public class SkillSessionService {
     private final SkillSessionRepository sessionRepository;
     private final SnowflakeIdGenerator snowflakeIdGenerator;
     private final SessionRouteService sessionRouteService;
+    private final RedisMessageBroker redisMessageBroker;
 
     @Value("${skill.session.idle-timeout-minutes:30}")
     private int idleTimeoutMinutes;
 
     public SkillSessionService(SkillSessionRepository sessionRepository,
             SnowflakeIdGenerator snowflakeIdGenerator,
-            SessionRouteService sessionRouteService) {
+            SessionRouteService sessionRouteService,
+            RedisMessageBroker redisMessageBroker) {
         this.sessionRepository = sessionRepository;
         this.snowflakeIdGenerator = snowflakeIdGenerator;
         this.sessionRouteService = sessionRouteService;
+        this.redisMessageBroker = redisMessageBroker;
     }
 
     /** 创建新的 Skill 会话。 */
@@ -215,10 +218,28 @@ public class SkillSessionService {
         sessionRepository.updateLastActiveAt(sessionId, LocalDateTime.now());
     }
 
-    /** 更新会话的 tool_session_id（OpenCode 会话创建时设置）。 */
+    /**
+     * 更新会话的 tool_session_id（OpenCode 会话创建时设置）。
+     *
+     * <p>Remap 时同步失效旧的 Redis 反查缓存（{@code ss:tool-session:*}，TTL 24h），
+     * 并写入新映射，避免旧 toolSessionId 在 TTL 窗口内被复用时错误路由。</p>
+     */
     @Transactional
     public SkillSession updateToolSessionId(Long sessionId, String toolSessionId) {
+        SkillSession existing = sessionRepository.findById(sessionId);
+        String oldToolSessionId = existing != null ? existing.getToolSessionId() : null;
+
         sessionRepository.updateToolSessionId(sessionId, toolSessionId, LocalDateTime.now());
+
+        if (oldToolSessionId != null && !oldToolSessionId.equals(toolSessionId)) {
+            log.info("toolSessionId remap detected: sessionId={}, old={}, new={}, invalidating Redis cache",
+                    sessionId, oldToolSessionId, toolSessionId);
+            redisMessageBroker.deleteToolSessionMapping(oldToolSessionId);
+        }
+        if (toolSessionId != null) {
+            redisMessageBroker.setToolSessionMapping(toolSessionId, sessionId.toString());
+        }
+
         return getSession(sessionId);
     }
 

@@ -1,6 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Session } from '../protocol/types';
 import * as api from '../utils/api';
+import { ApiError } from '../utils/api';
+
+/**
+ * 从 ApiError.body 中提取业务 code（body 是 ApiResponse 信封：{ code, errormsg, data }）。
+ * 后端助理删除校验返回 HTTP 200 + body.code=410；前端必须判 body.code，而非 HTTP status。
+ */
+function extractBusinessCode(err: unknown): number | undefined {
+  if (err instanceof ApiError && err.body && typeof err.body === 'object' && 'code' in err.body) {
+    const code = (err.body as { code?: unknown }).code;
+    return typeof code === 'number' ? code : undefined;
+  }
+  return undefined;
+}
 
 export interface UseSkillSessionReturn {
   sessions: Session[];
@@ -48,9 +61,13 @@ export function useSkillSession(): UseSkillSessionReturn {
         setCurrentSession(session);
         return session;
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : 'Failed to create session';
-        setError(message);
+        if (extractBusinessCode(err) === 410) {
+          setError('该助理已被删除');
+        } else {
+          const message =
+            err instanceof Error ? err.message : 'Failed to create session';
+          setError(message);
+        }
         return null;
       } finally {
         creatingRef.current = false;

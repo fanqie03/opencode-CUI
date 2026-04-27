@@ -84,7 +84,7 @@ class SessionCreationScopeTest {
 
         // act
         sessionManager.createSessionAsync("im", "direct", "dm-001", "ak-biz",
-                "owner-001", "assist-001", null, "hello");
+                "owner-001", "assist-001", null, "hello", null);
 
         // assert: toolSessionId was updated locally with cloud-* prefix
         ArgumentCaptor<String> toolSessionCaptor = ArgumentCaptor.forClass(String.class);
@@ -112,7 +112,7 @@ class SessionCreationScopeTest {
 
         // act
         sessionManager.createSessionAsync("im", "direct", "dm-002", "ak-personal",
-                "owner-002", "assist-002", null, "hello");
+                "owner-002", "assist-002", null, "hello", null);
 
         // assert: toolSessionId NOT updated locally
         verify(sessionService, never()).updateToolSessionId(any(), any());

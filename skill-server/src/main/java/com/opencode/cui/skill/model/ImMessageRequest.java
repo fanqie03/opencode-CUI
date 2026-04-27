@@ -1,5 +1,6 @@
 package com.opencode.cui.skill.model;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 
 /**
@@ -14,6 +15,7 @@ import java.util.List;
  * @param msgType          消息类型（text=文本, image=图片；默认 text）
  * @param imageUrl         图片 URL（仅 msgType=image 时有值）
  * @param chatHistory      聊天上下文历史（群聊场景使用）
+ * @param businessExtParam 业务扩展参数（透传给下游，可为 null）
  */
 public record ImMessageRequest(
         String businessDomain,
@@ -24,7 +26,8 @@ public record ImMessageRequest(
         String content,
         String msgType,
         String imageUrl,
-        List<ChatMessage> chatHistory) {
+        List<ChatMessage> chatHistory,
+        JsonNode businessExtParam) {
 
     /**
      * 判断是否为文本消息。

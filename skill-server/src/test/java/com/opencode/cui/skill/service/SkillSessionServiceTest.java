@@ -30,12 +30,16 @@ class SkillSessionServiceTest {
     @Mock
     private SessionRouteService sessionRouteService;
 
+    @Mock
+    private RedisMessageBroker redisMessageBroker;
+
     private SkillSessionService service;
 
     @BeforeEach
     void setUp() {
         lenient().when(snowflakeIdGenerator.nextId()).thenReturn(42L);
-        service = new SkillSessionService(sessionRepository, snowflakeIdGenerator, sessionRouteService);
+        service = new SkillSessionService(sessionRepository, snowflakeIdGenerator, sessionRouteService,
+                redisMessageBroker);
     }
 
     @Test
@@ -98,6 +102,66 @@ class SkillSessionServiceTest {
         SkillSession result = service.updateToolSessionId(42L, "ts-abc");
         verify(sessionRepository).updateToolSessionId(eq(42L), eq("ts-abc"), any());
         assertEquals(42L, result.getId());
+    }
+
+    @Test
+    @DisplayName("updateToolSessionId: oldToolSessionId is null → no delete, only set new mapping")
+    void updateToolSessionIdNoOldValueOnlySetsNew() {
+        SkillSession existing = new SkillSession();
+        existing.setId(42L);
+        existing.setToolSessionId(null); // no old value
+        when(sessionRepository.findById(42L)).thenReturn(existing);
+
+        service.updateToolSessionId(42L, "ts-new");
+
+        verify(sessionRepository).updateToolSessionId(eq(42L), eq("ts-new"), any());
+        verify(redisMessageBroker, never()).deleteToolSessionMapping(any());
+        verify(redisMessageBroker).setToolSessionMapping("ts-new", "42");
+    }
+
+    @Test
+    @DisplayName("updateToolSessionId: oldToolSessionId equals newToolSessionId → no delete, idempotent set")
+    void updateToolSessionIdSameValueIdempotent() {
+        SkillSession existing = new SkillSession();
+        existing.setId(42L);
+        existing.setToolSessionId("ts-same");
+        when(sessionRepository.findById(42L)).thenReturn(existing);
+
+        service.updateToolSessionId(42L, "ts-same");
+
+        verify(sessionRepository).updateToolSessionId(eq(42L), eq("ts-same"), any());
+        verify(redisMessageBroker, never()).deleteToolSessionMapping(any());
+        verify(redisMessageBroker).setToolSessionMapping("ts-same", "42");
+    }
+
+    @Test
+    @DisplayName("updateToolSessionId: remap (old != new, both non-null) → delete(old) + set(new)")
+    void updateToolSessionIdRemapDeletesOldAndSetsNew() {
+        SkillSession existing = new SkillSession();
+        existing.setId(42L);
+        existing.setToolSessionId("ts-old");
+        when(sessionRepository.findById(42L)).thenReturn(existing);
+
+        service.updateToolSessionId(42L, "ts-new");
+
+        verify(sessionRepository).updateToolSessionId(eq(42L), eq("ts-new"), any());
+        verify(redisMessageBroker).deleteToolSessionMapping("ts-old");
+        verify(redisMessageBroker).setToolSessionMapping("ts-new", "42");
+    }
+
+    @Test
+    @DisplayName("updateToolSessionId: newToolSessionId is null → delete(old), no set")
+    void updateToolSessionIdNullNewDeletesOldOnly() {
+        SkillSession existing = new SkillSession();
+        existing.setId(42L);
+        existing.setToolSessionId("ts-old");
+        when(sessionRepository.findById(42L)).thenReturn(existing);
+
+        service.updateToolSessionId(42L, null);
+
+        verify(sessionRepository).updateToolSessionId(eq(42L), isNull(), any());
+        verify(redisMessageBroker).deleteToolSessionMapping("ts-old");
+        verify(redisMessageBroker, never()).setToolSessionMapping(any(), any());
     }
 
     @Test

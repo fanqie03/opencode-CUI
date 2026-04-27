@@ -122,7 +122,7 @@ class StreamMessageEmitterTest {
     }
 
     @Test
-    void enrich7_assistantRoleNumericSessionId_prepareMessageContextCalled() {
+    void enrich7_assistantRoleNumericSessionId_applyContextIfPresentCalled() {
         SkillSession session = mock(SkillSession.class);
         StreamMessage msg = StreamMessage.builder()
                 .type(StreamMessage.Types.TEXT_DELTA)
@@ -131,7 +131,9 @@ class StreamMessageEmitterTest {
 
         emitter.emitToSession(session, "101", null, msg);
 
-        verify(persistenceService).prepareMessageContext(eq(101L), eq(msg));
+        // Outbound enrich must use the read-only context apply, never trigger finalize.
+        verify(persistenceService).applyMessageContextIfPresent(eq(101L), eq(msg));
+        verify(persistenceService, never()).prepareMessageContext(anyLong(), any());
     }
 
     @Test
@@ -163,8 +165,8 @@ class StreamMessageEmitterTest {
         assertEquals(firstEmittedAt, msg.getEmittedAt(), "emittedAt should not be rewritten");
         assertEquals("101", msg.getWelinkSessionId());
         assertEquals("101", msg.getSessionId());
-        // prepareMessageContext 可调 2 次（tracker 内部幂等，不影响可观察状态）
-        verify(persistenceService, times(2)).prepareMessageContext(eq(101L), eq(msg));
+        // applyMessageContextIfPresent 调 2 次（read-only，重复调对可观察状态无影响）
+        verify(persistenceService, times(2)).applyMessageContextIfPresent(eq(101L), eq(msg));
     }
 
     // --- emitToSession ---

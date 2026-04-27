@@ -9,6 +9,8 @@ import com.opencode.cui.skill.repository.SkillMessagePartRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 
@@ -45,6 +47,98 @@ public class MessagePersistenceService {
         this.tracker = tracker;
         this.sessionService = sessionService;
         this.partBufferService = partBufferService;
+        // Without this, parts buffered in Redis for an ASSISTANT message that gets
+        // displaced (placeholder swap on messageId change, or new user turn) would
+        // never reach MySQL — the cause of disappearing question/permission cards
+        // and empty placeholder rows after a refresh.
+        this.tracker.setBeforeFinalizeHook(this::flushAndSyncOnFinalize);
+    }
+
+    /**
+     * Finalize hook: durably persist any buffered parts for {@code active} to MySQL
+     * and sync the concatenated text content. Two-phase against Redis:
+     * <ol>
+     *   <li>{@link PartBufferService#prepareFlush} snapshots the buffer into a temp
+     *       key without deleting it.</li>
+     *   <li>On MySQL write success the snapshot is committed (Redis temp + seq deleted)
+     *       only after the surrounding transaction commits — so a tx rollback puts
+     *       the buffered parts back via {@link PartBufferService#rollbackFlush} and
+     *       restores the active ref so a retry can pick up the same in-flight message.</li>
+     *   <li>On MySQL write failure we rollback the snapshot immediately and rethrow,
+     *       which causes {@link ActiveMessageTracker} to also restore the ref.</li>
+     * </ol>
+     */
+    private void flushAndSyncOnFinalize(Long sessionId, ActiveMessageTracker.ActiveMessageRef active) {
+        if (active == null) {
+            return;
+        }
+        Long dbId = active.dbId();
+        PartBufferService.FlushBatch batch = partBufferService.prepareFlush(dbId);
+        try {
+            if (!batch.parts().isEmpty()) {
+                partRepository.batchUpsert(batch.parts());
+                applyFlushedPartStats(dbId, batch.parts());
+                log.info("Batch upserted {} parts for messageDbId={}", batch.parts().size(), dbId);
+            }
+            syncMessageContent(active);
+        } catch (RuntimeException e) {
+            partBufferService.rollbackFlush(batch);
+            throw e;
+        }
+        registerCommitOrRollback(sessionId, active, batch);
+    }
+
+    private void registerCommitOrRollback(Long sessionId,
+            ActiveMessageTracker.ActiveMessageRef active,
+            PartBufferService.FlushBatch batch) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            // Called outside a transaction — DB writes already executed, so confirm
+            // the snapshot now.
+            partBufferService.commitFlush(batch);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                partBufferService.commitFlush(batch);
+            }
+
+            @Override
+            public void afterCompletion(int status) {
+                if (status == TransactionSynchronization.STATUS_COMMITTED) {
+                    return;
+                }
+                // Rollback + restore must run under the per-session lock so a
+                // concurrent inbound resolveActiveMessage can't slip a new active in
+                // between us and the restore — that race would orphan the buffer.
+                // (Residual narrow race: see ActiveMessageTracker class-level note.)
+                tracker.runUnderSessionLock(sessionId, () -> {
+                    partBufferService.rollbackFlush(batch);
+                    tracker.restoreIfAbsent(sessionId, active);
+                    log.warn("Finalize tx rolled back: sessionId={}, dbId={}, restored buffer + active",
+                            sessionId, active.dbId());
+                });
+            }
+        });
+    }
+
+    private void applyFlushedPartStats(Long messageDbId, List<SkillMessagePart> parts) {
+        int totalTokensIn = 0;
+        int totalTokensOut = 0;
+        double totalCost = 0.0;
+        boolean hasStats = false;
+
+        for (SkillMessagePart part : parts) {
+            if ("step-finish".equals(part.getPartType())) {
+                if (part.getTokensIn() != null) totalTokensIn += part.getTokensIn();
+                if (part.getTokensOut() != null) totalTokensOut += part.getTokensOut();
+                if (part.getCost() != null) totalCost += part.getCost();
+                hasStats = true;
+            }
+        }
+        if (hasStats) {
+            messageService.updateMessageStats(messageDbId, totalTokensIn, totalTokensOut, totalCost);
+        }
     }
 
     /** 为流式消息准备消息上下文（解析或创建活跃消息引用） */
@@ -54,6 +148,20 @@ public class MessagePersistenceService {
             return;
         }
         tracker.resolveActiveMessage(sessionId, msg);
+    }
+
+    /**
+     * Read-only enrichment for the outbound emit path. Applies messageId/seq/role
+     * from the current active ref onto {@code msg} when available, but never
+     * triggers a finalize or creates a placeholder message. This decouples the
+     * WS delivery path from DB/Redis I/O so a finalize-hook failure can never
+     * block message delivery to the front-end.
+     */
+    public void applyMessageContextIfPresent(Long sessionId, StreamMessage msg) {
+        if (msg == null || msg.getType() == null || !requiresMessageContext(msg)) {
+            return;
+        }
+        tracker.applyContextIfPresent(sessionId, msg);
     }
 
     /**
@@ -216,6 +324,17 @@ public class MessagePersistenceService {
                 .subagentName(msg.getSubagentName())
                 .build();
 
+        // Question parts must hit DB synchronously: the front-end refresh path reads
+        // history from MySQL only, and the placeholder ASSISTANT message hosting a
+        // pending Question card may stay alive for minutes waiting for the user.
+        // Going through Redis buffer + finalize-time flush would lose it on refresh.
+        if ("question".equals(part.getToolName())) {
+            partRepository.upsert(part);
+            log.debug("Persisted question part immediately: sessionId={}, protocolId={}, toolCallId={}, status={}",
+                    sessionId, active.protocolMessageId(), part.getToolCallId(), part.getToolStatus());
+            return true;
+        }
+
         partBufferService.bufferPart(active.dbId(), part);
         log.debug("Buffered tool part: sessionId={}, protocolId={}, tool={}, status={}",
                 sessionId, active.protocolMessageId(),
@@ -263,8 +382,11 @@ public class MessagePersistenceService {
                 .subagentName(msg.getSubagentName())
                 .build();
 
-        partBufferService.bufferPart(active.dbId(), part);
-        log.debug("Buffered permission part: sessionId={}, protocolId={}, permissionId={}, type={}",
+        // Permission parts must hit DB synchronously for the same reason as question:
+        // a pending PERMISSION_ASK card may live for minutes, and a PERMISSION_REPLY
+        // must overwrite the existing row to update status/response on refresh.
+        partRepository.upsert(part);
+        log.debug("Persisted permission part immediately: sessionId={}, protocolId={}, permissionId={}, type={}",
                 sessionId, active.protocolMessageId(), permissionId, msg.getType());
         return true;
     }
@@ -386,45 +508,13 @@ public class MessagePersistenceService {
         if (!"idle".equals(msg.getSessionStatus()) && !"completed".equals(msg.getSessionStatus())) {
             return;
         }
-        ActiveMessageTracker.ActiveMessageRef active = tracker.getActiveMessage(sessionId);
-        if (active != null) {
-            flushPartBuffer(active.dbId());
-            syncMessageContent(active);
-        }
         sessionService.touchSession(sessionId);
+        // Hook handles flush + sync + tx-aware commit/rollback.
         tracker.removeAndFinalize(sessionId);
-    }
-
-    /**
-     * 从 Redis 缓冲读取所有 part，批量写入 MySQL，累积 step-done 的 stats 后一次性更新。
-     */
-    private void flushPartBuffer(Long messageDbId) {
-        List<SkillMessagePart> parts = partBufferService.flushParts(messageDbId);
-        if (parts.isEmpty()) {
-            return;
-        }
-
-        partRepository.batchUpsert(parts);
-        log.info("Batch upserted {} parts for messageDbId={}", parts.size(), messageDbId);
-
-        // 累积 step-done 的 tokens/cost，一次性更新主消息 stats
-        int totalTokensIn = 0;
-        int totalTokensOut = 0;
-        double totalCost = 0.0;
-        boolean hasStats = false;
-
-        for (SkillMessagePart part : parts) {
-            if ("step-finish".equals(part.getPartType())) {
-                if (part.getTokensIn() != null) totalTokensIn += part.getTokensIn();
-                if (part.getTokensOut() != null) totalTokensOut += part.getTokensOut();
-                if (part.getCost() != null) totalCost += part.getCost();
-                hasStats = true;
-            }
-        }
-
-        if (hasStats) {
-            messageService.updateMessageStats(messageDbId, totalTokensIn, totalTokensOut, totalCost);
-        }
+        // Earlier text/step.done events warmed the latest-history cache while the
+        // placeholder DB row was still empty. Without this refresh the front-end
+        // would keep seeing the stale snapshot after the turn settles to idle.
+        messageService.scheduleLatestHistoryRefreshAfterCommit(sessionId);
     }
 
     // ==================== Internal Helpers ====================

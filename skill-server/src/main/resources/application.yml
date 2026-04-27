@@ -69,7 +69,16 @@ skill:
   assistant:
     resolve-url: ${ASSISTANT_RESOLVE_URL:http://localhost:9999/assistant-api/integration/v4-1/we-crew/instance/query}
     resolve-token: ${ASSISTANT_RESOLVE_TOKEN:}
+    # DEPRECATED: use status-cache-ttl-*-seconds instead; retained for backward compat, no longer read at runtime
     cache-ttl-minutes: 30
+    # existence 状态缓存双 TTL（统一 key assistantAccount:status:<account>）
+    status-cache-ttl-exists-seconds: ${ASSISTANT_STATUS_CACHE_TTL_EXISTS_SECONDS:300}
+    status-cache-ttl-not-exists-seconds: ${ASSISTANT_STATUS_CACHE_TTL_NOT_EXISTS_SECONDS:60}
+    # miniapp 三入口 null/blank assistantAccount 处理开关：true=跳过放行（默认）；false=严格 400
+    existence-check:
+      skip-on-null-assistant-account: ${ASSISTANT_EXISTENCE_CHECK_SKIP_ON_NULL:true}
+    # 助理删除后对外统一文案（集中化以便调整）
+    deletion-message: ${ASSISTANT_DELETION_MESSAGE:该助理已被删除}
   context:
     injection-enabled: ${SKILL_CONTEXT_INJECTION_ENABLED:true}
     templates:
@@ -85,6 +94,12 @@ skill:
   relay:
     # Threshold in seconds before an owner instance is considered dead for takeover
     owner-dead-threshold-seconds: ${SKILL_RELAY_OWNER_DEAD_THRESHOLD_SECONDS:120}
+    # route_confirm dedup (lease-based): suppress redundant control-plane confirms to ai-gateway
+    confirm-dedup:
+      # Kill switch — set to false to revert to per-message confirm (pre-dedup behavior)
+      enabled: ${SKILL_RELAY_CONFIRM_DEDUP_ENABLED:true}
+      # Cache TTL (must be < GW UpstreamRoutingTable expireAfterWrite=30min)
+      cache-expire-minutes: ${SKILL_RELAY_CONFIRM_DEDUP_CACHE_EXPIRE_MINUTES:25}
   session:
     # Idle timeout in minutes before a session is marked IDLE
     idle-timeout-minutes: 30

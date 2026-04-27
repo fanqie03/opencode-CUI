@@ -28,6 +28,9 @@ public class ExternalInvokeRequest {
     /** 本次消息/回复/重建的发起用户账号（信封必填） */
     private String senderUserAccount;
 
+    /** 业务扩展参数（信封顶级；chat/question_reply/permission_reply 三个 action 透传到云端 extParameters.businessExtParam） */
+    private JsonNode businessExtParam;
+
     /** action 专属数据 */
     private JsonNode payload;
 

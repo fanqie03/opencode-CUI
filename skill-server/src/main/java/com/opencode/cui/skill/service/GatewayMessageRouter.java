@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Ticker;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
@@ -15,11 +16,13 @@ import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Iterator;
@@ -49,6 +52,12 @@ public class GatewayMessageRouter {
 
     /** 上下文溢出时发送给用户的提示消息 */
     private static final String CONTEXT_RESET_MESSAGE = "对话上下文已超出限制，已自动重置，请稍后重试。";
+
+    /** route_confirm 强制重发间隔（lease）：到期后即使 cache 命中也会重发一次，用于自愈 GW 失忆。 */
+    private static final Duration FORCE_RECONFIRM_INTERVAL = Duration.ofMinutes(5);
+
+    /** route_confirm 去重缓存最大容量，与 GW UpstreamRoutingTable 对齐。 */
+    private static final long DEDUP_CACHE_MAX_SIZE = 100_000L;
     private final ObjectMapper objectMapper;
     private final SkillMessageService messageService;
     private final SkillSessionService sessionService;
@@ -83,6 +92,14 @@ public class GatewayMessageRouter {
     private final AtomicLong ownerProbeDeadCount = new AtomicLong();
     /** Count of messages received via SS relay channel (this instance is the relay target). */
     private final AtomicLong routeRelayReceiveCount = new AtomicLong();
+    /** Count of route_confirm messages actually sent to GW. */
+    private final AtomicLong confirmSentCount = new AtomicLong();
+    /** Count of route_confirm dedup-skipped (cache hit, not stale, not remap). */
+    private final AtomicLong confirmDedupSkipCount = new AtomicLong();
+    /** Count of route_confirm forced re-confirms (lease expired). */
+    private final AtomicLong confirmForceReconfirmCount = new AtomicLong();
+    /** Count of route_confirm send failures (no GW connection / serialize fail). */
+    private final AtomicLong confirmSendFailCount = new AtomicLong();
 
     /**
      * 下游命令发送接口。
@@ -98,11 +115,20 @@ public class GatewayMessageRouter {
      * 由 GatewayRelayService 注入，用于向 GW 回复 route_confirm / route_reject。
      */
     public interface RouteResponseSender {
-        /** 向 GW 发送 route_confirm：确认该 toolSessionId 路由归属于本 SS。 */
-        void sendRouteConfirm(String toolSessionId, String welinkSessionId);
+        /**
+         * 向 GW 发送 route_confirm：确认该 toolSessionId 路由归属于本 SS。
+         *
+         * @return true 表示已成功投递到 GW；false 表示因连接缺失/序列化失败等原因未投递。
+         *         调用方应根据该返回值决定是否写入去重 cache（cache-after-success）。
+         */
+        boolean sendRouteConfirm(String toolSessionId, String welinkSessionId);
 
         /** 向 GW 发送 route_reject：通知 GW 本 SS 无法处理该 toolSessionId 的消息。 */
         void sendRouteReject(String toolSessionId);
+    }
+
+    /** route_confirm 去重 cache 的 value 类型：记录上一次确认的 welinkSessionId 与时间。 */
+    private record ConfirmedState(String welinkSessionId, Instant confirmedAt) {
     }
 
     /** 下游发送者引用（延迟注入） */
@@ -124,6 +150,17 @@ public class GatewayMessageRouter {
     private final java.util.concurrent.ConcurrentHashMap<String, StringBuilder> cloudImTextBuffer =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** route_confirm 去重 kill switch；false 时退化为每条上行都发 confirm（与改动前行为一致）。 */
+    private final boolean confirmDedupEnabled;
+    /** route_confirm 去重 cache 过期分钟数（必须 < GW UpstreamRoutingTable 30min）。 */
+    private final int confirmCacheExpireMinutes;
+    /** 用于 confirmedAt 时间戳的 Clock，测试可注入 fake clock 推进时间。 */
+    private final Clock clock;
+    /** 用于 Caffeine cache 过期判定的 Ticker，测试可注入 fake ticker 推进虚拟时间。 */
+    private final Ticker ticker;
+    /** route_confirm 去重缓存：toolSessionId -> (welinkSessionId, confirmedAt)；@PostConstruct 初始化。 */
+    private Cache<String, ConfirmedState> confirmedToolSessions;
+
     /** 业务助手 IM 场景需过滤的云端扩展事件类型集合 */
     private static final Set<String> BUSINESS_IM_FILTERED_TYPES = Set.of(
             StreamMessage.Types.PLANNING_DELTA, StreamMessage.Types.PLANNING_DONE,
@@ -131,6 +168,10 @@ public class GatewayMessageRouter {
             StreamMessage.Types.SEARCHING, StreamMessage.Types.SEARCH_RESULT,
             StreamMessage.Types.REFERENCE, StreamMessage.Types.ASK_MORE);
 
+    /**
+     * Spring 主构造：自动注入 Clock / Ticker（生产默认 systemUTC / systemTicker）。
+     */
+    @Autowired
     public GatewayMessageRouter(ObjectMapper objectMapper,
             SkillMessageService messageService,
             SkillSessionService sessionService,
@@ -147,7 +188,11 @@ public class GatewayMessageRouter {
             AssistantScopeDispatcher scopeDispatcher,
             OutboundDeliveryDispatcher outboundDeliveryDispatcher,
             com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter,
-            @Value("${skill.relay.owner-dead-threshold-seconds:120}") int ownerDeadThresholdSeconds) {
+            @Value("${skill.relay.owner-dead-threshold-seconds:120}") int ownerDeadThresholdSeconds,
+            @Value("${skill.relay.confirm-dedup.enabled:true}") boolean confirmDedupEnabled,
+            @Value("${skill.relay.confirm-dedup.cache-expire-minutes:25}") int confirmCacheExpireMinutes,
+            Clock clock,
+            Ticker ticker) {
         this.objectMapper = objectMapper;
         this.messageService = messageService;
         this.sessionService = sessionService;
@@ -166,6 +211,43 @@ public class GatewayMessageRouter {
         this.scopeDispatcher = scopeDispatcher;
         this.instanceId = skillInstanceRegistry.getInstanceId();
         this.ownerDeadThresholdSeconds = ownerDeadThresholdSeconds;
+        this.confirmDedupEnabled = confirmDedupEnabled;
+        this.confirmCacheExpireMinutes = confirmCacheExpireMinutes;
+        this.clock = clock;
+        this.ticker = ticker;
+    }
+
+    /**
+     * 简化构造：兼容现有测试入口。使用默认 confirm-dedup 配置（enabled=true, 25min）
+     * 与系统默认 Clock/Ticker，避免在测试 setup 中显式传入。
+     *
+     * <p>该构造已主动初始化 {@link #confirmedToolSessions} cache（无需依赖
+     * {@code @PostConstruct} 时机）。</p>
+     */
+    public GatewayMessageRouter(ObjectMapper objectMapper,
+            SkillMessageService messageService,
+            SkillSessionService sessionService,
+            RedisMessageBroker redisMessageBroker,
+            OpenCodeEventTranslator translator,
+            MessagePersistenceService persistenceService,
+            StreamBufferService bufferService,
+            SessionRebuildService rebuildService,
+            ImInteractionStateService interactionStateService,
+            ImOutboundService imOutboundService,
+            SessionRouteService sessionRouteService,
+            SkillInstanceRegistry skillInstanceRegistry,
+            AssistantInfoService assistantInfoService,
+            AssistantScopeDispatcher scopeDispatcher,
+            OutboundDeliveryDispatcher outboundDeliveryDispatcher,
+            com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter,
+            int ownerDeadThresholdSeconds) {
+        this(objectMapper, messageService, sessionService, redisMessageBroker, translator,
+                persistenceService, bufferService, rebuildService, interactionStateService,
+                imOutboundService, sessionRouteService, skillInstanceRegistry,
+                assistantInfoService, scopeDispatcher, outboundDeliveryDispatcher, emitter,
+                ownerDeadThresholdSeconds, true, 25, Clock.systemUTC(), Ticker.systemTicker());
+        // 主动初始化 cache，避免测试场景下 @PostConstruct 未触发导致 NPE
+        initConfirmDedupCache();
     }
 
     // ==================== SS relay subscription (启动时订阅本实例的中转 channel) ====================
@@ -181,6 +263,23 @@ public class GatewayMessageRouter {
         redisMessageBroker.subscribeToSsRelay(instanceId, this::handleSsRelayMessage);
         log.info("[ENTRY] GatewayMessageRouter.initSsRelaySubscription: instanceId={}, channel=ss:relay:{}",
                 instanceId, instanceId);
+    }
+
+    /**
+     * 初始化 route_confirm 去重缓存。
+     *
+     * <p>TTL 由 {@code skill.relay.confirm-dedup.cache-expire-minutes} 配置驱动，
+     * 默认 25 分钟（必须 < GW UpstreamRoutingTable 30min 才能保证 GW 失忆前自愈）。</p>
+     */
+    @PostConstruct
+    void initConfirmDedupCache() {
+        this.confirmedToolSessions = Caffeine.newBuilder()
+                .expireAfterWrite(Duration.ofMinutes(confirmCacheExpireMinutes))
+                .maximumSize(DEDUP_CACHE_MAX_SIZE)
+                .ticker(ticker)
+                .build();
+        log.info("[ENTRY] GatewayMessageRouter.initConfirmDedupCache: enabled={}, expireMinutes={}, forceReconfirmIntervalMin={}",
+                confirmDedupEnabled, confirmCacheExpireMinutes, FORCE_RECONFIRM_INTERVAL.toMinutes());
     }
 
     /**
@@ -875,6 +974,10 @@ public class GatewayMessageRouter {
      *
      * <p>Task 2.10：当通过 toolSessionId 反查时，发送 route_confirm（找到）或 route_reject（未找到）。
      * welinkSessionId 直连路径不发送 confirm，因为 GW 已通过 welinkSessionId 精确路由，无需确认。</p>
+     *
+     * <p>route_confirm 走 lease-based 去重（{@link #maybeSendRouteConfirm}），仅在
+     * cache miss / remap / lease 到期时实际发送，减少高并发下的冗余 control-plane 流量。
+     * route_reject 仅在 DB 明确返回 null 的负向命中分支发送，且不去重。</p>
      */
     private String resolveSessionId(String messageType, JsonNode node) {
         String sessionId = node.path("welinkSessionId").asText(null);
@@ -888,10 +991,7 @@ public class GatewayMessageRouter {
                 // 优先查 Redis 缓存
                 String cachedSessionId = redisMessageBroker.getToolSessionMapping(toolSessionId);
                 if (cachedSessionId != null) {
-                    RouteResponseSender sender = routeResponseSender;
-                    if (sender != null) {
-                        sender.sendRouteConfirm(toolSessionId, cachedSessionId);
-                    }
+                    maybeSendRouteConfirm(toolSessionId, cachedSessionId, routeResponseSender);
                     return cachedSessionId;
                 }
 
@@ -901,14 +1001,10 @@ public class GatewayMessageRouter {
                     String resolvedSessionId = session.getId().toString();
                     // 写入 Redis 缓存
                     redisMessageBroker.setToolSessionMapping(toolSessionId, resolvedSessionId);
-                    // 找到归属 session → 回复 route_confirm
-                    RouteResponseSender sender = routeResponseSender;
-                    if (sender != null) {
-                        sender.sendRouteConfirm(toolSessionId, resolvedSessionId);
-                    }
+                    maybeSendRouteConfirm(toolSessionId, resolvedSessionId, routeResponseSender);
                     return resolvedSessionId;
                 }
-                // 未找到 → 回复 route_reject
+                // 未找到 → 回复 route_reject（不去重，DB 明确返回 null 才发）
                 log.warn("Upstream message session not found: type={}, toolSessionId={}, reason=session_not_found",
                         messageType, toolSessionId);
                 RouteResponseSender sender = routeResponseSender;
@@ -916,13 +1012,9 @@ public class GatewayMessageRouter {
                     sender.sendRouteReject(toolSessionId);
                 }
             } catch (Exception e) {
+                // 不再发 route_reject —— 异常 ≠ "definitively not found"，发 reject 会污染 GW 负向路由语义
                 log.error("Failed to resolve upstream session affinity: type={}, toolSessionId={}, reason={}",
                         messageType, toolSessionId, e.getMessage());
-                // 查询异常也视为无法处理，回复 route_reject
-                RouteResponseSender sender = routeResponseSender;
-                if (sender != null) {
-                    sender.sendRouteReject(toolSessionId);
-                }
             }
         } else {
             log.warn(
@@ -931,6 +1023,59 @@ public class GatewayMessageRouter {
         }
 
         return null;
+    }
+
+    /**
+     * lease-based route_confirm 去重决策。
+     *
+     * <p>发送条件（任一满足即发）：
+     * <ol>
+     *   <li>cache 中无记录（首次确认）</li>
+     *   <li>cache 中 welinkSessionId 与当前解析结果不同（remap，需立即重发）</li>
+     *   <li>cache 中 confirmedAt 距今 ≥ {@link #FORCE_RECONFIRM_INTERVAL}（5min lease 到期）</li>
+     * </ol>
+     * cache-after-success：仅在 sender 返回 true 后才写入 cache，失败下条上行会重试。</p>
+     *
+     * <p>{@code skill.relay.confirm-dedup.enabled=false} 时退化为每次都发（与改动前行为一致）。</p>
+     */
+    private void maybeSendRouteConfirm(String toolSessionId, String resolvedSessionId,
+            RouteResponseSender sender) {
+        if (sender == null) {
+            return;
+        }
+        if (!confirmDedupEnabled) {
+            boolean sent = sender.sendRouteConfirm(toolSessionId, resolvedSessionId);
+            if (sent) {
+                confirmSentCount.incrementAndGet();
+            } else {
+                confirmSendFailCount.incrementAndGet();
+            }
+            return;
+        }
+
+        ConfirmedState prev = confirmedToolSessions.getIfPresent(toolSessionId);
+        Instant now = clock.instant();
+        boolean isRemap = prev != null && !java.util.Objects.equals(prev.welinkSessionId(), resolvedSessionId);
+        boolean isStale = prev != null
+                && Duration.between(prev.confirmedAt(), now).compareTo(FORCE_RECONFIRM_INTERVAL) >= 0;
+        boolean needSend = (prev == null) || isRemap || isStale;
+        if (!needSend) {
+            confirmDedupSkipCount.incrementAndGet();
+            return;
+        }
+
+        boolean sent = sender.sendRouteConfirm(toolSessionId, resolvedSessionId);
+        if (sent) {
+            // cache-after-success：只有成功投递才记录，失败时下条上行会再次尝试
+            confirmedToolSessions.put(toolSessionId, new ConfirmedState(resolvedSessionId, now));
+            if (isStale) {
+                confirmForceReconfirmCount.incrementAndGet();
+            } else {
+                confirmSentCount.incrementAndGet();
+            }
+        } else {
+            confirmSendFailCount.incrementAndGet();
+        }
     }
 
     /** 判断消息类型是否需要会话亲和性（需要 sessionId 才能处理）。 */
@@ -1101,8 +1246,10 @@ public class GatewayMessageRouter {
      */
     @Scheduled(fixedDelay = 60_000)
     void logMetrics() {
-        log.info("[METRICS] route: local={}, relaySend={}, relayReceive={} | takeover: success={}, conflict={}, probeDead={}",
+        log.info("[METRICS] route: local={}, relaySend={}, relayReceive={} | takeover: success={}, conflict={}, probeDead={} | confirm: sent={}, skip={}, forceReconfirm={}, sendFail={}",
                 routeLocalCount.get(), routeRelayCount.get(), routeRelayReceiveCount.get(),
-                takeoverCount.get(), takeoverConflictCount.get(), ownerProbeDeadCount.get());
+                takeoverCount.get(), takeoverConflictCount.get(), ownerProbeDeadCount.get(),
+                confirmSentCount.get(), confirmDedupSkipCount.get(),
+                confirmForceReconfirmCount.get(), confirmSendFailCount.get());
     }
 }

@@ -39,12 +39,13 @@ public class ExternalInboundController {
     @PostMapping("/invoke")
     @SuppressWarnings("unchecked")
     public ResponseEntity<ApiResponse<?>> invoke(@RequestBody ExternalInvokeRequest request) {
-        log.info("[ENTRY] ExternalInboundController.invoke: action={}, domain={}, sessionType={}, sessionId={}, assistant={}",
+        log.info("[ENTRY] ExternalInboundController.invoke: action={}, domain={}, sessionType={}, sessionId={}, assistant={}, businessExtParam={}",
                 request != null ? request.getAction() : null,
                 request != null ? request.getBusinessDomain() : null,
                 request != null ? request.getSessionType() : null,
                 request != null ? request.getSessionId() : null,
-                request != null ? request.getAssistantAccount() : null);
+                request != null ? request.getAssistantAccount() : null,
+                request != null ? request.getBusinessExtParam() : null);
 
         String envelopeError = validateEnvelope(request);
         if (envelopeError != null) {
@@ -63,19 +64,22 @@ public class ExternalInboundController {
                     request.getSenderUserAccount(),
                     request.payloadString("content"), request.payloadString("msgType"),
                     request.payloadString("imageUrl"), parseChatHistory(request.getPayload()),
-                    "EXTERNAL");
+                    "EXTERNAL",
+                    request.getBusinessExtParam());
             case "question_reply" -> processingService.processQuestionReply(
                     request.getBusinessDomain(), request.getSessionType(),
                     request.getSessionId(), request.getAssistantAccount(),
                     request.getSenderUserAccount(),
                     request.payloadString("content"), request.payloadString("toolCallId"),
-                    request.payloadString("subagentSessionId"), "EXTERNAL");
+                    request.payloadString("subagentSessionId"), "EXTERNAL",
+                    request.getBusinessExtParam());
             case "permission_reply" -> processingService.processPermissionReply(
                     request.getBusinessDomain(), request.getSessionType(),
                     request.getSessionId(), request.getAssistantAccount(),
                     request.getSenderUserAccount(),
                     request.payloadString("permissionId"), request.payloadString("response"),
-                    request.payloadString("subagentSessionId"), "EXTERNAL");
+                    request.payloadString("subagentSessionId"), "EXTERNAL",
+                    request.getBusinessExtParam());
             case "rebuild" -> processingService.processRebuild(
                     request.getBusinessDomain(), request.getSessionType(),
                     request.getSessionId(), request.getAssistantAccount(),

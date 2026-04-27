@@ -250,6 +250,18 @@ public class RedisMessageBroker {
                 TOOL_SESSION_TTL_HOURS, TimeUnit.HOURS);
     }
 
+    /**
+     * 失效 toolSessionId → welinkSessionId 反查缓存。
+     * 用于 session rebuild / updateToolSessionId remap 场景，避免旧 toolSessionId 错误路由。
+     */
+    public void deleteToolSessionMapping(String toolSessionId) {
+        if (toolSessionId == null || toolSessionId.isBlank()) {
+            return;
+        }
+        log.info("[ENTRY] RedisMessageBroker.deleteToolSessionMapping: toolSessionId={}", toolSessionId);
+        redisTemplate.delete(TOOL_SESSION_PREFIX + toolSessionId);
+    }
+
     // ==================== 跨实例消息序号（Task 2.8） ====================
 
     private static final String STREAM_SEQ_KEY_PREFIX = "ss:stream-seq:";

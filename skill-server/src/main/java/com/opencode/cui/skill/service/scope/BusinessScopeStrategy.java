@@ -14,6 +14,8 @@ import com.opencode.cui.skill.logging.MdcHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -57,6 +59,15 @@ public class BusinessScopeStrategy implements AssistantScopeStrategy {
         // 从 command payload 提取 toolSessionId 作为 topicId
         String toolSessionId = extractField(command.payload(), "toolSessionId");
 
+        // 取业务方扩展参数（缺省 / 非 object → null，由下方兜底为 {}）
+        JsonNode businessExtParam = extractObjectField(command.payload(), "businessExtParam");
+
+        // 用 LinkedHashMap 保证 businessExtParam 序列化在 platformExtParam 之前（与协议文档示例一致）
+        Map<String, Object> extParameters = new LinkedHashMap<>();
+        extParameters.put("businessExtParam",
+                businessExtParam != null ? businessExtParam : objectMapper.createObjectNode());
+        extParameters.put("platformExtParam", objectMapper.createObjectNode());
+
         CloudRequestContext context = CloudRequestContext.builder()
                 .content(content)
                 .contentType("text")
@@ -66,6 +77,7 @@ public class BusinessScopeStrategy implements AssistantScopeStrategy {
                 .imGroupId(extractField(command.payload(), "imGroupId"))
                 .messageId(extractField(command.payload(), "messageId"))
                 .clientLang("zh")
+                .extParameters(extParameters)
                 .build();
 
         ObjectNode cloudRequest = cloudRequestBuilder.buildCloudRequest(appId, context);
@@ -135,6 +147,37 @@ public class BusinessScopeStrategy implements AssistantScopeStrategy {
             return field.isMissingNode() || field.isNull() ? null : field.asText();
         } catch (JsonProcessingException e) {
             log.debug("Failed to parse payload for field extraction: field={}, error={}", fieldName, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 从 payload string 中安全提取嵌套 JSON object 字段。
+     * 返回 null 触发上层兜底为 {}：
+     * - payload null/blank → null
+     * - readTree 失败 → null + DEBUG 日志
+     * - 字段缺失 / NullNode → null
+     * - 字段非 object（string/array/number/bool）→ null + WARN 日志
+     */
+    private JsonNode extractObjectField(String payload, String fieldName) {
+        if (payload == null || payload.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(payload);
+            JsonNode field = node.path(fieldName);
+            if (field.isMissingNode() || field.isNull()) {
+                return null;
+            }
+            if (!field.isObject()) {
+                log.warn("{} is not a JSON object, treating as empty: actualType={}, value={}",
+                        fieldName, field.getNodeType(), field);
+                return null;
+            }
+            return field;
+        } catch (JsonProcessingException e) {
+            log.debug("Failed to parse payload for object field extraction: field={}, error={}",
+                    fieldName, e.getMessage());
             return null;
         }
     }

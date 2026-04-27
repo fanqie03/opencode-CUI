@@ -3,7 +3,20 @@ import type { Message, MessagePart, MessageRole, StreamMessage, StreamMessageTyp
 import { StreamAssembler } from '../protocol/StreamAssembler';
 import { normalizeHistoryMessage, normalizeHistoryMessages } from '../protocol/history';
 import * as api from '../utils/api';
+import { ApiError } from '../utils/api';
 import { ensureDevUserIdCookie } from '../utils/devAuth';
+
+/**
+ * 从 ApiError.body 中提取业务 code（body 是 ApiResponse 信封：{ code, errormsg, data }）。
+ * 后端助理删除校验返回 HTTP 200 + body.code=410；前端必须判 body.code，而非 HTTP status。
+ */
+function extractBusinessCode(err: unknown): number | undefined {
+  if (err instanceof ApiError && err.body && typeof err.body === 'object' && 'code' in err.body) {
+    const code = (err.body as { code?: unknown }).code;
+    return typeof code === 'number' ? code : undefined;
+  }
+  return undefined;
+}
 
 type AgentStatus = 'online' | 'offline' | 'unknown';
 
@@ -1060,8 +1073,13 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
           return upsertMessage(nextMessages, normalized);
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to send message';
-        setError(message);
+        if (extractBusinessCode(err) === 410) {
+          setError('该助理已被删除');
+        } else {
+          const message = err instanceof Error ? err.message : 'Failed to send message';
+          setError(message);
+        }
+        // 保留 optimistic 用户消息，不 rollback（PRD 决策 Q-arch-4）
       }
     },
     [sessionId],
@@ -1110,8 +1128,13 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
       try {
         await api.replyPermission(sessionId, permissionId, response, subagentSessionId);
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to reply permission';
-        setError(message);
+        if (extractBusinessCode(err) === 410) {
+          setError('该助理已被删除');
+        } else {
+          const message = err instanceof Error ? err.message : 'Failed to reply permission';
+          setError(message);
+        }
+        // 保留 optimistic permission 状态，不 rollback（PRD 决策 Q-arch-4）
       }
     },
     [sessionId],

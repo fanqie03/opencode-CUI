@@ -2,6 +2,7 @@ package com.opencode.cui.skill.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.AssistantInfo;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.model.SkillSession;
@@ -15,6 +16,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -778,6 +780,38 @@ class GatewayRelayServiceTest {
                 assertTrue(sent.path("payload").path("assistantId").isMissingNode());
                 // resolver 不应被调用
                 verify(assistantIdResolverService, never()).resolve(any(), any());
+        }
+
+        @Test
+        @DisplayName("ⓕ-2: personal scope chat invoke：businessExtParam 字段随 payload 原样透下游不剥离")
+        void personalScopeDoesNotStripBusinessExtParam() throws Exception {
+                // personal scope：isBusiness() == false → GatewayRelayService 走 buildInvokeMessage(command)
+                // buildInvokeMessage 把 payload 解析后直接 set，不剥离任何字段
+                AssistantInfo personalInfo = new AssistantInfo();
+                personalInfo.setAssistantScope("personal");
+                when(assistantInfoService.getAssistantInfo("ak-personal")).thenReturn(personalInfo);
+
+                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
+                // assistantIdResolverService.resolve → null：不注入 assistantId，避免其他断言干扰
+                when(assistantIdResolverService.resolve("ak-personal", "42")).thenReturn(null);
+
+                String payload = "{\"text\":\"hi\",\"toolSessionId\":\"open-1\","
+                        + "\"businessExtParam\":{\"k\":\"v\"}}";
+                InvokeCommand cmd = new InvokeCommand("ak-personal", "u-1", "42", "chat", payload);
+                service.sendInvokeToGateway(cmd);
+
+                ArgumentCaptor<String> messageCap = ArgumentCaptor.forClass(String.class);
+                verify(gatewayRelayTarget).sendToGateway(messageCap.capture());
+
+                // buildInvokeMessage: message.set("payload", parsedPayloadNode)
+                // → 出站消息的 payload 节点即为解析后的 payload，businessExtParam 应原样保留
+                JsonNode sent = objectMapper.readTree(messageCap.getValue());
+                JsonNode sentPayload = sent.get("payload");
+                assertNotNull(sentPayload);
+                assertTrue(sentPayload.has("businessExtParam"));
+                assertTrue(sentPayload.get("businessExtParam").isObject());
+                assertEquals("v", sentPayload.get("businessExtParam").get("k").asText());
         }
 
         private JsonNode readPublishedMessage(String payload) {

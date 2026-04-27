@@ -1,5 +1,6 @@
 package com.opencode.cui.skill.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
@@ -95,7 +96,8 @@ public class ImSessionManager {
     public void createSessionAsync(String businessDomain, String sessionType,
             String sessionId, String ak, String ownerWelinkId,
             String assistantAccount, String senderUserAccount,
-            String pendingMessage) {
+            String pendingMessage,
+            JsonNode businessExtParam) {
         // 构建分布式锁 key
         String lockKey = buildCreateLockKey(businessDomain, sessionType, sessionId, ak);
         String lockValue = UUID.randomUUID().toString();
@@ -145,7 +147,7 @@ public class ImSessionManager {
                         created.getId(), generatedToolSessionId, ak);
                 // 会话直接就绪，立即发送待发消息（不经过 session_created 回调）
                 if (pendingMessage != null && !pendingMessage.isBlank()) {
-                    Map<String, String> payloadFields = new LinkedHashMap<>();
+                    Map<String, Object> payloadFields = new LinkedHashMap<>();
                     payloadFields.put("text", pendingMessage);
                     payloadFields.put("toolSessionId", generatedToolSessionId);
                     payloadFields.put("assistantAccount", assistantAccount);
@@ -155,12 +157,13 @@ public class ImSessionManager {
                     payloadFields.put("sendUserAccount", effectiveSender);
                     payloadFields.put("imGroupId", "group".equals(sessionType) ? sessionId : null);
                     payloadFields.put("messageId", String.valueOf(System.currentTimeMillis()));
+                    payloadFields.put("businessExtParam", businessExtParam);
                     gatewayRelayService.sendInvokeToGateway(new InvokeCommand(
                             ak,
                             ownerWelinkId,
                             String.valueOf(created.getId()),
                             GatewayActions.CHAT,
-                            PayloadBuilder.buildPayload(objectMapper, payloadFields)));
+                            PayloadBuilder.buildPayloadWithObjects(objectMapper, payloadFields)));
                     log.info("Business assistant: chat invoke sent immediately, skillSessionId={}, ak={}",
                             created.getId(), ak);
                 }

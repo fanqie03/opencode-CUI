@@ -345,6 +345,17 @@ class SkillMessageServiceTest {
     }
 
     @Test
+    @DisplayName("scheduleLatestHistoryRefreshAfterCommit invalidates stale latest-history cache before refresh")
+    void scheduleLatestHistoryRefreshAfterCommitInvalidatesCacheBeforeRefresh() {
+        when(messageHistoryCacheService.getWarmSizes()).thenReturn(List.of());
+
+        service.scheduleLatestHistoryRefreshAfterCommit(1L);
+
+        verify(messageHistoryCacheService).invalidateLatestHistory(1L);
+        verify(messageHistoryRefreshExecutor).execute(any(Runnable.class));
+    }
+
+    @Test
     @DisplayName("sequence numbers auto-increment per session")
     void sequenceNumbersAutoIncrement() {
         when(messageRepository.findMaxSeqBySessionId(1L))
