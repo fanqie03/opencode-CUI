@@ -585,19 +585,44 @@
 
 **协议类型**: REST（非流式同步）
 
-**请求流程**:
-1. 发送 HTTP POST 请求到后端
-2. 同步等待响应
-3. 解析响应并转换为 Gateway 消息
+**适用场景**: UniKnow 知识问答系统对接
 
-**输入格式**:
+**关键说明**: 
+- UniKnow 采用同步 REST 调用方式，非流式响应
+- `toolSessionId` 从响应中的 `requestId` 获取
+- 响应处理流程：先发送 `tool_event` 携带文本内容，再发送 `tool_done` 标记完成
+
+**输入格式**（aiGateway CloudRequest → UniKnow）：
+
+| aiGateway CloudRequest 字段 | UniKnow 字段 | 说明 | 默认值 |
+|-----------------------------|--------------|------|--------|
+| `content` | `query` | 用户输入内容 | - |
+| `sendUserAccount` | `user` | 用户账号 | - |
+| `extParameters` | - | 扩展参数 | - |
+
+**aiGateway 输入格式**:
 ```json
 {
-    "query": "用户输入"
+    "content": "用户输入内容",
+    "contentType": "text",
+    "sendUserAccount": "user-001",
+    "topicId": "topic-001",
+    "extParameters": {}
 }
 ```
 
-**原始响应格式**:
+**转换后的 UniKnow 输入格式**:
+```json
+{
+    "query": "用户输入内容",
+    "user": "user-001"
+}
+```
+
+**输出转换示例**:
+
+#### 正常响应（有回答内容）
+**原始响应**:
 ```json
 {
     "data": [
@@ -605,8 +630,8 @@
             "taskInfo": {
                 "slots": {
                     "result": {
-                        "data": "回答内容",
-                        "requestId": "请求ID"
+                        "data": "这是 UniKnow 的回答内容",
+                        "requestId": "req-12345"
                     }
                 }
             }
@@ -615,24 +640,70 @@
 }
 ```
 
-**输出转换**:
+**转换结果 - 第一步（文本事件）**:
 ```json
-// 第一步：发送文本事件
 {
     "type": "tool_event",
-    "toolSessionId": "requestId",
+    "toolSessionId": "req-12345",
     "event": {
         "type": "text.delta",
         "properties": {
-            "content": "回答内容"
+            "content": "这是 UniKnow 的回答内容"
         }
     }
 }
+```
 
-// 第二步：发送完成事件
+**转换结果 - 第二步（完成事件）**:
+```json
 {
     "type": "tool_done",
-    "toolSessionId": "requestId"
+    "toolSessionId": "req-12345"
+}
+```
+
+#### 响应为空（无回答内容）
+**原始响应**:
+```json
+{
+    "data": [
+        {
+            "taskInfo": {
+                "slots": {
+                    "result": {
+                        "data": "",
+                        "requestId": "req-67890"
+                    }
+                }
+            }
+        }
+    ]
+}
+```
+
+**转换结果**:
+```json
+{
+    "type": "tool_done",
+    "toolSessionId": "req-67890"
+}
+```
+
+#### 异常响应（HTTP 非 200 状态码）
+**原始响应**:
+```json
+{
+    "error": "服务内部错误",
+    "code": 500
+}
+```
+
+**转换结果**:
+```json
+{
+    "type": "tool_error",
+    "toolSessionId": "",
+    "error": "UniKnow service error: 服务内部错误"
 }
 ```
 
