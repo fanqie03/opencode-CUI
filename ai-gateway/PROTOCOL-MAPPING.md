@@ -1,0 +1,856 @@
+# AI Gateway 协议映射关系文档
+
+## 1. 协议编码映射
+
+### 1.1 上游协议编码 → 内部协议名称
+
+| 编码 | 协议名称 | 策略类 | 文件路径 |
+|------|----------|--------|----------|
+| `1` | rest | `RestProtocolStrategy` | 现有 |
+| `2` | sse | `SseProtocolStrategy` | 现有 |
+| `3` | websocket | `WebSocketProtocolStrategy` | 现有 |
+| `4` | dify | `DifyProtocolStrategy` | 新增 |
+| `5` | agentmaker | `AgentMakerProtocolStrategy` | 新增 |
+| `6` | uniknow | `UniKnowProtocolStrategy` | 新增 |
+| `7` | athena | `AthenaProtocolStrategy` | 新增 |
+| `8` | standard | `StandardProtocolStrategy` | 新增 |
+
+### 1.2 认证类型编码映射
+
+| 编码 | 认证类型 | 说明 |
+|------|----------|------|
+| `1` | soa | SOA Token 认证 |
+| `2` | apig | APIG Token 认证 |
+| 默认 | 原值 | 自定义认证类型 |
+
+---
+
+## 2. 协议策略实现概览
+
+### 2.1 Dify 协议（灵雀/白泽）
+
+**协议类型**: SSE（Server-Sent Events）
+
+**支持的模式**:
+- **chatflow**: 对话流模式
+- **agent**: 智能体模式  
+- **workflow**: 工作流模式
+
+**关键说明**: 
+- `toolSessionId` 优先从 `conversation_id` 获取，其次使用 `message_id` 或 `task_id`
+- `ping` 事件用于心跳保持，不转发
+
+**输入格式**（aiGateway CloudRequest → Dify）：
+
+| aiGateway CloudRequest 字段 | Dify 字段 | 说明 | 默认值 |
+|-----------------------------|-----------|------|--------|
+| `content` | `query` | 用户输入内容 | - |
+| `topicId` | `conversation_id` | 会话 ID | - |
+| `sendUserAccount` | `user` | 用户 ID | - |
+| - | `response_mode` | 响应模式 | `"streaming"` |
+
+**aiGateway 输入格式**:
+```json
+{
+    "content": "用户输入内容",
+    "contentType": "text",
+    "topicId": "conv-001",
+    "sendUserAccount": "user-001",
+    "extParameters": {}
+}
+```
+
+**转换后的 Dify 输入格式**:
+```json
+{
+    "query": "用户输入内容",
+    "response_mode": "streaming",
+    "conversation_id": "conv-001",
+    "user": "user-001"
+}
+```
+
+**事件类型映射**:
+
+| Dify 事件类型 | Gateway 消息类型 | 说明 |
+|---------------|------------------|------|
+| `message` | `tool_event` (text.delta) | 文本内容块 |
+| `agent_message` | `tool_event` (text.delta) | Agent 模式文本 |
+| `agent_thought` | `tool_event` (thinking) | Agent 思考过程 |
+| `text_chunk` | `tool_event` (text.delta) | Workflow 文本块 |
+| `message_end` | `tool_done` | 消息结束 |
+| `workflow_finished` | `tool_done` | 工作流结束 |
+| `error` | `tool_error` | 错误 |
+| `ping` | 忽略 | 心跳保持 |
+
+**输出转换示例**:
+
+#### message / agent_message（文本内容）
+**原始响应**:
+```json
+{"event":"agent_message","answer":"您好，请问有什么可以帮助您？","conversation_id":"conv-001","message_id":"msg-001"}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "conv-001",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "您好，请问有什么可以帮助您？"
+        }
+    }
+}
+```
+
+#### text_chunk（Workflow 文本块）
+**原始响应**:
+```json
+{"event":"text_chunk","data":{"text":"工作流执行结果"},"task_id":"task-001"}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "task-001",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "工作流执行结果"
+        }
+    }
+}
+```
+
+#### agent_thought（思考过程）
+**原始响应**:
+```json
+{"event":"agent_thought","thought":"我需要分析用户的问题","observation":"用户想要了解华为云","conversation_id":"conv-001"}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "conv-001",
+    "event": {
+        "type": "thinking",
+        "properties": {
+            "thought": "我需要分析用户的问题",
+            "observation": "用户想要了解华为云"
+        }
+    }
+}
+```
+
+#### message_end（消息结束）
+**原始响应**:
+```json
+{"event":"message_end","conversation_id":"conv-001","message_id":"msg-001","metadata":{"usage":{"prompt_tokens":100,"completion_tokens":50}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_done",
+    "toolSessionId": "conv-001"
+}
+```
+
+#### workflow_finished（工作流结束）
+**原始响应**:
+```json
+{"event":"workflow_finished","data":{"total_tokens":150,"result":"工作流完成"},"task_id":"task-001"}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_done",
+    "toolSessionId": "task-001"
+}
+```
+
+#### error（错误）
+**原始响应**:
+```json
+{"event":"error","message":"请求超时","conversation_id":"conv-001"}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_error",
+    "toolSessionId": "conv-001",
+    "error": "请求超时"
+}
+```
+
+---
+
+### 2.2 标准协议（Standard）
+
+**协议类型**: SSE（Server-Sent Events）
+
+**适用场景**: 通用标准协议，支持多种消息类型
+
+**关键说明**: 
+- 响应中不包含 `topicId` 和 `messageId`，`toolSessionId` 从入参中提取（优先使用 `messageId`，其次使用 `topicId`）
+- **容错处理**：即使对接方未发送 `isFinish=true`，当 SSE 连接正常断开时也会自动发送 `tool_done` 事件
+
+**输入格式映射**（aiGateway CloudRequest → 标准协议）：
+
+| aiGateway CloudRequest 字段 | 标准协议字段 | 说明 | 默认值 |
+|-----------------------------|--------------|------|--------|
+| `content` | `content` | 消息内容 | - |
+| `contentType` | `type` | 内容类型 | `"text"` |
+| `assistantAccount` | `assistantAccount` | 助理账号 | - |
+| `sendUserAccount` | `sendUserAccount` | 发送用户账号 | - |
+| `imGroupId` | `imGroupId` | IM 群组 ID | - |
+| `clientLang` | `clientLang` | 客户端语言 | `"zh"` |
+| `clientType` | `clientType` | 客户端类型 | - |
+| `topicId` | `topicId` | 话题 ID | - |
+| `messageId` | `messageId` | 消息 ID | - |
+| `extParameters` | `extParameters` | 扩展参数 | `{}` |
+
+**aiGateway 输入格式**（`GatewayMessage.payload.cloudRequest`）：
+```json
+{
+    "content": "发送内容",
+    "contentType": "text",
+    "assistantAccount": "",
+    "sendUserAccount": "发送人账号",
+    "imGroupId": "",
+    "clientLang": "zh",
+    "clientType": "asst-pc",
+    "topicId": "123",
+    "messageId": "456",
+    "extParameters": {
+        "isHwEmployee": true,
+        "knowledgeId": ["1122aa"]
+    }
+}
+```
+
+**转换后的标准协议输入格式**：
+```json
+{
+    "type": "text",
+    "content": "发送内容",
+    "assistantAccount": "",
+    "sendUserAccount": "发送人账号",
+    "imGroupId": "",
+    "clientLang": "zh",
+    "clientType": "asst-pc",
+    "topicId": "123",
+    "messageId": "456",
+    "extParameters": {
+        "isHwEmployee": true,
+        "knowledgeId": ["1122aa"]
+    }
+}
+```
+
+**事件类型映射**:
+
+| 标准协议数据类型 | Gateway 消息类型 | 说明 |
+|------------------|------------------|------|
+| `text` | `tool_event` (text.delta) | 文本内容 |
+| `planning` | `tool_event` (thinking) | 规划中 |
+| `searching` | `tool_event` (searching) | 搜索中 |
+| `searchResult` | `tool_event` (search_result) | 搜索结果 |
+| `reference` | `tool_event` (reference) | 引用 |
+| `think` | `tool_event` (thinking) | 深度思考 |
+| `askMore` | `tool_event` (ask_more) | 追问 |
+| `isFinish=true` | `tool_done` | 完成 |
+
+**输入格式**:
+```json
+{
+    "type": "text",
+    "content": "发送内容",
+    "sendUserAccount": "发送人账号",
+    "imGroupId": "",
+    "clientLang": "zh",
+    "clientType": "asst-pc",
+    "topicId": 123,
+    "messageId": 123,
+    "extParameters": {
+        "isHwEmployee": true,
+        "actionParam": "",
+        "knowledgeId": ["1122aa"]
+    }
+}
+```
+
+**原始响应格式**:
+```json
+{
+    "code": "0",
+    "message": "提示信息",
+    "error": "异常信息",
+    "isFinish": false,
+    "data": {
+        "type": "text",
+        "content": "响应文本内容",
+        "planning": "",
+        "searching": [],
+        "searchResult": [],
+        "references": [],
+        "askMore": []
+    }
+}
+```
+
+**输出转换示例**:
+
+#### text（文本内容）
+**原始响应**:
+```json
+{"code":"0","message":"","error":"","isFinish":false,"data":{"type":"text","content":"您好，请问有什么可以帮助您？"}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "123",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "您好，请问有什么可以帮助您？"
+        }
+    }
+}
+```
+
+#### planning（规划中）
+**原始响应**:
+```json
+{"code":"0","message":"","error":"","isFinish":false,"data":{"type":"planning","planning":"正在分析用户意图"}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "123",
+    "event": {
+        "type": "thinking",
+        "properties": {
+            "content": "正在分析用户意图"
+        }
+    }
+}
+```
+
+#### searching（搜索中）
+**原始响应**:
+```json
+{"code":"0","message":"","error":"","isFinish":false,"data":{"type":"searching","searching":["正在检索知识库","正在联网搜索"]}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "123",
+    "event": {
+        "type": "searching",
+        "properties": {
+            "type": "searching",
+            "searching": ["正在检索知识库", "正在联网搜索"]
+        }
+    }
+}
+```
+
+#### searchResult（搜索结果）
+**原始响应**:
+```json
+{"code":"0","message":"","error":"","isFinish":false,"data":{"type":"searchResult","searchResult":[{"index":"1","title":"华为云介绍","source":"官网"},{"index":"2","title":"灵码功能说明","source":"帮助文档"}]}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "123",
+    "event": {
+        "type": "search_result",
+        "properties": {
+            "type": "searchResult",
+            "searchResult": [
+                {"index": "1", "title": "华为云介绍", "source": "官网"},
+                {"index": "2", "title": "灵码功能说明", "source": "帮助文档"}
+            ]
+        }
+    }
+}
+```
+
+#### reference（引用）
+**原始响应**:
+```json
+{"code":"0","message":"","error":"","isFinish":false,"data":{"type":"reference","references":[{"index":"1","title":"API文档","source":"内部Wiki","url":"http://wiki.example.com/api","content":"相关接口定义..."}]}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "123",
+    "event": {
+        "type": "reference",
+        "properties": {
+            "type": "reference",
+            "references": [
+                {"index": "1", "title": "API文档", "source": "内部Wiki", "url": "http://wiki.example.com/api", "content": "相关接口定义..."}
+            ]
+        }
+    }
+}
+```
+
+#### think（深度思考）
+**原始响应**:
+```json
+{"code":"0","message":"","error":"","isFinish":false,"data":{"type":"think","content":"首先需要考虑用户的核心需求..."}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "123",
+    "event": {
+        "type": "thinking",
+        "properties": {
+            "content": "首先需要考虑用户的核心需求..."
+        }
+    }
+}
+```
+
+#### askMore（追问）
+**原始响应**:
+```json
+{"code":"0","message":"","error":"","isFinish":false,"data":{"type":"askMore","askMore":["如何创建项目？","支持哪些语言？"]}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "123",
+    "event": {
+        "type": "ask_more",
+        "properties": {
+            "type": "askMore",
+            "askMore": ["如何创建项目？", "支持哪些语言？"]
+        }
+    }
+}
+```
+
+#### isFinish=true（完成）
+**原始响应**:
+```json
+{"code":"0","message":"","error":"","isFinish":true,"data":{"type":"text","content":"回答已完成"}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_done",
+    "toolSessionId": "123"
+}
+```
+
+---
+
+### 2.3 AgentMaker 协议
+
+**协议类型**: SSE（Server-Sent Events）
+
+**适用场景**: AgentMaker 云端服务对接
+
+**关键说明**: 
+- AgentMaker 使用 JSON API 风格响应格式
+- `toolSessionId` 优先从 `sessionId` 获取，其次使用 `requestId`
+
+**输入格式**（aiGateway CloudRequest → AgentMaker）：
+
+| aiGateway CloudRequest 字段 | AgentMaker 字段 | 说明 |
+|-----------------------------|-----------------|------|
+| `content` | `userInput` | 用户输入内容 |
+| `topicId` | `sessionId` | 会话 ID |
+
+**aiGateway 输入格式**:
+```json
+{
+    "content": "用户输入内容",
+    "contentType": "text",
+    "topicId": "session-001",
+    "extParameters": {}
+}
+```
+
+**转换后的 AgentMaker 输入格式**:
+```json
+{
+    "userInput": "用户输入内容",
+    "sessionId": "session-001"
+}
+```
+
+**事件类型映射**:
+
+| AgentMaker 状态 | Gateway 消息类型 | 说明 |
+|-----------------|------------------|------|
+| `PROCESSING` | `tool_event` (thinking) | 处理中 |
+| `ANSWER` | `tool_event` (text.delta) | 回答内容 |
+| `DONE` | `tool_done` | 完成 |
+| `TOOL_EXEC` | `tool_event` (tool_exec) | 工具执行 |
+| `ERROR` | `tool_error` | 错误 |
+
+**输出转换示例**:
+
+#### PROCESSING（处理中）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"PROCESSING","content":"正在思考..."}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "session-001",
+    "event": {
+        "type": "thinking",
+        "properties": {
+            "content": "正在思考..."
+        }
+    }
+}
+```
+
+#### TOOL_EXEC（工具执行）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"TOOL_EXEC","content":"正在查询知识库","toolResult":{"toolName":"search","parameters":{"query":"华为云"}}}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "session-001",
+    "event": {
+        "type": "tool_exec",
+        "properties": {
+            "content": "正在查询知识库",
+            "toolResult": {
+                "toolName": "search",
+                "parameters": {"query": "华为云"}
+            }
+        }
+    }
+}
+```
+
+#### ANSWER（回答内容）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"ANSWER","content":"这是回答内容"}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "session-001",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "这是回答内容"
+        }
+    }
+}
+```
+
+#### DONE（完成）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"DONE","content":"对话结束"}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_done",
+    "toolSessionId": "session-001"
+}
+```
+
+---
+
+### 2.3 UniKnow 协议
+
+**协议类型**: REST（非流式同步）
+
+**请求流程**:
+1. 发送 HTTP POST 请求到后端
+2. 同步等待响应
+3. 解析响应并转换为 Gateway 消息
+
+**输入格式**:
+```json
+{
+    "query": "用户输入"
+}
+```
+
+**原始响应格式**:
+```json
+{
+    "data": [
+        {
+            "taskInfo": {
+                "slots": {
+                    "result": {
+                        "data": "回答内容",
+                        "requestId": "请求ID"
+                    }
+                }
+            }
+        }
+    ]
+}
+```
+
+**输出转换**:
+```json
+// 第一步：发送文本事件
+{
+    "type": "tool_event",
+    "toolSessionId": "requestId",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "回答内容"
+        }
+    }
+}
+
+// 第二步：发送完成事件
+{
+    "type": "tool_done",
+    "toolSessionId": "requestId"
+}
+```
+
+---
+
+### 2.4 Athena 协议（标准协议）
+
+**协议类型**: 两步协议（创建任务 + SSE）
+
+**请求流程**:
+1. **POST `/tasks`** - 创建任务，获取 `taskId`
+2. **GET `/stream?id={taskId}`** - 通过 SSE 获取流式结果
+
+**事件类型映射**:
+
+| Athena 数据类型 | Gateway 消息类型 | 说明 |
+|-----------------|------------------|------|
+| `text` | `tool_event` (text.delta) | 文本内容 |
+| `planning` | `tool_event` (thinking) | 规划中 |
+| `searching` | `tool_event` (searching) | 搜索中 |
+| `searchResult` | `tool_event` (search_result) | 搜索结果 |
+| `reference` | `tool_event` (reference) | 引用 |
+| `think` | `tool_event` (thinking) | 深度思考 |
+| `askMore` | `tool_event` (ask_more) | 追问 |
+| `isFinish=true` | `tool_done` | 完成 |
+
+**原始响应格式**:
+```json
+{
+    "code": "0",
+    "message": "",
+    "error": "",
+    "isFinish": false,
+    "data": {
+        "type": "text",
+        "content": "响应内容"
+    }
+}
+```
+
+**输出转换**:
+```json
+// Athena text → Gateway tool_event
+{
+    "type": "tool_event",
+    "toolSessionId": "taskId",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "响应内容"
+        }
+    }
+}
+```
+
+---
+
+## 3. Gateway 内部消息类型
+
+### 3.1 消息类型枚举
+
+| 消息类型 | 说明 | 触发场景 |
+|----------|------|----------|
+| `tool_event` | 工具事件 | 流式文本、思考过程、搜索状态等 |
+| `tool_done` | 工具完成 | 对话结束、任务完成 |
+| `tool_error` | 工具错误 | 发生错误 |
+
+### 3.2 tool_event 事件类型
+
+| 事件子类型 | 说明 | 来源协议 |
+|------------|------|----------|
+| `text.delta` | 文本增量 | Dify, AgentMaker, UniKnow, Athena |
+| `thinking` | 思考过程 | Dify(agent_thought), AgentMaker(PROCESSING), Athena(planning/think) |
+| `searching` | 搜索中 | Athena |
+| `search_result` | 搜索结果 | Athena |
+| `reference` | 引用 | Athena |
+| `ask_more` | 追问 | Athena |
+| `tool_exec` | 工具执行 | AgentMaker(TOOL_EXEC) |
+
+---
+
+## 4. 认证方式映射
+
+### 4.1 支持的认证类型
+
+| 认证类型 | Header 格式 | 适用协议 |
+|----------|-------------|----------|
+| `soa` | `Authorization: SOA token` | Dify(灵雀), UniKnow, Athena |
+| `apig` | `Authorization: apig token` | 通用 |
+| `bearer` | `Authorization: Bearer {api_key}` | Dify(白泽) |
+
+---
+
+## 5. 协议策略架构图
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      CloudRouteService                          │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │              协议编码映射 (mapProtocol)                   │  │
+│  │  1→rest  2→sse  3→websocket  4→dify  5→agentmaker       │  │
+│  │  6→uniknow  7→athena  8→standard                         │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                  │
+│                              ▼                                  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │              CloudProtocolStrategy (接口)                  │  │
+│  │  ┌─────────────────────────────────────────────────────┐  │  │
+│  │  │  getProtocol() → 返回协议名称                        │  │  │
+│  │  │  connect(context, lifecycle, onEvent, onError)      │  │  │
+│  │  └─────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              ▲                                  │
+│         ┌────────────────────┼────────────────────┐             │
+│         │                    │                    │             │
+│         ▼                    ▼                    ▼             │
+│  ┌─────────────┐    ┌───────────────┐    ┌───────────────┐    │
+│  │ DifyStrategy│    │AgentMakerStrategy│   │UniKnowStrategy│   │
+│  │  (SSE)      │    │    (SSE)       │    │   (REST)      │    │
+│  └─────────────┘    └───────────────┘    └───────────────┘    │
+│         │                    │                    │             │
+│         ▼                    ▼                    ▼             │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                    GatewayMessage                         │  │
+│  │  type: tool_event / tool_done / tool_error               │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 6. 输入参数映射
+
+### 6.1 上游请求 → CloudRequest 映射
+
+| 上游字段 | CloudRequest 字段 | 说明 |
+|----------|-------------------|------|
+| `type` | `cloudRequest.type` | 消息类型(text/image) |
+| `content` | `cloudRequest.content` | 用户输入内容 |
+| `sendUserAccount` | `cloudRequest.userId` | 发送人账号 |
+| `imGroupId` | `cloudRequest.groupId` | 群组ID |
+| `clientLang` | `cloudRequest.lang` | 客户端语言 |
+| `clientType` | `cloudRequest.clientType` | 客户端类型 |
+| `topicId` | `cloudRequest.topicId` | 会话主题ID |
+| `messageId` | `cloudRequest.messageId` | 消息ID |
+| `extParameters` | `cloudRequest.extParams` | 扩展参数 |
+
+---
+
+## 7. 错误处理映射
+
+### 7.1 HTTP 状态码处理
+
+| HTTP 状态码 | 处理方式 | Gateway 消息类型 |
+|-------------|----------|------------------|
+| 200 | 正常处理 | 根据协议解析 |
+| 401 | 认证失败 | `tool_error` |
+| 403 | 权限不足 | `tool_error` |
+| 404 | 端点不存在 | `tool_error` |
+| 5xx | 服务端错误 | `tool_error` |
+| 其他 | 未知错误 | `tool_error` |
+
+### 7.2 协议特定错误
+
+| 协议 | 错误标识 | 处理 |
+|------|----------|------|
+| Dify | `error` 事件 | 解析错误码和消息 |
+| Athena | `code != "0"` | 解析 error 字段 |
+| 通用 | 连接异常 | 捕获异常并转换 |
+
+---
+
+## 8. 生命周期管理
+
+### 8.1 CloudConnectionLifecycle 回调
+
+| 回调方法 | 触发时机 |
+|----------|----------|
+| `onConnected()` | 连接建立成功 |
+| `onEventReceived()` | 收到事件 |
+| `onHeartbeat()` | 收到心跳 |
+| `onTerminalEvent()` | 收到终端事件(tool_done/tool_error) |
+
+### 8.2 超时配置
+
+| 超时类型 | 默认值 | 配置项 |
+|----------|--------|--------|
+| 连接超时 | 30秒 | `gateway.cloud.connect-timeout-seconds` |
+| 首事件超时 | 30秒 | `gateway.cloud.first-event-timeout-seconds` |
+| 空闲超时 | 60秒 | `gateway.cloud.idle-timeout-seconds` |
+| 最大连接时长 | 10分钟 | `gateway.cloud.max-duration-seconds` |
+
+---
+
+## 9. 新增文件清单
+
+| 文件路径 | 说明 | 状态 |
+|----------|------|------|
+| `src/main/java/.../cloud/DifyProtocolStrategy.java` | Dify 协议策略 | 新增 |
+| `src/main/java/.../cloud/AgentMakerProtocolStrategy.java` | AgentMaker 协议策略 | 新增 |
+| `src/main/java/.../cloud/UniKnowProtocolStrategy.java` | UniKnow 协议策略 | 新增 |
+| `src/main/java/.../cloud/AthenaProtocolStrategy.java` | Athena 协议策略 | 新增 |
+| `src/main/java/.../cloud/StandardProtocolStrategy.java` | Standard 标准协议策略 | 新增 |
+| `src/test/java/.../cloud/DifyProtocolStrategyTest.java` | Dify 测试 | 新增 |
+| `src/test/java/.../cloud/AgentMakerProtocolStrategyTest.java` | AgentMaker 测试 | 新增 |
+| `src/test/java/.../cloud/UniKnowProtocolStrategyTest.java` | UniKnow 测试 | 新增 |
+
+---
+
+## 10. 代码位置引用
+
+| 组件 | 文件路径 | 行号 |
+|------|----------|------|
+| 协议映射 | `CloudRouteService.java` | 214-227 |
+| 协议策略接口 | `CloudProtocolStrategy.java` | 1 |
+| Dify 策略 | `DifyProtocolStrategy.java` | 1 |
+| AgentMaker 策略 | `AgentMakerProtocolStrategy.java` | 1 |
+| UniKnow 策略 | `UniKnowProtocolStrategy.java` | 1 |
+| Athena 策略 | `AthenaProtocolStrategy.java` | 1 |
+| GatewayMessage | `GatewayMessage.java` | 1 |
+| CloudConnectionLifecycle | `CloudConnectionLifecycle.java` | 1 |

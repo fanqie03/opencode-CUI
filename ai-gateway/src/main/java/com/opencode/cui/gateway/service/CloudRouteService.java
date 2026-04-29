@@ -211,13 +211,18 @@ public class CloudRouteService {
         }
     }
 
-    /** 上游 protocol 数字码 → 内部字符串：1=rest, 2=sse, 3=websocket */
+    /** 上游 protocol 数字码 → 内部字符串：1=rest, 2=sse, 3=websocket, 4=dify, 5=agentmaker, 6=uniknow, 7=athena, 8=standard */
     private String mapProtocol(String code) {
         if (code == null) return null;
         return switch (code) {
             case "1" -> "rest";
             case "2" -> "sse";
             case "3" -> "websocket";
+            case "4" -> "dify";
+            case "5" -> "agentmaker";
+            case "6" -> "uniknow";
+            case "7" -> "athena";
+            case "8" -> "standard";
             default -> code;
         };
     }
