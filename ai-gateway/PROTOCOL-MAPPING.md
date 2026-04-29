@@ -498,10 +498,21 @@
 | AgentMaker 状态 | Gateway 消息类型 | 说明 |
 |-----------------|------------------|------|
 | `PROCESSING` | `tool_event` (thinking) | 处理中 |
+| `PLANNING` | `tool_event` (thinking) | 规划中 |
+| `TOOL_EXECUTE` | `tool_event` (tool_exec) | 准备调用工具 |
+| `TOOL_RESULT` | `tool_event` (tool_exec) | 工具执行结果 |
+| `TOOL_NOT_FOUND` | `tool_event` (tool_exec) | 工具不存在 |
+| `SUMMARY` | `tool_event` (text.delta/thinking) | 总结（含思考内容） |
 | `ANSWER` | `tool_event` (text.delta) | 回答内容 |
+| `ASK_USER` | `tool_event` (ask_more) | 追问用户 |
+| `USER_CONFIRM` | `tool_event` (text.delta) | 用户确认（we卡） |
+| `END` | `tool_done` | 问答结束 |
 | `DONE` | `tool_done` | 完成 |
-| `TOOL_EXEC` | `tool_event` (tool_exec) | 工具执行 |
 | `ERROR` | `tool_error` | 错误 |
+| `HITL` | 忽略 | FlowChain消息回复事件 |
+| `CUSTOM_EVENT` | 忽略 | 知识agent默认事件 |
+| `ASYNC` | 忽略 | FlowChain异步事件 |
+| `RETRIVE` | 忽略 | 检索refer_list内容 |
 
 **输出转换示例**:
 
@@ -576,6 +587,178 @@
 {
     "type": "tool_done",
     "toolSessionId": "session-001"
+}
+```
+
+#### PLANNING（规划中）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"PLANNING","content":"正在规划解决方案..."}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "session-001",
+    "event": {
+        "type": "thinking",
+        "properties": {
+            "content": "正在规划解决方案..."
+        }
+    }
+}
+```
+
+#### TOOL_EXECUTE（准备调用工具）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"TOOL_EXECUTE","content":"准备查询天气","toolResult":{"toolName":"get_weather","parameters":{"city":"北京"}}}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "session-001",
+    "event": {
+        "type": "tool_exec",
+        "properties": {
+            "content": "准备查询天气",
+            "toolResult": {
+                "toolName": "get_weather",
+                "parameters": {"city": "北京"}
+            }
+        }
+    }
+}
+```
+
+#### TOOL_RESULT（工具执行结果）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"TOOL_RESULT","content":"查询完成","toolResult":{"toolName":"search","parameters":{"query":"华为云"},"result":"搜索结果内容"}}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "session-001",
+    "event": {
+        "type": "tool_exec",
+        "properties": {
+            "content": "查询完成",
+            "toolResult": {
+                "toolName": "search",
+                "parameters": {"query": "华为云"},
+                "result": "搜索结果内容"
+            }
+        }
+    }
+}
+```
+
+#### TOOL_NOT_FOUND（工具不存在）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"TOOL_NOT_FOUND","content":"工具不存在","toolResult":{"toolName":"unknown_tool"}}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "session-001",
+    "event": {
+        "type": "tool_exec",
+        "properties": {
+            "content": "工具不存在",
+            "toolResult": {
+                "toolName": "unknown_tool"
+            }
+        }
+    }
+}
+```
+
+#### SUMMARY（总结，含思考内容）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"SUMMARY","content":"<think>我需要总结回答</think>这是总结内容"}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "session-001",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "这是总结内容"
+        }
+    }
+}
+```
+
+#### ASK_USER（追问用户）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"ASK_USER","content":"你好，我是个智能助手，请问有什么可以帮助您？","requestId":"112233","sessionId":"778899"}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "778899",
+    "event": {
+        "type": "ask_more",
+        "properties": {
+            "content": "你好，我是个智能助手，请问有什么可以帮助您？"
+        }
+    }
+}
+```
+
+#### USER_CONFIRM（用户确认）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"USER_CONFIRM","content":"确认发送吗？"}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "session-001",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "确认发送吗？"
+        }
+    }
+}
+```
+
+#### END（问答结束）
+**原始响应**:
+```json
+{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"END","content":"问答结束"}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_done",
+    "toolSessionId": "session-001"
+}
+```
+
+#### ERROR（错误）
+**原始响应**:
+```json
+[{"status":"500","title":"Internal Server Error","detail":"服务未知异常"}]
+```
+**转换结果**:
+```json
+{
+    "type": "tool_error",
+    "toolSessionId": "session-001",
+    "error": "服务未知异常"
 }
 ```
 
