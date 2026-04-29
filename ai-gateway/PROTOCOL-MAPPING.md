@@ -88,25 +88,35 @@
 
 **事件类型映射**:
 
-| Dify 事件类型 | Gateway 消息类型 | 说明 |
-|---------------|------------------|------|
-| `message` | `tool_event` (text.delta) | 文本内容块 |
-| `agent_message` | `tool_event` (text.delta) | Agent 模式文本 |
-| `agent_thought` | `tool_event` (thinking) | Agent 思考过程 |
-| `text_chunk` | `tool_event` (text.delta) | Workflow 文本块 |
-| `message_end` | `tool_done` | 消息结束 |
-| `workflow_finished` | `tool_done` | 工作流结束 |
-| `error` | `tool_error` | 错误 |
-| `ping` | 忽略 | 心跳保持 |
+| 模式 | Dify 事件类型 | Gateway 消息类型 | 说明 |
+|------|---------------|------------------|------|
+| chatflow | `message` | `tool_event` (text.delta) | 文本内容块，需提取 `think` 标签后内容 |
+| agent | `agent_message` | `tool_event` (text.delta) | Agent 模式文本，需提取 `think` 标签后内容 |
+| agent | `agent_thought` | `tool_event` (thinking) | Agent 思考过程 |
+| workflow | `text_chunk` | `tool_event` (text.delta) | Workflow 文本块，需提取 `think` 标签后内容 |
+| 所有 | `message_end` | `tool_done` | 消息结束 |
+| workflow | `workflow_finished` | `tool_done` | 工作流结束 |
+| workflow | `workflow_started` | 忽略 | workflow 开始执行 |
+| workflow | `node_started` | 忽略 | node 开始执行 |
+| workflow | `node_finished` | 忽略 | node 执行结束 |
+| workflow | `tts_message` | 忽略 | TTS 音频流事件 |
+| workflow | `tts_message_end` | 忽略 | TTS 音频流结束事件 |
+| 所有 | `message_replace` | `tool_event` (text.delta) | 消息内容替换事件 |
+| 所有 | `message_file` | 忽略 | 文件事件 |
+| 所有 | `error` | `tool_error` | 错误 |
+| 所有 | `ping` | 忽略 | 心跳保持 |
+
+**特殊处理**：
+- `message` / `agent_message` / `text_chunk` 中的 `answer` / `text` 字段可能包含 `think` 标签，需要提取 `think` 标签后内容进行传递，开头的无效字符（如 `\n`、空格、空字符串）需要忽略
 
 **输出转换示例**:
 
-#### message / agent_message（文本内容）
+#### message / agent_message（文本内容，含 think 标签处理）
 **原始响应**:
 ```json
-{"event":"agent_message","answer":"您好，请问有什么可以帮助您？","conversation_id":"conv-001","message_id":"msg-001"}
+{"event":"agent_message","answer":"think\n好的，让我来思考用户的需求。\n\n您好，请问有什么可以帮助您？","conversation_id":"conv-001","message_id":"msg-001"}
 ```
-**转换结果**:
+**转换结果**（提取 `think` 标签后内容）:
 ```json
 {
     "type": "tool_event",
@@ -120,12 +130,12 @@
 }
 ```
 
-#### text_chunk（Workflow 文本块）
+#### text_chunk（Workflow 文本块，含 think 标签处理）
 **原始响应**:
 ```json
-{"event":"text_chunk","data":{"text":"工作流执行结果"},"task_id":"task-001"}
+{"event":"text_chunk","data":{"text":"think\n正在分析用户问题\n\n工作流执行结果"},"task_id":"task-001"}
 ```
-**转换结果**:
+**转换结果**（提取 `think` 标签后内容）:
 ```json
 {
     "type": "tool_event",
@@ -142,7 +152,7 @@
 #### agent_thought（思考过程）
 **原始响应**:
 ```json
-{"event":"agent_thought","thought":"我需要分析用户的问题","observation":"用户想要了解华为云","conversation_id":"conv-001"}
+{"event":"agent_thought","conversation_id":"conv-001","message_id":"msg-001","created_at":1775993023,"task_id":"task-001","id":"thought-001","position":1,"thought":"我需要分析用户的问题","observation":"用户想要了解华为云","tool":"","tool_labels":{},"tool_input":"","message_files":[]}
 ```
 **转换结果**:
 ```json
@@ -162,7 +172,7 @@
 #### message_end（消息结束）
 **原始响应**:
 ```json
-{"event":"message_end","conversation_id":"conv-001","message_id":"msg-001","metadata":{"usage":{"prompt_tokens":100,"completion_tokens":50}}}
+{"event":"message_end","conversation_id":"conv-001","message_id":"msg-001","created_at":1775993023,"task_id":"task-001","id":"msg-001","metadata":{"annotation_reply":null,"retriever_resources":[],"usage":{"prompt_tokens":16,"prompt_unit_price":"0","prompt_price_unit":"0.001","prompt_price":"0","completion_tokens":25,"completion_unit_price":"0","completion_price_unit":"0.001","completion_price":"0","total_tokens":41,"total_price":"0","currency":"RMB","latency":2.060744408518076,"time_to_first_token":null,"time_to_generate":null}},"files":null}
 ```
 **转换结果**:
 ```json
@@ -175,7 +185,7 @@
 #### workflow_finished（工作流结束）
 **原始响应**:
 ```json
-{"event":"workflow_finished","data":{"total_tokens":150,"result":"工作流完成"},"task_id":"task-001"}
+{"event":"workflow_finished","workflow_run_id":"7351221f-20b6-4dce-afe4-00f08518c2a9","task_id":"task-001","data":{"id":"7351221f-20b6-4dce-afe4-00f08518c2a9","workflow_id":"61de840d-fb67-4471-be35-8f79ebc548ea","status":"succeeded","outputs":{"a":"你好👋！有什么可以帮助你的吗？"},"error":null,"elapsed_time":1.979352,"total_tokens":24,"total_steps":4,"created_by":{"id":"0bf3e73f-7bb7-4d32-9062-10776beb7e67","user":"abc-123"},"created_at":1775994372,"finished_at":1775994374,"exceptions_count":0,"files":[]}}
 ```
 **转换结果**:
 ```json
@@ -188,14 +198,33 @@
 #### error（错误）
 **原始响应**:
 ```json
-{"event":"error","message":"请求超时","conversation_id":"conv-001"}
+{"event":"error","task_id":"task-001","message_id":"msg-001","status":500,"code":"internal_error","message":"服务内部错误"}
 ```
 **转换结果**:
 ```json
 {
     "type": "tool_error",
+    "toolSessionId": "task-001",
+    "error": "服务内部错误"
+}
+```
+
+#### message_replace（消息内容替换）
+**原始响应**:
+```json
+{"event":"message_replace","conversation_id":"conv-001","message_id":"msg-001","created_at":1775993023,"task_id":"task-001","answer":"这是替换后的内容"}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
     "toolSessionId": "conv-001",
-    "error": "请求超时"
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "这是替换后的内容"
+        }
+    }
 }
 ```
 
