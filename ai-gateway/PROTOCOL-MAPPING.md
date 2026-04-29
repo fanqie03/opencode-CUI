@@ -40,6 +40,22 @@
 - `toolSessionId` 优先从 `conversation_id` 获取，其次使用 `message_id` 或 `task_id`
 - `ping` 事件用于心跳保持，不转发
 
+**请求地址**:
+
+| 平台 | 模式 | 请求地址 |
+|------|------|----------|
+| 灵雀 | chatflow/agent/workflow | `/api/v1/chat-messages` |
+| 白泽 | chatflow/agent | `/v1/chat-messages` |
+| 白泽 | workflow | `/v1/workflows/run` |
+
+**请求头**:
+
+| 平台 | 请求头 | 说明 |
+|------|--------|------|
+| 灵雀 | `Authorization: SOA token - S008026` | S008026 表示为该 appId 的 SOA token |
+| 灵雀 | `x-app-id: {robot_id}` | 灵雀(dify)平台下的机器人 id |
+| 白泽 | `Authorization: Bearer {api_key}` | 每个机器人的固定秘钥 |
+
 **输入格式**（aiGateway CloudRequest → Dify）：
 
 | aiGateway CloudRequest 字段 | Dify 字段 | 说明 | 默认值 |
@@ -194,6 +210,18 @@
 **关键说明**: 
 - 响应中不包含 `topicId` 和 `messageId`，`toolSessionId` 从入参中提取（优先使用 `messageId`，其次使用 `topicId`）
 - **容错处理**：即使对接方未发送 `isFinish=true`，当 SSE 连接正常断开时也会自动发送 `tool_done` 事件
+
+**请求头**（支持多种认证方式）：
+
+| 认证类型 | 请求头 | 说明 |
+|----------|--------|------|
+| SOA token | `Authorization: soa_token` | athena 表示为该 appId 的 token |
+| SOA token | `x-id: xxx` | 附加参数 |
+| SOA token | `x-appkey: xxx` | 附加参数 |
+| IAM token | `Authorization: iam_token` | athena 表示为该 appId 的 token |
+| 集成账号 token | `Authorization: 集成账号token` | athena 表示为该 appId 的 token |
+| 自定义 token | `自定义key: 自定义value` | 自定义认证方式 |
+| cookie（附加） | `cookie: 个人cookie` | 附加 cookie |
 
 **输入格式映射**（aiGateway CloudRequest → 标准协议）：
 
@@ -656,6 +684,13 @@ Authorization: IAM token - S008026  # S008026 表示为该 appId 的 iam token
 - UniKnow 采用同步 REST 调用方式，非流式响应
 - `toolSessionId` 从响应中的 `requestId` 获取
 - 响应处理流程：先发送 `tool_event` 携带文本内容，再发送 `tool_done` 标记完成
+
+**请求头**:
+
+| 请求头 | 说明 |
+|--------|------|
+| `Authorization: SOAtoken - athena` | athena 表示为该 appId 的 SOA token |
+| `origin-tenant-id: {appId}` | 该机器人所属的 appId |
 
 **输入格式**（aiGateway CloudRequest → UniKnow）：
 
