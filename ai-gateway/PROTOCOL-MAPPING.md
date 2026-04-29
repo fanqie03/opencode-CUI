@@ -107,16 +107,34 @@
 | 所有 | `ping` | 忽略 | 心跳保持 |
 
 **特殊处理**：
-- `message` / `agent_message` / `text_chunk` 中的 `answer` / `text` 字段可能包含 `think` 标签，需要提取 `think` 标签后内容进行传递，开头的无效字符（如 `\n`、空格、空字符串）需要忽略
+- `message` / `agent_message` / `text_chunk` 中的 `answer` / `text` 字段可能包含 `<think>` 标签
+- `<think>` 标签内的内容需要提取出来，转换为 `thinking` 事件发送给前端展示
+- `</think>` 标签后的内容作为 `text.delta` 事件发送
 
 **输出转换示例**:
 
-#### message / agent_message（文本内容，含 think 标签处理）
+#### message / agent_message（文本内容，含 `<think>` 标签处理）
 **原始响应**:
 ```json
-{"event":"agent_message","answer":"think\n好的，让我来思考用户的需求。\n\n您好，请问有什么可以帮助您？","conversation_id":"conv-001","message_id":"msg-001"}
+{"event":"agent_message","answer":"<think>好的，让我来思考用户的需求。</think>您好，请问有什么可以帮助您？","conversation_id":"conv-001","message_id":"msg-001"}
 ```
-**转换结果**（提取 `think` 标签后内容）:
+**转换结果**（生成两个事件）:
+
+**第一个事件 - thinking**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "conv-001",
+    "event": {
+        "type": "thinking",
+        "properties": {
+            "content": "好的，让我来思考用户的需求。"
+        }
+    }
+}
+```
+
+**第二个事件 - text.delta**:
 ```json
 {
     "type": "tool_event",
@@ -130,12 +148,28 @@
 }
 ```
 
-#### text_chunk（Workflow 文本块，含 think 标签处理）
+#### text_chunk（Workflow 文本块，含 `<think>` 标签处理）
 **原始响应**:
 ```json
-{"event":"text_chunk","data":{"text":"think\n正在分析用户问题\n\n工作流执行结果"},"task_id":"task-001"}
+{"event":"text_chunk","data":{"text":"<think>正在分析用户问题</think>工作流执行结果"},"task_id":"task-001"}
 ```
-**转换结果**（提取 `think` 标签后内容）:
+**转换结果**（生成两个事件）:
+
+**第一个事件 - thinking**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "task-001",
+    "event": {
+        "type": "thinking",
+        "properties": {
+            "content": "正在分析用户问题"
+        }
+    }
+}
+```
+
+**第二个事件 - text.delta**:
 ```json
 {
     "type": "tool_event",
