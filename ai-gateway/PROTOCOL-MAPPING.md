@@ -216,8 +216,8 @@
 | 认证类型 | 请求头 | 说明 |
 |----------|--------|------|
 | SOA token | `Authorization: soa_token` | athena 表示为该 appId 的 token |
-| SOA token | `x-id: xxx` | 附加参数 |
-| SOA token | `x-appkey: xxx` | 附加参数 |
+| SOA token | `x-hw-id: xxx` |  -- athena |
+| SOA token | `x-appkey: xxx` | -- athena |
 | IAM token | `Authorization: iam_token` | athena 表示为该 appId 的 token |
 | 集成账号 token | `Authorization: 集成账号token` | athena 表示为该 appId 的 token |
 | 自定义 token | `自定义key: 自定义value` | 自定义认证方式 |

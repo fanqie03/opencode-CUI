@@ -6,7 +6,7 @@
 #- athena表示为该appId的token
 1.SOA token, apig token - athena
     Authorization = soa_token
-    x-id = xxx
+    x-hw-id = xxx
     x-appkey = xxx
 
 2. IAM token - athena
@@ -32,6 +32,12 @@
     "extParameters": {
         "isHwEmployee":true, // 是否是华为雇员
         "actionParam":"", // 机器人自定义参数
+        "filesCard": [ // 类型为filesCard时必传，其他类型非必传必传
+            {
+                "id":"223344", // 文件id
+                "order":1 // 文件顺序
+            }
+        ],
         "knowledgeId":["1122aa"] // 知识库id列表
     }
 }
@@ -529,14 +535,15 @@ Authorization = IAM token - S008026
 ```jsonc
 event:事件
 data:{
-    "errors":"详见下面错误码",
+    "errors":[{"status":"错误码", "title":"错误标题", "detail":"错误详情"}], // 异常情况1：erros为null，错误信息在content中，异常情况2：errors不为null，错误信息在errors中
+    "meta":null, // 详见下面错误码
     "meta":null,
     "data":{
         "id":"1",//无意义
         "type":"AgentDialogueVO",//<无意义
         "attributes":{
             "requestId":"traceId",
-            "agentStatus":"agent状态，和外层event已知",
+            "agentStatus":"agent状态，和外层event一致",
             "status":"预留字段",
             "content":"内容",
             "sessionId":"会话id",
@@ -557,6 +564,47 @@ data:{
         }
     }
 }
+```
+
+event值和含义
+
+```jsonc
+{
+    "PROCESSING":"接口收到请求后会立即返回", // 忽略处理
+    "PLANNING":"模型返回了规划的结果", // 忽略处理
+    "TOOL_EXECUTE":"模型准备调用技能，包含名称和模型提槽的参数", // 忽略处理
+    "TOOL_RESULT":"模型调用技能完成，返回包含技能的完整入参，出参",
+    "TOOL_NOT_FOUND":"模型调用技能失败，技能不存在", // 忽略处理
+    "SUMMARY":"模型返回了总结的结果,流式返回，每次之返回一段", // agentmaker的思考和恢复内容都放在summary中，思考内容放在<think></think>标签内，需要提取出来传给前端，</think>标签后，正式会打钱，会有 \n 空格 和空字符串内容需要识别出来忽略掉，开头无效字符忽略后，正式恢复需要返回给前端
+    "END":"问答结束", // 忽略处理
+    "ERROR":"agent运行异常", // 异常情况1：erros为null，错误信息在content中，异常情况2：errors不为null，错误信息在errors中
+    "ASK_USER":"agnet对用户发起了追问", // 目前转为了纯文本
+    "USER_CONFIRM":"内容为agentmaker的we卡，需要转为im的卡片消息，用户确认后，会返回确认结果，交互流程：xxx",
+    "HITL":"FlowChain消息回复事件。", // 忽略处理
+    "CUSTOM_EVENT":"知识agent默认返回的事件", // 忽略处理
+    "ASYNC":"FlowChain异步事件，当用户配置了工作流，而这个工作流有时配置成了异步，当agent运行这个工作流是，就会返回这个事件，整个返回与ToolResult事件相同",// 忽略处理
+    "RETRIVE":"检索refer_list内容" // 忽略处理
+}
+```
+错误示例：
+```jsonc
+[
+    {
+        "status":"500",
+        "title":"Internal Server Error",
+        "detail":"服务未知异常"
+    }
+]
+
+```
+返回示例
+
+```jsonc
+event:PROCESSING
+data:{"errors":null, "meta":null, "data":{"id":"1", "type":"AgentDialogueVO", "attributes":{"requestId":"112233", "agentStatus":"PROCESSING", "status":null, "content":null, "sessionId":"778899", "toolResult":null}}}
+
+event:ASK_USER
+data:{"errors":null, "meta":null, "data":{"id":"1", "type":"AgentDialogueVO", "attributes":{"requestId":"112233", "agentStatus":"ASK_USER", "status":null, "content":"你好，我是个智能助手", "sessionId":"778899", "toolResult":null}}}
 ```
 
 ## uniknow (普通http请求)
