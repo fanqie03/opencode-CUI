@@ -470,10 +470,13 @@
 
 **输入格式**（aiGateway CloudRequest → AgentMaker）：
 
-| aiGateway CloudRequest 字段 | AgentMaker 字段 | 说明 |
-|-----------------------------|-----------------|------|
-| `content` | `userInput` | 用户输入内容 |
-| `topicId` | `sessionId` | 会话 ID |
+| aiGateway CloudRequest 字段 | AgentMaker 字段 | 说明 | 默认值 |
+|-----------------------------|-----------------|------|--------|
+| `content` | `userInput` | 用户输入内容 | - |
+| `topicId` | `sessionId` | 会话 ID（无值新会话，有值当前会话） | - |
+| `sendUserAccount` | `w3Account` | 用户账号 | - |
+| `extParameters.agentUuid` | `agentUuid` | AgentMaker 平台下机器人的 ID | - |
+| - | `needSave` | 是否保存会话 | `true` |
 
 **aiGateway 输入格式**:
 ```json
@@ -481,16 +484,27 @@
     "content": "用户输入内容",
     "contentType": "text",
     "topicId": "session-001",
-    "extParameters": {}
+    "sendUserAccount": "user-001",
+    "extParameters": {
+        "agentUuid": "agent-123"
+    }
 }
 ```
 
 **转换后的 AgentMaker 输入格式**:
 ```json
 {
+    "agentUuid": "agent-123",
     "userInput": "用户输入内容",
-    "sessionId": "session-001"
+    "sessionId": "session-001",
+    "w3Account": "user-001",
+    "needSave": true
 }
+```
+
+**入参 Header**:
+```
+Authorization: IAM token - S008026  # S008026 表示为该 appId 的 iam token
 ```
 
 **事件类型映射**:
@@ -507,7 +521,6 @@
 | `ASK_USER` | `tool_event` (ask_more) | agent对用户发起了追问 |
 | `USER_CONFIRM` | `tool_event` (text.delta) | 用户确认（we卡，需要转为im的卡片消息） |
 | `END` | 忽略 | 问答结束 |
-| `DONE` | `tool_done` | 完成 |
 | `ERROR` | `tool_error` | agent运行异常 |
 | `HITL` | 忽略 | FlowChain消息回复事件 |
 | `CUSTOM_EVENT` | 忽略 | 知识agent默认返回的事件 |
@@ -616,18 +629,6 @@
 }
 ```
 
-#### DONE（完成）
-**原始响应**:
-```json
-{"errors":"","meta":null,"data":{"id":"1","type":"AgentDialogueVO","attributes":{"agentStatus":"DONE","content":"对话结束"}}}
-```
-**转换结果**:
-```json
-{
-    "type": "tool_done",
-    "toolSessionId": "session-001"
-}
-```
 
 #### ERROR（错误）
 **原始响应**:
