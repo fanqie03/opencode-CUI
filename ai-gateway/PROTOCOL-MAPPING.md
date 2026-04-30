@@ -865,53 +865,197 @@ Authorization: IAM token - S008026  # S008026 表示为该 appId 的 iam token
 
 ---
 
-### 2.4 Athena 协议（标准协议）
+### 2.4 Athena 协议
 
-**协议类型**: 两步协议（创建任务 + SSE）
+**协议类型**: 两步协议（HTTP + SSE）
+
+**适用场景**: Athena 智能对话系统对接
 
 **请求流程**:
-1. **POST `/tasks`** - 创建任务，获取 `taskId`
-2. **GET `/stream?id={taskId}`** - 通过 SSE 获取流式结果
+1. **首次对话**：POST `/chat` → 获取 SSE ID → GET `/sse?id={sse_id}`
+2. **二次对话**（切换模型）：POST `/rechat` → 获取 SSE ID → GET `/sse?id={sse_id}`
 
-**事件类型映射**:
+**请求地址**:
 
-| Athena 数据类型 | Gateway 消息类型 | 说明 |
-|-----------------|------------------|------|
-| `text` | `tool_event` (text.delta) | 文本内容 |
-| `planning` | `tool_event` (thinking) | 规划中 |
-| `searching` | `tool_event` (searching) | 搜索中 |
-| `searchResult` | `tool_event` (search_result) | 搜索结果 |
-| `reference` | `tool_event` (reference) | 引用 |
-| `think` | `tool_event` (thinking) | 深度思考 |
-| `askMore` | `tool_event` (ask_more) | 追问 |
-| `isFinish=true` | `tool_done` | 完成 |
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/chat` | POST | 首次 HTTP 请求 |
+| `/rechat` | POST | 二次 HTTP 请求（仅切换模型时调用） |
+| `/sse?id={sse_id}` | GET | SSE 订阅请求，id 放 URL 中 |
 
-**原始响应格式**:
+**请求头**:
+
+| 请求头 | 说明 |
+|--------|------|
+| `Authorization: {集成账号token}` | 集成账号认证 |
+| `cookie: {个人cookie}` | 个人 cookie |
+| `x-tenant-id: {租户id}` | 租户 ID |
+| `x-welink-id: {个人账号}` | 个人账号 |
+
+**输入格式**（aiGateway CloudRequest → Athena HTTP）：
+
+| aiGateway CloudRequest 字段 | Athena 字段 | 说明 | 默认值 |
+|-----------------------------|-------------|------|--------|
+| `extParameters.botId` | `botId` | 机器人 ID | - |
+| `extParameters.skillType` | `skillType` | 技能类型 | `"skill"` |
+| `extParameters.skillId` | `skillId` | 技能 ID | - |
+| `contentType` | `msgType` | 消息类型 | `"text"` |
+| `content` | `msgBody` | 消息体 | - |
+| `clientType` | `clientType` | 设备类型 | - |
+| `clientLang` | `clientLang` | 客户端语言 | `"zh"` |
+| `extParameters.version` | `version` | 客户端版本 | `"20260414"` |
+| `imGroupId` | `imGroupId` | IM 群组 ID | - |
+| `topicId` | `topicId` | 会话主题 ID | - |
+| `messageId` | `userMessageId` | 用户消息 ID（用于二次对话保持连续性） | - |
+| - | `channel` | 通道类型 | `"sse"` |
+| - | `requireMsgType` | 消息类型 | `"ATHENA-STREAM-CARD"` |
+| `extParameters.extraParameters` | `extraParameters` | 额外参数 | `{}` |
+
+**aiGateway 输入格式**:
 ```json
 {
-    "code": "0",
-    "message": "",
-    "error": "",
-    "isFinish": false,
-    "data": {
-        "type": "text",
-        "content": "响应内容"
+    "content": "用户输入内容",
+    "contentType": "text",
+    "sendUserAccount": "user-001",
+    "clientType": "asst-pc",
+    "clientLang": "zh",
+    "topicId": "topic-001",
+    "messageId": "msg-001",
+    "extParameters": {
+        "botId": "robot-123",
+        "skillType": "skill",
+        "skillId": "skill-456",
+        "version": "20260414",
+        "extraParameters": {
+            "pluginSetting": {
+                "switchModel": "QWEN-V3-8B"
+            }
+        }
     }
 }
 ```
 
-**输出转换**:
+**HTTP 响应**（chat/rechat 返回相同格式）:
 ```json
-// Athena text → Gateway tool_event
+{
+    "data": "sse_id 用于后续sse请求",
+    "code": "200",
+    "message": "ok"
+}
+```
+
+**SSE 事件类型映射**:
+
+| Athena eventType | Gateway 消息类型 | 说明 |
+|------------------|------------------|------|
+| `route` | 忽略 | 路由事件，传递技能配置信息 |
+| `processStep` | `tool_event` (thinking) | 处理步骤，根据 code 判断类型 |
+| `message` | `tool_event` (text.delta) | 文本消息内容 |
+| `question` | `tool_event` (ask_more) | 追问事件（textList 多段文本列表） |
+| `planning` | `tool_event` (thinking) | 计划事件 |
+| `searching` | `tool_event` (searching) | 搜索中 |
+| `searchResult` | `tool_event` (search_result) | 搜索结果 |
+| `reference` | `tool_event` (reference) | 引用 |
+| `askMore` | `tool_event` (ask_more) | 猜你想问 |
+| `think` | `tool_event` (thinking) | 思考阶段 |
+| `error` | `tool_error` | 错误 |
+| `finish` | `tool_done` | 完成 |
+| `ping` | 忽略 | 心跳事件 |
+| `urlAttachment` | 忽略 | 附件事件 |
+
+**processStep.code 映射**:
+
+| processStep.code | Gateway 事件类型 | 说明 |
+|------------------|------------------|------|
+| `PROCESSING` | `tool_event` (thinking) | 处理中 |
+| `download` | `tool_event` (thinking) | 下载中 |
+| `analyze` | `tool_event` (thinking) | 分析中 |
+| `think` | `tool_event` (thinking) | 思考中 |
+
+**SSE 输出转换示例**:
+
+#### message（文本消息）
+**原始响应**:
+```json
+{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","messageBody": {"text": "你好，我是Qwen模型"},"eventType": "message"}}
+```
+**转换结果**:
+```json
 {
     "type": "tool_event",
-    "toolSessionId": "taskId",
+    "toolSessionId": "1122",
     "event": {
         "type": "text.delta",
         "properties": {
-            "content": "响应内容"
+            "content": "你好，我是Qwen模型"
         }
     }
+}
+```
+
+#### processStep（处理步骤）
+**原始响应**:
+```json
+{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","processStep": {"type": "TEXT","code": "think","message": "思考中...用户说的是..."},"eventType": "processStep"}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "1122",
+    "event": {
+        "type": "thinking",
+        "properties": {
+            "content": "思考中...用户说的是..."
+        }
+    }
+}
+```
+
+#### question（追问）
+**原始响应**:
+```json
+{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","messageBody": {"textList": ["今天天气怎么样", "我需要一个天气报告"]},"eventType": "question"}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "1122",
+    "event": {
+        "type": "ask_more",
+        "properties": {
+            "questions": ["今天天气怎么样", "我需要一个天气报告"]
+        }
+    }
+}
+```
+
+#### error（错误）
+**原始响应**:
+```json
+{"code": "500","message": "服务器内部错误", "messageEn": "Internal Server Error", "eventType": "error"}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_error",
+    "toolSessionId": "",
+    "error": "服务器内部错误"
+}
+```
+
+#### finish（完成）
+**原始响应**:
+```
+event:finish
+data:FINISH
+```
+**转换结果**:
+```json
+{
+    "type": "tool_done",
+    "toolSessionId": ""
 }
 ```
 
