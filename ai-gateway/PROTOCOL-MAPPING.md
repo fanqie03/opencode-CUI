@@ -203,65 +203,6 @@
 }
 ```
 
-#### message_end（消息结束）
-**原始响应**:
-```json
-{"event":"message_end","conversation_id":"conv-001","message_id":"msg-001","created_at":1775993023,"task_id":"task-001","id":"msg-001","metadata":{"annotation_reply":null,"retriever_resources":[],"usage":{"prompt_tokens":16,"prompt_unit_price":"0","prompt_price_unit":"0.001","prompt_price":"0","completion_tokens":25,"completion_unit_price":"0","completion_price_unit":"0.001","completion_price":"0","total_tokens":41,"total_price":"0","currency":"RMB","latency":2.060744408518076,"time_to_first_token":null,"time_to_generate":null}},"files":null}
-```
-**转换结果**:
-```json
-{
-    "type": "tool_done",
-    "toolSessionId": "conv-001"
-}
-```
-
-#### workflow_finished（工作流结束）
-**原始响应**:
-```json
-{"event":"workflow_finished","workflow_run_id":"7351221f-20b6-4dce-afe4-00f08518c2a9","task_id":"task-001","data":{"id":"7351221f-20b6-4dce-afe4-00f08518c2a9","workflow_id":"61de840d-fb67-4471-be35-8f79ebc548ea","status":"succeeded","outputs":{"a":"你好👋！有什么可以帮助你的吗？"},"error":null,"elapsed_time":1.979352,"total_tokens":24,"total_steps":4,"created_by":{"id":"0bf3e73f-7bb7-4d32-9062-10776beb7e67","user":"abc-123"},"created_at":1775994372,"finished_at":1775994374,"exceptions_count":0,"files":[]}}
-```
-**转换结果**:
-```json
-{
-    "type": "tool_done",
-    "toolSessionId": "task-001"
-}
-```
-
-#### error（错误）
-**原始响应**:
-```json
-{"event":"error","task_id":"task-001","message_id":"msg-001","status":500,"code":"internal_error","message":"服务内部错误"}
-```
-**转换结果**:
-```json
-{
-    "type": "tool_error",
-    "toolSessionId": "task-001",
-    "error": "服务内部错误"
-}
-```
-
-#### message_replace（消息内容替换）
-**原始响应**:
-```json
-{"event":"message_replace","conversation_id":"conv-001","message_id":"msg-001","created_at":1775993023,"task_id":"task-001","answer":"这是替换后的内容"}
-```
-**转换结果**:
-```json
-{
-    "type": "tool_event",
-    "toolSessionId": "conv-001",
-    "event": {
-        "type": "text.delta",
-        "properties": {
-            "content": "这是替换后的内容"
-        }
-    }
-}
-```
-
 ---
 
 ### 2.2 标准协议（Standard）
@@ -759,9 +700,10 @@ Authorization: IAM token - S008026  # S008026 表示为该 appId 的 iam token
 
 | aiGateway CloudRequest 字段 | UniKnow 字段 | 说明 | 默认值 |
 |-----------------------------|--------------|------|--------|
-| `content` | `query` | 用户输入内容 | - |
-| `sendUserAccount` | `user` | 用户账号 | - |
-| `extParameters` | - | 扩展参数 | - |
+| `content` | `input_text` | 用户输入内容 | - |
+| `sendUserAccount` | `user_id` | 用户 ID | - |
+| `extParameters.cookie` | `set_meta_data.cookie` | 个人 cookie | - |
+| `extParameters.robot_uuid` | `robot_uuid` | UniKnow 平台机器人 ID | - |
 
 **aiGateway 输入格式**:
 ```json
@@ -770,15 +712,22 @@ Authorization: IAM token - S008026  # S008026 表示为该 appId 的 iam token
     "contentType": "text",
     "sendUserAccount": "user-001",
     "topicId": "topic-001",
-    "extParameters": {}
+    "extParameters": {
+        "robot_uuid": "robot-123",
+        "cookie": "personal-cookie"
+    }
 }
 ```
 
 **转换后的 UniKnow 输入格式**:
 ```json
 {
-    "query": "用户输入内容",
-    "user": "user-001"
+    "input_text": "用户输入内容",
+    "user_id": "user-001",
+    "set_meta_data": {
+        "cookie": "personal-cookie"
+    },
+    "robot_uuid": "robot-123"
 }
 ```
 
@@ -825,40 +774,50 @@ Authorization: IAM token - S008026  # S008026 表示为该 appId 的 iam token
 }
 ```
 
-#### 响应为空（无回答内容）
+#### 无结果响应
 **原始响应**:
 ```json
 {
     "data": [
         {
-            "taskInfo": {
-                "slots": {
-                    "result": {
-                        "data": "",
-                        "requestId": "req-67890"
-                    }
-                }
-            }
+            "chatScriptContent": "抱歉，我还在学习中，请换个问题试试呗~"
         }
     ]
 }
 ```
 
-**转换结果**:
+**转换结果 - 第一步（文本事件）**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "抱歉，我还在学习中，请换个问题试试呗~"
+        }
+    }
+}
+```
+
+**转换结果 - 第二步（完成事件）**:
 ```json
 {
     "type": "tool_done",
-    "toolSessionId": "req-67890"
+    "toolSessionId": ""
 }
 ```
 
 #### 异常响应（HTTP 非 200 状态码）
 **原始响应**:
 ```json
-{
-    "error": "服务内部错误",
-    "code": 500
-}
+[
+    {
+        "status": "500",
+        "title": "Internal Server Error",
+        "detail": "服务未知异常"
+    }
+]
 ```
 
 **转换结果**:
@@ -866,7 +825,7 @@ Authorization: IAM token - S008026  # S008026 表示为该 appId 的 iam token
 {
     "type": "tool_error",
     "toolSessionId": "",
-    "error": "UniKnow service error: 服务内部错误"
+    "error": "服务未知异常"
 }
 ```
 
