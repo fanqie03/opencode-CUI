@@ -207,13 +207,16 @@
 
 ### 2.2 标准协议（Standard）
 
-**协议类型**: SSE（Server-Sent Events）
+**协议类型**: 支持两种请求方式
+- **流式**: SSE（Server-Sent Events）
+- **非流式**: REST（同步请求，仅支持 text 类型）
 
 **适用场景**: 通用标准协议，支持多种消息类型
 
 **关键说明**: 
 - 响应中不包含 `topicId` 和 `messageId`，`toolSessionId` 从入参中提取（优先使用 `messageId`，其次使用 `topicId`）
-- **容错处理**：即使对接方未发送 `isFinish=true`，当 SSE 连接正常断开时也会自动发送 `tool_done` 事件
+- **流式容错处理**：即使对接方未发送 `isFinish=true`，当 SSE 连接正常断开时也会自动发送 `tool_done` 事件
+- **非流式限制**：仅支持 `text` 类型，一次性返回完整响应
 
 **请求头**（支持多种认证方式）：
 
@@ -481,6 +484,37 @@
 {"code":"0","message":"","error":"","isFinish":true,"data":{"type":"text","content":"回答已完成"}}
 ```
 **转换结果**:
+```json
+{
+    "type": "tool_done",
+    "toolSessionId": "123"
+}
+```
+
+### 非流式协议输出转换示例
+
+**说明**: 非流式协议采用同步 REST 调用，一次性返回完整响应，仅支持 `text` 类型。
+
+**原始响应**:
+```json
+{"code":"0","message":"","error":"","isFinish":true,"data":{"type":"text","content":"您好，我是智能助手。"}}
+```
+
+**转换结果 - 第一步（文本事件）**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "123",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "您好，我是智能助手。"
+        }
+    }
+}
+```
+
+**转换结果 - 第二步（完成事件）**:
 ```json
 {
     "type": "tool_done",
