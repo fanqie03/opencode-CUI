@@ -1,6 +1,8 @@
 
 ## 标准协议
 
+支持两种请求方式，流式和非流式。
+
 ### 入参header
 
 #- athena表示为该appId的token
@@ -18,7 +20,7 @@
 5. cookie(附加)
     cookie: 个人cookie
 
-### 入参
+### 入参 -- 流式和非流式一样的结构，非流式只支持text
 ```jsonc
 {
     "type":"text",  // IMAGE-V1 图片, text文本, WELINK-CARD-ACTION, filesCard 文件卡片
@@ -105,6 +107,31 @@ data: {"code":"0", "message":"", "error":"", "isFinish":false, "data":{"type":"t
 data: {"code":"0", "message":"", "error":"", "isFinish":false, "data":{"type":"askMore", "askMore":["如何创建项目？", "支持哪些语言？"]}}
 ```
 
+### 出参(非流式)
+
+#### 定义
+
+```jsonc
+{
+    "code":"0",
+    "message":"提示信息",
+    "error":"异常信息",
+    "isFinish": true, // 流式响应是否结束
+    "data":{
+        "type":"text", // text必选
+        "content":"响应文本内容", //type为text时，返回的内容
+    }
+}
+```
+
+#### 返回示例 一次性返回
+
+```json
+{"code":"0", "message":"", "error":"", "isFinish":true, "data":{"type":"text", "content":"您好，我是智能助手。"}}
+```
+
+
+
 ## 灵雀/白泽(dify) (sse请求
 
 > dify 协议 https://docs.dify.ai/api-reference/%E5%AF%B9%E8%AF%9D%E6%B6%88%E6%81%AF/%E5%8F%91%E9%80%81%E5%AF%B9%E8%AF%9D%E6%B6%88%E6%81%AF
@@ -143,6 +170,16 @@ Authorization: Bearer {api_key}
 ```
 
 ### 出参body
+
+需要处理的event
+下面的event，可能会将<think>放到text_chunk, message, agent_message中，需要特殊处理
+```jsonc
+{
+    "workflow": ["text_chunk"],
+    "chatflow": ["message"],
+    "agent": ["agent_message", "agent_thought"],
+}
+```
 
 
 #### workflow
@@ -349,6 +386,16 @@ event: ping 每 10s 一次的 ping 事件，保持连接存活。
 ```js
 data: {"event":"agent_thought","conversation_id":"9ad8afe6-a00c-499c-a5f0-b2bfe5d74a49","message_id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","created_at":1775993023,"task_id":"3cd95f53-e1c4-45c3-8ef4-59f5d6def0dc","id":"98861ecb-38c7-478c-890f-33bffe2aaef2","position":1,"thought":"","observation":"","tool":"","tool_labels":{},"tool_input":"","message_files":[]}
 
+
+data: {"event":"agent_message","conversation_id":"9ad8afe6-a00c-499c-a5f0-b2bfe5d74a49","message_id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","created_at":1775993023,"task_id":"3cd95f53-e1c4-45c3-8ef4-59f5d6def0dc","id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","answer":"<think>"}
+
+data: {"event":"agent_message","conversation_id":"9ad8afe6-a00c-499c-a5f0-b2bfe5d74a49","message_id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","created_at":1775993023,"task_id":"3cd95f53-e1c4-45c3-8ef4-59f5d6def0dc","id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","answer":"好的，让我来思考用户的需求。"}
+
+
+data: {"event":"agent_message","conversation_id":"9ad8afe6-a00c-499c-a5f0-b2bfe5d74a49","message_id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","created_at":1775993023,"task_id":"3cd95f53-e1c4-45c3-8ef4-59f5d6def0dc","id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","answer":"用户打招呼说你好"}
+
+data: {"event":"agent_message","conversation_id":"9ad8afe6-a00c-499c-a5f0-b2bfe5d74a49","message_id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","created_at":1775993023,"task_id":"3cd95f53-e1c4-45c3-8ef4-59f5d6def0dc","id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","answer":"</think>"}
+
 data: {"event":"agent_message","conversation_id":"9ad8afe6-a00c-499c-a5f0-b2bfe5d74a49","message_id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","created_at":1775993023,"task_id":"3cd95f53-e1c4-45c3-8ef4-59f5d6def0dc","id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","answer":"你好！有什么可以帮助你的吗？"}
 
 data: {"event":"agent_message","conversation_id":"9ad8afe6-a00c-499c-a5f0-b2bfe5d74a49","message_id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","created_at":1775993023,"task_id":"3cd95f53-e1c4-45c3-8ef4-59f5d6def0dc","id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","answer":"无论是写作还是纠错，我都会尽力协助你。请告诉我你的需求。"}
@@ -482,6 +529,16 @@ data: {"event":"node_finished","conversation_id":"5c788d53-3148-4a04-9b2d-47f1e5
 
 data: {"event":"node_started","conversation_id":"5c788d53-3148-4a04-9b2d-47f1e5cc274c","message_id":"d92e3d00-935c-46e7-bc33-4132729f35e2","created_at":1775993860,"task_id":"9d244c23-b6d2-4fb3-b9d1-1779e5fa965c","workflow_run_id":"a2d83893-4c10-4c9c-83db-1b79fe921dc6","data":{"id":"a950925c-5450-46c4-8749-a986675a9ab1","node_id":"1775993259991","node_type":"llm","title":"LLM","index":1,"predecessor_node_id":null,"inputs":null,"inputs_truncated":false,"created_at":1775993861,"extras":{},"iteration_id":null,"loop_id":null,"agent_strategy":null}}
 
+
+data: {"event":"message","conversation_id":"9ad8afe6-a00c-499c-a5f0-b2bfe5d74a49","message_id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","created_at":1775993023,"task_id":"3cd95f53-e1c4-45c3-8ef4-59f5d6def0dc","id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","answer":"<think>"}
+
+data: {"event":"message","conversation_id":"9ad8afe6-a00c-499c-a5f0-b2bfe5d74a49","message_id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","created_at":1775993023,"task_id":"3cd95f53-e1c4-45c3-8ef4-59f5d6def0dc","id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","answer":"好的，让我来思考用户的需求。"}
+
+
+data: {"event":"message","conversation_id":"9ad8afe6-a00c-499c-a5f0-b2bfe5d74a49","message_id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","created_at":1775993023,"task_id":"3cd95f53-e1c4-45c3-8ef4-59f5d6def0dc","id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","answer":"用户打招呼说你好"}
+
+data: {"event":"message","conversation_id":"9ad8afe6-a00c-499c-a5f0-b2bfe5d74a49","message_id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","created_at":1775993023,"task_id":"3cd95f53-e1c4-45c3-8ef4-59f5d6def0dc","id":"b4dec4ef-b287-4bfb-a0fa-d7c3bd10bd60","answer":"</think>"}
+
 data: {"event":"message","conversation_id":"5c788d53-3148-4a04-9b2d-47f1e5cc274c","message_id":"d92e3d00-935c-46e7-bc33-4132729f35e2","created_at":1775993860,"task_id":"9d244c23-b6d2-4fb3-b9d1-1779e5fa965c","id":"d92e3d00-935c-46e7-bc33-4132729f35e2","answer":"你好👋！有什么","from_variable_selector":["1775993259991","text"]}
 
 data: {"event":"message","conversation_id":"5c788d53-3148-4a04-9b2d-47f1e5cc274c","message_id":"d92e3d00-935c-46e7-bc33-4132729f35e2","created_at":1775993860,"task_id":"9d244c23-b6d2-4fb3-b9d1-1779e5fa965c","id":"d92e3d00-935c-46e7-bc33-4132729f35e2","answer":"可以帮助你的吗？","from_variable_selector":["1775993259991","text"]}
@@ -517,6 +574,7 @@ data: {"event":"workflow_finished","conversation_id":"5c788d53-3148-4a04-9b2d-47
 
 #S008026表示为该appId的iamtoken
 Authorization = IAM token - S008026
+cookie = 个人cookie
 
 ### 入参body
 
@@ -667,8 +725,16 @@ origin-tenant-id: 改机器人所属的appId
 
 流程：先执行一个http操作返回id，再执行sse(带上id)获取对话结果
 
+存在二次对话流程（就是在同一个messageId进行二次对话，主要是用来切换模型），二次对话流程也是先执行一个http操作返回id，再执行sse(带上id)获取对话结果，只是接口和入参不同
 
-### 入参header
+
+### 接口
+
+/chat -- 首次http请求
+/rechat -- 二次http请求，仅限需要切换模型时候才调用，其他情况都用/chat
+/sse -- 首次和二次都掉这个sse请求，id放url中  ?id=sse_id
+
+### 入参header，都是这样
 Authorization=集成账号token
 cookie=个人cookie
 x-tenant-id=租户id
@@ -688,23 +754,178 @@ x-welink-id=个人账号
     "version":"20260414",//客户端版本
     "imGroupId":"im群id",
     "topicId":"会话主题id", //
+    "multipleDialogueId": "多轮对话id，用于文档ai读，消息ai读时的上下文id", //
     "channel":"sse",
-    "extraParameters":{} // 额外参数
+
+    // 二次对话时，需要传递messageId，messageId是首次对话时返回的id，用于保持对话的连续性
+    "userMessageId":"第一次对话时返回的id",
+    "requireMsgType":"ATHENA-STREAM-CARD", // 固定
+    // 其他参数
+    "extraParameters":{
+        "pluginSetting": {
+            "switchModel": "QWEN-V3-8B" // 需要切换的模型
+        }
+    } // 额外参数
 }
 ```
 
 ### 入参body sse
 无
 
-get请求，id放url中  ?id=sse id
+get请求，id放url中  ?id=sse id&clientType=端测类型&version=端测版本
 
-### 出参body http
+### 出参body http，chat和rechat都这样返回
 ```jsonc
 {
-    "data":"long类型的sse id",
+    "data":"long类型的sse id, 用于后续sse请求,用户的消息id，也是单次对话，一问一答的会话id",
     "code":"200",
     "message":"ok"
 }
 ```
 ### 出参body sse
-todo
+```jsonc
+{
+    "code":"响应码",
+    "message":"中文响应信息",
+    "messageEn":"英文响应信息",
+    "exceptionLocation":"异常位置",
+    "errorMsgTypeEnum":"异常类型  CLIENT(客户端)、THIRD_ROBOT(第三方机器人)、INNER(内部异常)",
+    "errorMsg":"错误信息",
+    "data":{
+        "messageId":"消息唯一Id，这里是指机器人回复的那条消息id，和chat接口返回的id不一样",
+        "topicId":"会话主题id，和会话id不一样，会话id是用户的消息id，也是会话id",
+        "messageType":"消息类型", // 如 "text", "image", "html"
+        "robotId":"机器人id",
+        "sendAt":"回复时间",
+        "costTime":"耗时",
+        "w3Account":"个人账号",
+        "messageBody":{
+            "text":"文本内容",
+            "textList":[], // 若为追问，此处为多段文本列表
+            "imageInfoList":[], // 若为图片，此处为图片信息列表，包含url、宽、高
+        }, //"消息体"
+        "skillInfo":{
+            "skillId":"技能id",
+            "resultType":"结果类型", //返回的结果格式，如“text”，“list”，“image”
+            "skillName":"技能名称",
+            "isSupportQuestion":false, // 是否支持追问
+            "showFeedbackCard":false, // 是否展示反馈卡片
+            "jumpLink":"跳转链接", // 跳转链接，可以查看详情
+            "actions":[
+                {
+                    "key":"action1", // 操作key
+                    "value":"操作1", // 操作值
+                    "icon":"操作图标", // 操作图标
+                    "iconType":"default", // 操作图标类型
+                    "operationType":"操作类型", // 操作类型
+                    "defaultSubActionKey":"默认子操作key", // 默认子操作key
+                    "subActions":[ // 子操作列表
+                        {
+                            "key":"subAction1", // 子操作key
+                            "value":"子操作1", // 子操作值
+                            "valueEn":"子操作1", // 子操作值
+                            "icon":"子操作图标", // 子操作图标
+                            "iconType":"default", // 子操作图标类型
+                        }
+                    ]
+                }
+            ],
+            "pluginSetting":{}, // 插件配置参数，键值对
+            "multipleDialogueContext":{
+                "multipleDialogueId":"多轮对话id，用于文档ai读，消息ai读时的上下文id",
+                "contextType":"上下文类型",
+                "contextBody":{
+                    "text":"上下文内容",
+                    "textEn":"上下文内容英文",
+                    "referenceText":"引用上下文",
+                    "referenceTextEn":"引用上下文英文"
+                }
+            }, // 多轮对话上下文，键值对
+            "requireMsgType":"text" // 当前技能要求的消息类型
+        },
+        "processStep": {
+            "type":"TEXT",
+            "code":"PROCESSING",
+            "message":"中文响应信息",
+            "messageEn":"英文响应信息",
+        }, //"当前处理步骤"
+        "messageSetting":{
+            "disableRetry":false // 是否禁用重试
+        },
+        /**
+         * route 路由事件
+         * processStep 处理步骤事件，表示正在处理某一阶段的逻辑
+         * think 思考阶段
+         * error 错误事件
+         * finish 完成事件
+         * urlAttachment 附件事件
+         * question 问题事件
+         * message 消息事件
+         * ping 心跳事件
+         * planning 计划事件
+         * searching 搜索事件
+         * searchResult 搜索结果事件
+         * reference 引用事件
+         * askMore 猜你想问事件v2
+         */
+        "eventType" :"message",// sse事件类型
+    }
+}
+```
+
+响应示例1
+```jsonc
+event:route
+data:{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","skillInfo": {"skillId": "1122","skillName": "技能名称","isSupportQuestion": false,"resultType": "STREAM","actions": [{"key": "summaryLevel","value": "精简或丰富模式","icon": "图标","iconType": "default","operationType": "pluginSetting","defaultSubActionKey": "simple","subActions": [{"key": "simple","value": "精简模式","valueEn": "simple mode","icon": "图标","iconType": "default"}]},{"key": "switchModel","value": "切换模型","icon": "图标","iconType": "default","operationType": "pluginSetting","defaultSubActionKey": "qwen","subActions": [{"key": "qwen","value": "Qwen模型","valueEn": "Qwen model","icon": "图标","iconType": "default"}]}],"pluginSetting": {"summaryLevel": "simple","switchModel": "qwen"},"multipleDialogueContext": {"multipleDialogueId": "2233","contextType": "FILE","contextBody": {"fileName": "xxx.docx","fileType": "word"}},"requireMsgType": "text"},"eventType": "route"}}
+
+event:processStep
+data:{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","processStep": {"type": "TEXT","code": "download","message": "下载中","messageEn": "Downloading..."},"eventType": "processStep"}}
+
+event:processStep
+data:{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","processStep": {"type": "TEXT","code": "analyze","message": "分析中","messageEn": "Analyzing..."},"eventType": "processStep"}}
+
+event:processStep
+data:{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","processStep": {"type": "TEXT","code": "think","message": "思考中...用户说的是..."},"eventType": "processStep"}}
+
+event:processStep
+data:{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","processStep": {"type": "TEXT","code": "think","message": "思考结束"},"eventType": "processStep"}}
+
+data:{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","messageBody": {"text": "你好，我是Qwen模型"},"eventType": "message"}}
+
+data:{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","messageBody": {"text": "，你可以问我任何问题"},"eventType": "message"}}
+
+data:{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","messageBody": {"textList": ["今天天气怎么样","我需要一个天气报告"]},"eventType": "question"}}
+
+event:finish
+data:FINISH
+```
+
+响应示例2 -- 报错
+```jsonc
+event:route
+data:{"code": "200","data": {"messageId": "1122","robotId": "1122","sendAt": 1122,"costTime": 1122,"w3Account": "1122","skillInfo": {"skillId": "1122","skillName": "技能名称","isSupportQuestion": false,"resultType": "STREAM","actions": [{"key": "summaryLevel","value": "精简或丰富模式","icon": "图标","iconType": "default","operationType": "pluginSetting","defaultSubActionKey": "simple","subActions": [{"key": "simple","value": "精简模式","valueEn": "simple mode","icon": "图标","iconType": "default"}]},{"key": "switchModel","value": "切换模型","icon": "图标","iconType": "default","operationType": "pluginSetting","defaultSubActionKey": "qwen","subActions": [{"key": "qwen","value": "Qwen模型","valueEn": "Qwen model","icon": "图标","iconType": "default"}]}],"pluginSetting": {"summaryLevel": "simple","switchModel": "qwen"},"multipleDialogueContext": {"multipleDialogueId": "2233","contextType": "FILE","contextBody": {"fileName": "xxx.docx","fileType": "word"}},"requireMsgType": "text"},"eventType": "route"}}
+
+event:error
+data:{"code": "500","message": "服务器内部错误", "messageEn": "Internal Server Error"}
+
+event:finish
+data:FINISH
+```
+
+```jsonc
+{
+    "code": "200",
+    "data": {
+        "messageId": "1122",
+        "robotId": "1122",
+        "sendAt": 1122,
+        "costTime": 1122,
+        "w3Account": "1122",
+        "messageBody": {
+            "text": "你好，我是Qwen模型"
+        },
+        "eventType" :"message",
+    }
+}
+
+```
