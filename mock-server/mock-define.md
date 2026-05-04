@@ -914,7 +914,9 @@ data:FINISH
 
 ## 助手maker
 
-有5个接口
+有5个接口, 
+如果没指定技能则调用1,2,3接口
+如果指定了技能则调用2,3接口
 1.意图识别接口 /v1/projects/{project_id}/skill/skillMultiIntentDetection
     请求方法：post
     请求头：
@@ -956,7 +958,7 @@ data:FINISH
     }
     ```
 
-2.查询技能详情接口 /v1/projects/{project_id}/skills/{skill_id}?assistantId={assistant_id}&channel=Web-sidebar
+2.查询技能详情接口 get /v1/projects/{project_id}/skills/{skill_id}?assistantId={assistant_id}&channel=Web-sidebar
     主要是查看返回的body里是否有"stream":true 字段，如果有，说明是流式技能，否则是非流式技能。
     返回
     ```jsonc
@@ -973,12 +975,13 @@ data:FINISH
     }
     ```
 
-3.技能调用流式/非流式接口 /v1/projects/{project_id}/skills/{skill_id}/invoke
+
+3.技能调用流式/非流式接口 post /v1/projects/{project_id}/skills/{skill_id}/invoke
     请求方法：post
     请求头：
         sse调用 设置content-type: text/event-stream;charset=utf-8
         cookie: 个人cookie
-    请求body：
+    流式和非流式技能请求body：
     ```jsonc
     {
         "question": "string" //问题
@@ -990,6 +993,11 @@ data:FINISH
     }
     ```
     流式响应：
+    ```jsonc
+    data:{"errors":null,"meta":null,"data":{"id":"1","type":"SkillInvokeVO","attributes":{"status":"finish","content":"{xxx}","sessionId":"1122","chatRecordId":"技能名称","skillType":"flowchain","outputStyle":"Markdown","template":null,"conditionName":"默认输出","renderStatus":1}}    }
+
+    data:{"errors":null,"meta":null,"data":{"id":"1","type":"SkillInvokeVO","attributes":{"status":"finish","content":"{xxx}","sessionId":"1122","chatRecordId":"技能名称","skillType":"flowchain","outputStyle":"Markdown","template":null,"conditionName":"默认输出","renderStatus":1}}    }
+    ```
     
     非流式响应：
     ```jsonc

@@ -14,6 +14,7 @@
 | `6` | uniknow | `UniKnowProtocolStrategy` | 新增 |
 | `7` | athena | `AthenaProtocolStrategy` | 新增 |
 | `8` | standard | `StandardProtocolStrategy` | 新增 |
+| `9` | assistantmaker | `AssistantMakerProtocolStrategy` | 新增 |
 
 ### 1.2 认证类型编码映射
 
@@ -1056,6 +1057,181 @@ data:FINISH
 {
     "type": "tool_done",
     "toolSessionId": ""
+}
+```
+
+---
+
+### 2.5 AssistantMaker（助手maker）协议
+
+**协议类型**: 两步协议（HTTP + SSE/REST）
+
+**适用场景**: 助手maker技能平台对接
+
+**适用场景**: 助手maker可能返回html
+
+**请求流程**:
+1. **未指定技能**：调用意图识别接口 → 查询技能详情 → 调用技能接口（流式或非流式）
+2. **指定技能**：查询技能详情 → 调用技能接口（流式或非流式）
+
+**请求地址**:
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/v1/projects/{project_id}/skill/skillMultiIntentDetection` | POST | 意图识别（未指定技能时调用） |
+| `/v1/projects/{project_id}/skills/{skill_id}` | GET | 查询技能详情（判断流式/非流式） |
+| `/v1/projects/{project_id}/skills/{skill_id}/invoke` | POST | 技能调用（流式或非流式） |
+
+**请求头**:
+
+| 请求头 | 说明 |
+|--------|------|
+| `cookie: {个人cookie}` | 个人 cookie |
+
+**输入格式**（aiGateway CloudRequest → AssistantMaker）：
+
+| aiGateway CloudRequest 字段 | AssistantMaker 字段 | 说明 | 默认值 |
+|-----------------------------|---------------------|------|--------|
+| `content` | `question` | 用户问题 | - |
+| `extParameters.skillId` | `skillId` | 技能 ID（未指定时传空） | "" |
+| `extParameters.assistantId` | `assistantId` | 助手 ID | - |
+| `topicId` | `sessionId` | 会话 ID（空则生成新会话） | "" |
+| `extParameters.projectId` | `project_id` | 项目 ID（URL 路径参数） | - |
+| - | `channel` | 渠道 | "Web-sidebar" |
+
+**aiGateway 输入格式**:
+```json
+{
+    "content": "用户输入内容",
+    "contentType": "text",
+    "topicId": "session-001",
+    "extParameters": {
+        "projectId": "project-123",
+        "skillId": "skill-456",
+        "assistantId": "assistant-789"
+    }
+}
+```
+
+**转换后的 AssistantMaker 输入格式**（技能调用接口）:
+```json
+{
+    "question": "用户输入内容",
+    "skillId": "skill-456",
+    "assistantId": "assistant-789",
+    "sessionId": "session-001",
+    "rewriteContext": [],
+    "channel": "Web-sidebar"
+}
+```
+
+**技能类型判断**：通过查询技能详情接口返回的 `externalParams` 中是否包含 `"stream":true` 字段来判断：
+- `"stream":true` → 流式技能，使用 SSE 请求
+- 否则 → 非流式技能，使用 REST 请求
+
+**事件类型映射**:
+
+| AssistantMaker status | Gateway 消息类型 | 说明 |
+|----------------------|------------------|------|
+| `finish` | `tool_event` (text.delta) | 文本内容 |
+| `finish` + 最后一条 | `tool_done` | 完成 |
+| 其他 | 忽略 | 中间状态 |
+
+**SSE 输出转换示例**:
+
+#### 流式响应（文本内容）
+**原始响应**:
+```jsonc
+data:{"errors":null,"meta":null,"data":{"id":"1","type":"SkillInvokeVO","attributes":{"status":"finish","content":"您好，请问有什么可以帮助您？","sessionId":"1122","chatRecordId":"技能名称","skillType":"flowchain","outputStyle":"Markdown","template":null,"conditionName":"默认输出","renderStatus":1}}}
+```
+**转换结果**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "1122",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "您好，请问有什么可以帮助您？"
+        }
+    }
+}
+```
+
+#### 流式响应（完成）
+**原始响应**（最后一条数据）:
+```jsonc
+data:{"errors":null,"meta":null,"data":{"id":"1","type":"SkillInvokeVO","attributes":{"status":"finish","content":"回答完成","sessionId":"1122","chatRecordId":"技能名称","skillType":"flowchain","outputStyle":"Markdown","template":null,"conditionName":"默认输出","renderStatus":1}}}
+```
+**转换结果**（两个事件）:
+
+**第一步 - 文本事件**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "1122",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "回答完成"
+        }
+    }
+}
+```
+
+**第二步 - 完成事件**:
+```json
+{
+    "type": "tool_done",
+    "toolSessionId": "1122"
+}
+```
+
+**非流式输出转换示例**:
+
+#### 非流式响应
+**原始响应**:
+```json
+{
+    "errors": null,
+    "meta": null,
+    "data": {
+        "id": "1",
+        "type": "SkillInvokeVO",
+        "attributes": {
+            "status": "finish",
+            "content": "这是非流式回答内容",
+            "sessionId": "1122",
+            "chatRecordId": "技能名称",
+            "skillType": "flowchain",
+            "outputStyle": "Markdown",
+            "template": null,
+            "conditionName": "默认输出",
+            "renderStatus": 1
+        }
+    }
+}
+```
+
+**转换结果 - 第一步（文本事件）**:
+```json
+{
+    "type": "tool_event",
+    "toolSessionId": "1122",
+    "event": {
+        "type": "text.delta",
+        "properties": {
+            "content": "这是非流式回答内容"
+        }
+    }
+}
+```
+
+**转换结果 - 第二步（完成事件）**:
+```json
+{
+    "type": "tool_done",
+    "toolSessionId": "1122"
 }
 ```
 
