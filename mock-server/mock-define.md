@@ -912,20 +912,115 @@ event:finish
 data:FINISH
 ```
 
-```jsonc
-{
-    "code": "200",
-    "data": {
-        "messageId": "1122",
-        "robotId": "1122",
-        "sendAt": 1122,
-        "costTime": 1122,
-        "w3Account": "1122",
-        "messageBody": {
-            "text": "你好，我是Qwen模型"
-        },
-        "eventType" :"message",
+## 助手maker
+
+有5个接口
+1.意图识别接口 /v1/projects/{project_id}/skill/skillMultiIntentDetection
+    请求方法：post
+    请求头：
+        cookie: 个人cookie
+    请求体：
+    ```jsonc
+    {
+        "question": "string" //问题
+        "skillId": "1122" //技能id,默认传空
+        "assistantId":"string" //助手id,如小法宝就传小法宝的id
+        "sessionId":"string" //会话id,默认传空,空回生成一个新id
+        "rewriteContext":[], // 多轮对话
+        "channel":"Web-sidebar" //渠道
     }
-}
+    ```
+    响应：
+
+    ```jsonc
+    {
+        "errors": null,
+        "meta": null,
+        "data": {
+            "id": "1",
+            "type": "SkillMultiIntentDetectionVO",
+            "attributes":{
+                "intentRequestId":"",
+                "intents":[
+                    {
+                        "skillId":"1122",
+                        "intentUuid":"123456",
+                        "skillNameCn":"技能名称",
+                        "skillNameEn":"skill name"
+                        "status":1,
+                        "params":[]
+                    }
+                ]
+            }
+        }
+    }
+    ```
+
+2.查询技能详情接口 /v1/projects/{project_id}/skills/{skill_id}?assistantId={assistant_id}&channel=Web-sidebar
+    主要是查看返回的body里是否有"stream":true 字段，如果有，说明是流式技能，否则是非流式技能。
+    返回
+    ```jsonc
+    {
+        "errors": null,
+        "meta": null,
+        "data": {
+            "id": "1",
+            "type": "SkillDetailVo",
+            "attributes":{
+                "externalParams":"{\"stream\":true}"
+            }
+        }
+    }
+    ```
+
+3.技能调用流式/非流式接口 /v1/projects/{project_id}/skills/{skill_id}/invoke
+    请求方法：post
+    请求头：
+        sse调用 设置content-type: text/event-stream;charset=utf-8
+        cookie: 个人cookie
+    请求body：
+    ```jsonc
+    {
+        "question": "string" //问题
+        "skillId": "1122" //技能id,默认传空
+        "assistantId":"string" //助手id,如小法宝就传小法宝的id
+        "sessionId":"string" //会话id,默认传空,空回生成一个新id
+        "rewriteContext":[], // 多轮对话
+        "channel":"Web-sidebar" //渠道
+    }
+    ```
+    流式响应：
+    
+    非流式响应：
+    ```jsonc
+    {
+        "errors": null,
+        "meta": null,
+        "data": {
+            "id": "1",
+            "type": "SkillInvokeVO",
+            "attributes":{
+                "status":"finish",
+                "content":"{xxx}"
+                "sessionId":"1122",
+                "chatRecordId":"技能名称",
+                "skillType":"flowchain",
+                "outputStyle":"Markdown",
+                "template":null,
+                "conditionName":"默认输出",
+                "renderStatus":1
+            }
+        }
+    }
+    ```
+
+4.上传edm文件接口： 忽略
+5.下载edmo文件接口：忽略
+
+没选中技能时，先
+
+```mermaid
 
 ```
+
+### 
