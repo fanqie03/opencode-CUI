@@ -1,0 +1,153 @@
+<mxfile host="65bd71144e">
+    <diagram name="cloudRequest-标准协议-映射" id="mapping">
+        <mxGraphModel dx="1086" dy="1168" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1600" pageHeight="900" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title" value="gateway ↔ 标准协议 映射关系" style="text;fontSize=20;fontStyle=5;fillColor=none;strokeColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="480" y="-40" width="400" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="std_req_body" value="{&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;type&quot;:&quot;text&quot;, &amp;nbsp;// IMAGE-V1 图片, text文本, WELINK-CARD-ACTION, filesCard 文件卡片&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;content&quot;:&quot;发送内容&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;sendUserAccount&quot;:&quot;发送人账号&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;imGroupId&quot;:&quot;&quot;, // 可选，非必传&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;clientLang&quot;:&quot;zh&quot;, // 客户端语言(zh, en)&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;clientType&quot;:&quot;asst-pc&quot;, // 客户端类型(asst-pc pc端, asst-wecode 移动端, 未知null)&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;topicId&quot;:123, // long 会话主题id, 某次会话聚合的主题id&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;messageId&quot;:123, // long 消息id，用于追踪每次对话&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;extParameters&quot;: {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;isHwEmployee&quot;:true, // 是否是华为雇员&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;actionParam&quot;:&quot;&quot;, // 机器人自定义参数&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;filesCard&quot;: [ // 类型为filesCard时必传，其他类型非必传必传&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;id&quot;:&quot;223344&quot;, // 文件id&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;order&quot;:1 // 文件顺序&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; }&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; ],&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;knowledgeId&quot;:[&quot;1122aa&quot;] // 知识库id列表&lt;br&gt;&amp;nbsp; &amp;nbsp; }&lt;br&gt;}" style="shape=note;size=15;fillColor=#e8f5e9;strokeColor=#2D7600;fontSize=9;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="60" width="470" height="380" as="geometry"/>
+                </mxCell>
+                <mxCell id="mapping_req" value="{&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;type&quot;: &quot;tool_event&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;toolSessionId&quot;: &quot;&amp;lt;topicId&amp;gt;&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;event&quot;: {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;type&quot;: &quot;text.delta&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;properties&quot;: {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;content&quot;: &quot;您好&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;role&quot;: &quot;assistant&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;messageId&quot;: &quot;cloud-msg-xxx&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;partId&quot;: &quot;cloud-part-text-xxx&quot;&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; }&lt;br&gt;&amp;nbsp; &amp;nbsp; }&lt;br&gt;}" style="shape=note;size=15;fillColor=#f3e5f5;strokeColor=#9c27b0;fontSize=10;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="550" width="320" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="15" style="edgeStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="std_res_body" target="mapping_req" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="std_res_body" value="{&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;code&quot;: &quot;0&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;message&quot;: &quot;&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;error&quot;: &quot;&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;isFinish&quot;: false,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;data&quot;: {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;type&quot;: &quot;text&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;content&quot;: &quot;您好&quot;&lt;br&gt;&amp;nbsp; &amp;nbsp; }&lt;br&gt;}&lt;br&gt;" style="shape=note;size=15;fillColor=#e8f5e9;strokeColor=#2D7600;fontSize=9;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="550" width="210" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="14" style="edgeStyle=none;html=1;entryX=0;entryY=0;entryDx=470.00000000000006;entryDy=197.5;entryPerimeter=0;" parent="1" source="mapping_res" target="std_req_body" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="mapping_res" value="{&#10;  &quot;type&quot;: &quot;text&quot;,&#10;  &quot;content&quot;: &quot;请帮我查一下今天的日程&quot;,&#10;  &quot;assistantAccount&quot;: &quot;e2e-cb-bot&quot;,&#10;  &quot;sendUserAccount&quot;: &quot;900001&quot;,&#10;  &quot;imGroupId&quot;: null,&#10;  &quot;clientLang&quot;: &quot;zh&quot;,&#10;  &quot;clientType&quot;: null,&#10;  &quot;topicId&quot;: &quot;cloud-cb3eb844125245ed9fd6938da59fd8bd&quot;,&#10;  &quot;messageId&quot;: &quot;1777476131508&quot;,&#10;  &quot;extParameters&quot;: {&#10;    &quot;businessExtParam&quot;: {},&#10;    &quot;platformExtParam&quot;: {}&#10;  }&#10;}" style="shape=note;size=15;fillColor=#f3e5f5;strokeColor=#9c27b0;fontSize=9;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;" parent="1" vertex="1">
+                    <mxGeometry x="780" y="120" width="320" height="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="" style="edgeStyle=none;html=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" parent="1" source="2" target="3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="请求" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" parent="4" vertex="1" connectable="0">
+                    <mxGeometry x="-0.5286" y="5" relative="1" as="geometry">
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="2" value="助手广场服务端" style="whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="10" y="450" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="5" style="edgeStyle=none;html=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.75;entryDx=0;entryDy=0;" parent="1" source="3" target="2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="7" value="响应" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" parent="5" vertex="1" connectable="0">
+                    <mxGeometry x="-0.2857" relative="1" as="geometry">
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="3" value="业务服务端" style="whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="410" y="450" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="8" value="" style="edgeStyle=none;html=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" parent="1" source="10" target="13" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="9" value="请求" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" parent="8" vertex="1" connectable="0">
+                    <mxGeometry x="-0.5286" y="5" relative="1" as="geometry">
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="10" value="gateway" style="whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="670" y="450" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="11" style="edgeStyle=none;html=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.75;entryDx=0;entryDy=0;" parent="1" source="13" target="10" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="12" value="响应" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" parent="11" vertex="1" connectable="0">
+                    <mxGeometry x="-0.2857" relative="1" as="geometry">
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="13" value="业务服务端" style="whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="1070" y="450" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="16" value="text" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="540" y="585" width="40" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="17" value="请求体映射" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="590" y="225" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="18" value="{&#10;    &quot;type&quot;: &quot;tool_event&quot;,&#10;    &quot;toolSessionId&quot;: &quot;&lt;topicId&gt;&quot;,&#10;    &quot;event&quot;: {&#10;        &quot;type&quot;: &quot;planning.delta&quot;,&#10;        &quot;properties&quot;: {&#10;            &quot;content&quot;: &quot;正在分析用户意图&quot;,&#10;            &quot;messageId&quot;: &quot;cloud-msg-xxx&quot;,&#10;            &quot;partId&quot;: &quot;cloud-part-plan-xxx&quot;&#10;        }&#10;    }&#10;}" style="shape=note;size=15;fillColor=#f3e5f5;strokeColor=#9c27b0;fontSize=10;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="780" width="320" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="19" style="edgeStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="20" target="18" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="20" value="{&#10;    &quot;code&quot;: &quot;0&quot;,&#10;    &quot;message&quot;: &quot;&quot;,&#10;    &quot;error&quot;: &quot;&quot;,&#10;    &quot;isFinish&quot;: false,&#10;    &quot;data&quot;: {&#10;        &quot;type&quot;: &quot;planning&quot;,&#10;        &quot;planning&quot;: &quot;正在分析用户意图&quot;&#10;    }&#10;}&#10;" style="shape=note;size=15;fillColor=#e8f5e9;strokeColor=#2D7600;fontSize=9;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="780" width="210" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="21" value="planning" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="525" y="815" width="70" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="22" value="{&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;type&quot;: &quot;tool_event&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;toolSessionId&quot;: &quot;&amp;lt;topicId&amp;gt;&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;event&quot;: {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;type&quot;: &quot;searching&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;properties&quot;: {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;keywords&quot;: [&quot;正在检索知识库&quot;, &quot;正在联网搜索&quot;],&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;messageId&quot;: &quot;cloud-msg-xxx&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;partId&quot;: &quot;cloud-part-search-xxx&quot;&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; }&lt;br&gt;&amp;nbsp; &amp;nbsp; }&lt;br&gt;}" style="shape=note;size=15;fillColor=#f3e5f5;strokeColor=#9c27b0;fontSize=10;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="990" width="320" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="23" style="edgeStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="24" target="22" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="24" value="{&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;code&quot;: &quot;0&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;message&quot;: &quot;&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;error&quot;: &quot;&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;isFinish&quot;: false,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;data&quot;: {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;type&quot;: &quot;searching&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;searching&quot;: [&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;正在检索知识库&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;正在联网搜索&quot;&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; ]&lt;br&gt;&amp;nbsp; &amp;nbsp; }&lt;br&gt;}&lt;br&gt;" style="shape=note;size=15;fillColor=#e8f5e9;strokeColor=#2D7600;fontSize=9;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="990" width="210" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="25" value="searching" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="520" y="1025" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="26" value="{&#10;    &quot;type&quot;: &quot;tool_event&quot;,&#10;    &quot;toolSessionId&quot;: &quot;&lt;topicId&gt;&quot;,&#10;    &quot;event&quot;: {&#10;        &quot;type&quot;: &quot;search_result&quot;,&#10;        &quot;properties&quot;: {&#10;            &quot;searchResults&quot;: [&#10;                {&quot;index&quot;: &quot;1&quot;, &quot;title&quot;: &quot;华为云介绍&quot;, &quot;source&quot;: &quot;官网&quot;}&#10;            ],&#10;            &quot;messageId&quot;: &quot;cloud-msg-xxx&quot;,&#10;            &quot;partId&quot;: &quot;cloud-part-search-xxx&quot;&#10;        }&#10;    }&#10;}" style="shape=note;size=15;fillColor=#f3e5f5;strokeColor=#9c27b0;fontSize=10;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="1200" width="410" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="27" style="edgeStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="28" target="26" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="28" value="{&#10;    &quot;code&quot;: &quot;0&quot;,&#10;    &quot;message&quot;: &quot;&quot;,&#10;    &quot;error&quot;: &quot;&quot;,&#10;    &quot;isFinish&quot;: false,&#10;    &quot;data&quot;: {&#10;        &quot;type&quot;: &quot;searchResult&quot;,&#10;        &quot;searchResult&quot;: [&#10;            {&#10;                &quot;index&quot;: &quot;1&quot;,&#10;                &quot;title&quot;: &quot;华为云介绍&quot;,&#10;                &quot;source&quot;: &quot;官网&quot;&#10;            }&#10;        ]&#10;    }&#10;}&#10;" style="shape=note;size=15;fillColor=#e8f5e9;strokeColor=#2D7600;fontSize=9;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="1200" width="210" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="29" value="searchResult" style="text;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="495" y="1230" width="130" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="30" value="{&#10;    &quot;type&quot;: &quot;tool_event&quot;,&#10;    &quot;toolSessionId&quot;: &quot;&lt;topicId&gt;&quot;,&#10;    &quot;event&quot;: {&#10;        &quot;type&quot;: &quot;reference&quot;,&#10;        &quot;properties&quot;: {&#10;            &quot;references&quot;: [&#10;                {&quot;index&quot;: &quot;1&quot;, &quot;title&quot;: &quot;API文档&quot;, &quot;source&quot;: &quot;内部Wiki&quot;, &quot;url&quot;: &quot;http://wiki.example.com&quot;, &quot;content&quot;: &quot;相关接口定义&quot;}&#10;            ],&#10;            &quot;messageId&quot;: &quot;cloud-msg-xxx&quot;,&#10;            &quot;partId&quot;: &quot;cloud-part-ref-xxx&quot;&#10;        }&#10;    }&#10;}" style="shape=note;size=15;fillColor=#f3e5f5;strokeColor=#9c27b0;fontSize=10;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="1415" width="410" height="175" as="geometry"/>
+                </mxCell>
+                <mxCell id="31" style="edgeStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="32" target="30" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="32" value="{&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;code&quot;: &quot;0&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;message&quot;: &quot;&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;error&quot;: &quot;&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;isFinish&quot;: false,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;data&quot;: {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;type&quot;: &quot;reference&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;references&quot;: [&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;index&quot;: &quot;1&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;title&quot;: &quot;API文档&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;source&quot;: &quot;内部Wiki&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;url&quot;: &quot;http://wiki.example.com&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;content&quot;: &quot;相关接口定义&quot;&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; }&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; ]&lt;br&gt;&amp;nbsp; &amp;nbsp; }&lt;br&gt;}&lt;br&gt;" style="shape=note;size=15;fillColor=#e8f5e9;strokeColor=#2D7600;fontSize=9;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="1410" width="210" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="33" value="reference" style="text;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="525" y="1445" width="70" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="34" value="{&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;type&quot;: &quot;tool_event&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;toolSessionId&quot;: &quot;&amp;lt;topicId&amp;gt;&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &quot;event&quot;: {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;type&quot;: &quot;thinking.delta&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;properties&quot;: {&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;content&quot;: &quot;首先需要考虑用户的核心需求...&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;role&quot;: &quot;assistant&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;messageId&quot;: &quot;cloud-msg-xxx&quot;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;partId&quot;: &quot;cloud-part-think-xxx&quot;&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; }&lt;br&gt;&amp;nbsp; &amp;nbsp; }&lt;br&gt;}" style="shape=note;size=15;fillColor=#f3e5f5;strokeColor=#9c27b0;fontSize=10;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="1635" width="410" height="175" as="geometry"/>
+                </mxCell>
+                <mxCell id="35" style="edgeStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="36" target="34" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="36" value="{&#10;    &quot;code&quot;: &quot;0&quot;,&#10;    &quot;message&quot;: &quot;&quot;,&#10;    &quot;error&quot;: &quot;&quot;,&#10;    &quot;isFinish&quot;: false,&#10;    &quot;data&quot;: {&#10;        &quot;type&quot;: &quot;think&quot;,&#10;        &quot;content&quot;: &quot;首先需要考虑用户的核心需求...&quot;&#10;    }&#10;}&#10;&#10;" style="shape=note;size=15;fillColor=#e8f5e9;strokeColor=#2D7600;fontSize=9;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="1630" width="210" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="37" value="think" style="text;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="535" y="1665" width="50" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="38" value="{&#10;    &quot;type&quot;: &quot;tool_event&quot;,&#10;    &quot;toolSessionId&quot;: &quot;&lt;topicId&gt;&quot;,&#10;    &quot;event&quot;: {&#10;        &quot;type&quot;: &quot;ask_more&quot;,&#10;        &quot;properties&quot;: {&#10;            &quot;askMoreQuestions&quot;: [&quot;如何创建项目？&quot;, &quot;支持哪些语言？&quot;],&#10;            &quot;messageId&quot;: &quot;cloud-msg-xxx&quot;,&#10;            &quot;partId&quot;: &quot;cloud-part-askmore-xxx&quot;&#10;        }&#10;    }&#10;}" style="shape=note;size=15;fillColor=#f3e5f5;strokeColor=#9c27b0;fontSize=10;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="1845" width="410" height="175" as="geometry"/>
+                </mxCell>
+                <mxCell id="39" style="edgeStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="40" target="38" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="40" value="{&#10;    &quot;code&quot;: &quot;0&quot;,&#10;    &quot;message&quot;: &quot;&quot;,&#10;    &quot;error&quot;: &quot;&quot;,&#10;    &quot;isFinish&quot;: false,&#10;    &quot;data&quot;: {&#10;        &quot;type&quot;: &quot;askMore&quot;,&#10;        &quot;askMore&quot;: [&#10;            &quot;如何创建项目？&quot;,&#10;            &quot;支持哪些语言？&quot;&#10;        ]&#10;    }&#10;}&#10;" style="shape=note;size=15;fillColor=#e8f5e9;strokeColor=#2D7600;fontSize=9;fontFamily=Courier New;align=left;spacingLeft=8;spacingTop=5;whiteSpace=wrap;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="1840" width="210" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="41" value="askMore" style="text;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="525" y="1875" width="70" height="30" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
