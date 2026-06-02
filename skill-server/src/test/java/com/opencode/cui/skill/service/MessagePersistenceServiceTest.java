@@ -415,6 +415,105 @@ class MessagePersistenceServiceTest {
     }
 
     @Test
+    @DisplayName("cloud question persists canonical question fields for history recovery")
+    void cloudQuestionPersistsCanonicalQuestionFieldsForHistory() {
+        setupActiveMessage();
+
+        service.persistIfFinal(1L, StreamMessage.builder()
+                .type(StreamMessage.Types.QUESTION)
+                .partId("cloud-question-1")
+                .tool(StreamMessage.ToolInfo.builder()
+                        .toolCallId("cloud-call-1")
+                        .build())
+                .questionInfo(StreamMessage.QuestionInfo.builder()
+                        .header("Choose")
+                        .question("Pick one")
+                        .options(List.of("A", "B"))
+                        .questions(List.of(StreamMessage.QuestionItem.builder()
+                                .header("Choose")
+                                .question("Pick one")
+                                .options(List.of("A", "B"))
+                                .build()))
+                        .questionId("cloud-question-request-1")
+                        .build())
+                .build());
+
+        ArgumentCaptor<SkillMessagePart> captor = ArgumentCaptor.forClass(SkillMessagePart.class);
+        verify(partRepository).upsert(captor.capture());
+        SkillMessagePart persisted = captor.getValue();
+        assertThat(persisted.getPartType()).isEqualTo("tool");
+        assertThat(persisted.getToolName()).isEqualTo("question");
+        assertThat(persisted.getToolCallId()).isEqualTo("cloud-call-1");
+        assertThat(persisted.getToolStatus()).isEqualTo("running");
+        assertThat(persisted.getToolInput()).contains("Pick one");
+        assertThat(persisted.getToolInput()).contains("cloud-question-request-1");
+
+        var historyPart = ProtocolMessageMapper.toProtocolPart(persisted, new ObjectMapper());
+        assertThat(historyPart).isNotNull();
+        assertThat(historyPart.getType()).isEqualTo("question");
+        assertThat(historyPart.getToolName()).isEqualTo("question");
+        assertThat(historyPart.getToolCallId()).isEqualTo("cloud-call-1");
+        assertThat(historyPart.getStatus()).isEqualTo("running");
+        assertThat(historyPart.getQuestionId()).isEqualTo("cloud-question-request-1");
+        assertThat(historyPart.getHeader()).isEqualTo("Choose");
+        assertThat(historyPart.getQuestion()).isEqualTo("Pick one");
+        assertThat(historyPart.getOptions()).containsExactly("A", "B");
+    }
+
+    @Test
+    @DisplayName("question tool.update merges into existing question part instead of creating duplicate")
+    void questionToolUpdateMergesIntoExistingQuestionPart() {
+        setupActiveMessage();
+        SkillMessagePart otherQuestion = SkillMessagePart.builder()
+                .id(20L)
+                .messageId(11L)
+                .sessionId(1L)
+                .partId("other-question-part")
+                .seq(0)
+                .partType("tool")
+                .toolName("question")
+                .toolCallId("other-question-id")
+                .toolStatus("running")
+                .toolInput("{\"question\":\"你想喝什么？\",\"options\":[\"茶\",\"咖啡\"]}")
+                .build();
+        SkillMessagePart existingQuestion = SkillMessagePart.builder()
+                .id(21L)
+                .messageId(11L)
+                .sessionId(1L)
+                .partId("question-part")
+                .seq(1)
+                .partType("tool")
+                .toolName("question")
+                .toolCallId("question-id")
+                .toolStatus("running")
+                .toolInput("""
+                        {"question":"你喜欢吃什么类型的食物？","options":["中餐","西餐","重口味"],"questionId":"question-id"}
+                        """)
+                .build();
+        when(partRepository.findByMessageId(11L)).thenReturn(List.of(otherQuestion, existingQuestion));
+
+        service.persistIfFinal(1L, StreamMessage.builder()
+                .type(StreamMessage.Types.TOOL_UPDATE)
+                .partId("tool-lifecycle-part")
+                .status("completed")
+                .tool(StreamMessage.ToolInfo.builder()
+                        .toolName("question")
+                        .toolCallId("tool-call-id")
+                        .output("User has answered your questions: \"你喜欢吃什么类型的食物？\"=\"重口味\". You can now continue with the user's answers in mind.")
+                        .build())
+                .build());
+
+        ArgumentCaptor<SkillMessagePart> captor = ArgumentCaptor.forClass(SkillMessagePart.class);
+        verify(partRepository).upsert(captor.capture());
+        SkillMessagePart updated = captor.getValue();
+        assertThat(updated.getPartId()).isEqualTo("question-part");
+        assertThat(updated.getToolStatus()).isEqualTo("completed");
+        assertThat(updated.getToolOutput()).isEqualTo("重口味");
+        assertThat(updated.getToolCallId()).isEqualTo("question-id");
+        verify(partRepository, never()).upsert(argThat(part -> "tool-lifecycle-part".equals(part.getPartId())));
+    }
+
+    @Test
     @DisplayName("permission_ask persists immediately so a refresh during pending interaction can recover it")
     void permissionAskPersistsImmediately() {
         setupActiveMessage();
@@ -437,6 +536,37 @@ class MessagePersistenceServiceTest {
         assertThat(persisted.getToolCallId()).isEqualTo("perm-call-1");
         assertThat(persisted.getToolStatus()).isEqualTo("pending");
         verify(partBufferService, never()).bufferPart(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("cloud permission.ask defaults to pending status for history recovery")
+    void cloudPermissionAskDefaultsPendingStatusForHistory() {
+        setupActiveMessage();
+
+        service.persistIfFinal(1L, StreamMessage.builder()
+                .type(StreamMessage.Types.PERMISSION_ASK)
+                .partId("cloud-perm-1")
+                .title("Approve write?")
+                .permission(StreamMessage.PermissionInfo.builder()
+                        .permissionId("cloud-perm-call-1")
+                        .permType("write")
+                        .metadata(Map.of("path", "/tmp/a"))
+                        .build())
+                .build());
+
+        ArgumentCaptor<SkillMessagePart> captor = ArgumentCaptor.forClass(SkillMessagePart.class);
+        verify(partRepository).upsert(captor.capture());
+        SkillMessagePart persisted = captor.getValue();
+        assertThat(persisted.getPartType()).isEqualTo("permission");
+        assertThat(persisted.getToolCallId()).isEqualTo("cloud-perm-call-1");
+        assertThat(persisted.getToolStatus()).isEqualTo("pending");
+
+        var historyPart = ProtocolMessageMapper.toProtocolPart(persisted, new ObjectMapper());
+        assertThat(historyPart).isNotNull();
+        assertThat(historyPart.getType()).isEqualTo("permission");
+        assertThat(historyPart.getPermissionId()).isEqualTo("cloud-perm-call-1");
+        assertThat(historyPart.getStatus()).isEqualTo("pending");
+        assertThat(historyPart.getContent()).isEqualTo("Approve write?");
     }
 
     @Test
@@ -656,5 +786,127 @@ class MessagePersistenceServiceTest {
         assertThat(persisted.getToolStatus()).isEqualTo("completed");
         assertThat(persisted.getToolOutput()).isEqualTo("once");
         verify(partBufferService, never()).bufferPart(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("cloud permission.reply defaults to completed status for history recovery")
+    void cloudPermissionReplyDefaultsCompletedStatusForHistory() {
+        setupActiveMessage();
+
+        service.persistIfFinal(1L, StreamMessage.builder()
+                .type(StreamMessage.Types.PERMISSION_REPLY)
+                .partId("cloud-perm-1")
+                .permission(StreamMessage.PermissionInfo.builder()
+                        .permissionId("cloud-perm-call-1")
+                        .permType("write")
+                        .response("once")
+                        .build())
+                .build());
+
+        ArgumentCaptor<SkillMessagePart> captor = ArgumentCaptor.forClass(SkillMessagePart.class);
+        verify(partRepository).upsert(captor.capture());
+        SkillMessagePart persisted = captor.getValue();
+        assertThat(persisted.getPartType()).isEqualTo("permission");
+        assertThat(persisted.getToolStatus()).isEqualTo("completed");
+        assertThat(persisted.getToolOutput()).isEqualTo("once");
+
+        var historyPart = ProtocolMessageMapper.toProtocolPart(persisted, new ObjectMapper());
+        assertThat(historyPart).isNotNull();
+        assertThat(historyPart.getType()).isEqualTo("permission");
+        assertThat(historyPart.getPermissionId()).isEqualTo("cloud-perm-call-1");
+        assertThat(historyPart.getStatus()).isEqualTo("completed");
+        assertThat(historyPart.getResponse()).isEqualTo("once");
+    }
+
+    @Test
+    @DisplayName("recordQuestionReply updates the pending question by toolCallId when partId is absent")
+    void recordQuestionReplyUpdatesPendingQuestionByToolCallIdWhenPartIdAbsent() {
+        SkillMessagePart pending = SkillMessagePart.builder()
+                .id(21L)
+                .messageId(11L)
+                .sessionId(1L)
+                .partId("cloud-question-part")
+                .seq(2)
+                .partType("tool")
+                .toolName("question")
+                .toolCallId("call-q")
+                .toolStatus("running")
+                .toolInput("{\"question\":\"Pick one\"}")
+                .build();
+        when(partRepository.findPendingQuestionPartByToolCallId(1L, "call-q")).thenReturn(pending);
+
+        boolean updated = service.recordQuestionReply(1L, "call-q", "A", null);
+
+        assertThat(updated).isTrue();
+        ArgumentCaptor<SkillMessagePart> captor = ArgumentCaptor.forClass(SkillMessagePart.class);
+        verify(partRepository).upsert(captor.capture());
+        assertThat(captor.getValue().getPartId()).isEqualTo("cloud-question-part");
+        assertThat(captor.getValue().getToolStatus()).isEqualTo("completed");
+        assertThat(captor.getValue().getToolOutput()).isEqualTo("A");
+        verify(messageService).scheduleLatestHistoryRefreshAfterCommit(1L);
+    }
+
+    @Test
+    @DisplayName("recordPermissionReply updates a pending permission by toolCallId when partId differs")
+    void recordPermissionReplyUpdatesPendingPermissionByToolCallIdWhenPartIdDiffers() {
+        SkillMessagePart pending = SkillMessagePart.builder()
+                .id(22L)
+                .messageId(11L)
+                .sessionId(1L)
+                .partId("cloud-permission-part")
+                .seq(3)
+                .partType("permission")
+                .toolCallId("perm-123")
+                .toolName("write")
+                .toolStatus("pending")
+                .build();
+        when(partRepository.findByPartId(1L, "perm-123")).thenReturn(null);
+        when(partRepository.findPendingPermissionPartByToolCallId(1L, "perm-123")).thenReturn(pending);
+
+        boolean updated = service.recordPermissionReply(1L, "perm-123", "once");
+
+        assertThat(updated).isTrue();
+        ArgumentCaptor<SkillMessagePart> captor = ArgumentCaptor.forClass(SkillMessagePart.class);
+        verify(partRepository).upsert(captor.capture());
+        assertThat(captor.getValue().getPartId()).isEqualTo("cloud-permission-part");
+        assertThat(captor.getValue().getToolStatus()).isEqualTo("completed");
+        assertThat(captor.getValue().getToolOutput()).isEqualTo("once");
+        verify(messageService).scheduleLatestHistoryRefreshAfterCommit(1L);
+    }
+
+    @Test
+    @DisplayName("completed question event updates the original question part by toolCallId")
+    void completedQuestionEventUpdatesOriginalQuestionPartByToolCallId() {
+        setupActiveMessage();
+        SkillMessagePart pending = SkillMessagePart.builder()
+                .id(23L)
+                .messageId(11L)
+                .sessionId(1L)
+                .partId("original-question-part")
+                .seq(4)
+                .partType("tool")
+                .toolName("question")
+                .toolCallId("call-q")
+                .toolStatus("running")
+                .toolInput("{\"question\":\"Pick one\"}")
+                .build();
+        when(partRepository.findByPartId(1L, "completed-question-part")).thenReturn(null);
+        when(partRepository.findPendingQuestionPartByToolCallId(1L, "call-q")).thenReturn(pending);
+
+        service.persistIfFinal(1L, StreamMessage.builder()
+                .type(StreamMessage.Types.QUESTION)
+                .partId("completed-question-part")
+                .status("completed")
+                .tool(StreamMessage.ToolInfo.builder()
+                        .toolCallId("call-q")
+                        .output("B")
+                        .build())
+                .build());
+
+        ArgumentCaptor<SkillMessagePart> captor = ArgumentCaptor.forClass(SkillMessagePart.class);
+        verify(partRepository).upsert(captor.capture());
+        assertThat(captor.getValue().getPartId()).isEqualTo("original-question-part");
+        assertThat(captor.getValue().getToolStatus()).isEqualTo("completed");
+        assertThat(captor.getValue().getToolOutput()).isEqualTo("B");
     }
 }

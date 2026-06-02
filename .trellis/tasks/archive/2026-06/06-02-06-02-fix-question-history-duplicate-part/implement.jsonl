@@ -1,0 +1,4 @@
+{"file":".trellis/spec/skill-server/backend/index.md","reason":"skill-server backend pre-development checklist and relevant spec routing"}
+{"file":".trellis/spec/skill-server/backend/type-safety.md","reason":"cloud question / permission history protocol contracts and DTO field expectations"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"history payload crosses GW/SS/miniapp protocol boundaries"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"reuse existing question/tool normalization and avoid scattered protocol checks"}

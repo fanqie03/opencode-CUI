@@ -45,6 +45,7 @@ public class SkillMessageFlowService {
     private final DefaultAssistantRuleService ruleService;
     private final AllowedSlashCommandsResolver allowedSlashCommandsResolver;
     private final ApplicationEventPublisher eventPublisher;
+    private final MessagePersistenceService persistenceService;
 
     public SkillMessageFlowService(SkillMessageService messageService,
                                    GatewayRelayService gatewayRelayService,
@@ -57,7 +58,8 @@ public class SkillMessageFlowService {
                                    AssistantAccountResolverService assistantAccountResolverService,
                                    DefaultAssistantRuleService ruleService,
                                    AllowedSlashCommandsResolver allowedSlashCommandsResolver,
-                                   ApplicationEventPublisher eventPublisher) {
+                                   ApplicationEventPublisher eventPublisher,
+                                   MessagePersistenceService persistenceService) {
         this.messageService = messageService;
         this.gatewayRelayService = gatewayRelayService;
         this.objectMapper = objectMapper;
@@ -70,6 +72,7 @@ public class SkillMessageFlowService {
         this.ruleService = ruleService;
         this.allowedSlashCommandsResolver = allowedSlashCommandsResolver;
         this.eventPublisher = eventPublisher;
+        this.persistenceService = persistenceService;
     }
 
     public ApiResponse<ProtocolMessageView> sendMessage(SkillSession session,
@@ -171,6 +174,7 @@ public class SkillMessageFlowService {
                 .subagentSessionId(request.subagentSessionId())
                 .build();
         gatewayRelayService.publishProtocolMessage(sessionId, replyMessage);
+        recordPermissionReplyForHistory(session.getId(), permId, request.response());
 
         return ApiResponse.ok(Map.of(
                 "welinkSessionId", sessionId,
@@ -259,6 +263,9 @@ public class SkillMessageFlowService {
                         allowedSlashCommands,
                         session.getAssistantAccount(),
                         session.getAssistantAccount()));
+        if (GatewayActions.QUESTION_REPLY.equals(action)) {
+            recordQuestionReplyForHistory(numericSessionId, request);
+        }
 
         try {
             eventPublisher.publishEvent(new ChatRequestTelemetryEvent(
@@ -269,6 +276,25 @@ public class SkillMessageFlowService {
         } catch (Throwable t) {
             log.warn("[WelinkTelemetry] publish ChatRequestTelemetryEvent failed: sessionId={}, error={}",
                     sessionId, t.getMessage());
+        }
+    }
+
+    private void recordQuestionReplyForHistory(Long sessionId, SendMessageCommand request) {
+        try {
+            persistenceService.recordQuestionReply(
+                    sessionId, request.toolCallId(), request.content(), request.questionId());
+        } catch (Exception e) {
+            log.warn("Failed to record question reply for history: sessionId={}, toolCallId={}, error={}",
+                    sessionId, request.toolCallId(), e.getMessage());
+        }
+    }
+
+    private void recordPermissionReplyForHistory(Long sessionId, String permissionId, String response) {
+        try {
+            persistenceService.recordPermissionReply(sessionId, permissionId, response);
+        } catch (Exception e) {
+            log.warn("Failed to record permission reply for history: sessionId={}, permissionId={}, error={}",
+                    sessionId, permissionId, e.getMessage());
         }
     }
 

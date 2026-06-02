@@ -48,12 +48,14 @@ public class CloudEventTranslator {
     private final Map<String, CloudEventHandler> handlers = new HashMap<>();
 
     /**
-     * 会话级 partSeq 计数器。按 partId 维度递增，session idle 时清理。
-     * key = sessionId, value = { partId → AtomicInteger }
+     * 会话级 partSeq 计数器。对同一个 partId 固定返回同一个 partSeq，
+     * 对新 partId 递增；session idle 时清理。
      */
     private final java.util.concurrent.ConcurrentHashMap<String,
-            java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>>
+            java.util.concurrent.ConcurrentHashMap<String, Integer>>
             partSeqCounters = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>
+            nextPartSeqCounters = new java.util.concurrent.ConcurrentHashMap<>();
 
     @PostConstruct
     void init() {
@@ -167,12 +169,14 @@ public class CloudEventTranslator {
                 if (msg.getPartId() == null) {
                     log.warn("[CloudEventTranslator] cloud event missing partId: type={}, sessionId={}", eventType, sessionId);
                 }
-                // partSeq：按 partId 维度递增（SS 内部生成，不需要云端传）
+                // partSeq：同一 partId 固定，新 partId 递增（SS 内部生成，不需要云端传）
                 if (msg.getPartSeq() == null && sessionId != null && msg.getPartId() != null) {
-                    var counters = partSeqCounters.computeIfAbsent(sessionId,
+                    var partSequences = partSeqCounters.computeIfAbsent(sessionId,
                             k -> new java.util.concurrent.ConcurrentHashMap<>());
-                    int seq = counters.computeIfAbsent(msg.getPartId(),
-                            k -> new java.util.concurrent.atomic.AtomicInteger(0)).getAndIncrement();
+                    var nextSeq = nextPartSeqCounters.computeIfAbsent(sessionId,
+                            k -> new java.util.concurrent.atomic.AtomicInteger(0));
+                    int seq = partSequences.computeIfAbsent(msg.getPartId(),
+                            k -> nextSeq.incrementAndGet());
                     msg.setPartSeq(seq);
                 }
             }
@@ -184,6 +188,7 @@ public class CloudEventTranslator {
             String status = props.path("status").asText(props.path("sessionStatus").asText(null));
             if ("idle".equals(status)) {
                 partSeqCounters.remove(sessionId);
+                nextPartSeqCounters.remove(sessionId);
             }
         }
 
@@ -244,13 +249,24 @@ public class CloudEventTranslator {
                 .tool(ToolInfo.builder()
                         .toolName(event.path("toolName").asText(null))
                         .toolCallId(event.path("toolCallId").asText(null))
-                        .input(event.path("input").asText(null))
+                        .input(extractValue(event, "input"))
                         .output(event.path("output").asText(null))
                         .build())
                 .status(event.path("status").asText(null))
                 .error(event.path("error").asText(null))
                 .title(event.path("title").asText(null))
                 .build();
+    }
+
+    private Object extractValue(JsonNode event, String fieldName) {
+        if (event == null) {
+            return null;
+        }
+        JsonNode value = event.get(fieldName);
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        return value.isTextual() ? value.asText() : value;
     }
 
     // ==================== Step Handlers ====================
@@ -327,7 +343,7 @@ public class CloudEventTranslator {
                 .tool(ToolInfo.builder()
                         .toolCallId(event.path("toolCallId").asText(null))
                         .build())
-                .status(event.path("status").asText(null))
+                .status(resolveStatus(event, "running"))
                 .questionInfo(QuestionInfo.builder()
                         .header(first.getHeader())
                         .question(first.getQuestion())
@@ -335,8 +351,14 @@ public class CloudEventTranslator {
                         .multiSelect(first.getMultiSelect())
                         .questions(questions)
                         .extParam(extParam)
+                        .questionId(event.path("questionId").asText(null))
                         .build())
                 .build();
+    }
+
+    private static String resolveStatus(JsonNode event, String defaultStatus) {
+        String status = event.path("status").asText(null);
+        return status != null && !status.isBlank() ? status : defaultStatus;
     }
 
     /** 解析 multiSelect 字段（缺/非 boolean → null，前端按单选默认行为处理）。 */
@@ -353,6 +375,7 @@ public class CloudEventTranslator {
                 .type(Types.PERMISSION_ASK)
                 .messageId(event.path("messageId").asText(null))
                 .partId(event.path("partId").asText(null))
+                .status(resolveStatus(event, "pending"))
                 .permission(PermissionInfo.builder()
                         .permissionId(event.path("permissionId").asText(null))
                         .permType(event.path("permType").asText(null))
@@ -367,6 +390,7 @@ public class CloudEventTranslator {
                 .type(Types.PERMISSION_REPLY)
                 .messageId(event.path("messageId").asText(null))
                 .partId(event.path("partId").asText(null))
+                .status(resolveStatus(event, "completed"))
                 .permission(PermissionInfo.builder()
                         .permissionId(event.path("permissionId").asText(null))
                         .permType(event.path("permType").asText(null))

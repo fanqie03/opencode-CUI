@@ -33,6 +33,9 @@ public interface SkillMessagePartRepository {
     SkillMessagePart findPendingPermissionPartByToolCallId(@Param("sessionId") Long sessionId,
             @Param("toolCallId") String toolCallId);
 
+    SkillMessagePart findPendingQuestionPartByToolCallId(@Param("sessionId") Long sessionId,
+            @Param("toolCallId") String toolCallId);
+
     /** 按所属消息 ID 查询所有分片 */
     List<SkillMessagePart> findByMessageId(@Param("messageId") Long messageId);
 

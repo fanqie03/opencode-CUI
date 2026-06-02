@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-0.md`
-- **Total Sessions**: 17
-- **Last Active**: 2026-05-27
+- **Total Sessions**: 18
+- **Last Active**: 2026-06-02
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-0.md` | ~98 | Active |
+| `journal-0.md` | ~134 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-06-02 | SS 云端交互历史协议对齐 | `cb009c6` | `codex/ss-protocol-question-permission` |
 | 17 | 2026-05-27 | Fix miniapp cloud abort stream cancellation | `c8bccaf`, `c82f8dd`, `e9dea02` | `codex/fix-externalws-overlap-messageid` |
 | 16 | 2026-05-26 | Fix gateway cloud config and stream event logging | `ac36232`, `228d7c5`, `ebba6fc` | `main` |
 | 15 | 2026-05-25 | Fix external owner and sender identity routing | `9e7b7da` | `codex/external-owner-sender-identity` |

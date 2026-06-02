@@ -78,6 +78,57 @@ public class StreamMessage {
 
 来源：`skill-server/src/main/java/com/opencode/cui/skill/model/StreamMessage.java:23-88`
 
+### cloud question / permission 的 SS 归一契约
+
+当前 plugin main 会把 OpenCode 的交互事件投成 cloud protocol，SS 侧必须在 `CloudEventTranslator` 和历史 DTO 边界补齐本地协议已经天然具备的语义：
+
+| cloud 事件 | SS `StreamMessage` 契约 | 历史 `ProtocolMessagePart` 契约 |
+|----------|--------------------------|----------------------------------|
+| `question` | `type=question`；缺省 `status=running`；`properties.questionId` 写入 `QuestionInfo.questionId`；`toolCallId` 保留为关联字段 | `type=question`；`toolName=question`；缺省 `status=running`；`input` 保存 canonical question payload；顶层 `questionId` 从 `input.questionId` 或 OpenCode 兼容字段 `input.id` 解析 |
+| `permission.ask` | 缺省 `status=pending` | `type=permission`；`status=pending`；`permissionId` 使用 `toolCallId`/`partId` 归一 |
+| `permission.reply` | 缺省 `status=completed` | 回填原 pending permission part；`status=completed`；`response` 写入原 part |
+
+关键约束：
+
+- `questionId` 是 reply target，不等同于展示用 `partId`；cloud 路径不能只依赖 `partId`。
+- `question` 持久化时如果 `toolName` 为空，必须落成 `toolName=question`，否则历史 mapper 会把它当普通 tool。
+- `question` 持久化时如果 `tool.input` 为空，必须从 `QuestionInfo` 构造 canonical input，至少保留 `header/question/options/questions/extParam/questionId` 中存在的字段。
+- `tool.update(toolName=question)` 是 OpenCode question 工具生命周期事件；当同一 assistant message 已有 canonical question part 时，只能合并/更新原 question part，不能新增第二个 `type=question` 历史 part。
+- `permission.ask` / `permission.reply` 的 status 可以由 cloud event 显式传入；缺省时 SS 分别补 `pending` / `completed`，保证实时 WS、snapshot 和 history 看到同一语义。
+- reply 入口发出 `question_reply` / `permission_reply` 后，要回填原 pending part；优先按 `questionId`/`permissionId` 作为 partId 查找，失败后按 `toolCallId` 查 pending part。
+
+测试要求：
+
+- `CloudEventTranslatorTest` 覆盖 projected cloud question 缺 status 但带 `questionId` 的形状，以及 permission ask/reply 缺 status 的默认值。
+- `MessagePersistenceServiceTest` 覆盖 cloud question canonical input、默认 running、history 顶层 `questionId`、question tool.update 防重复合并，以及 permission ask/reply 默认状态和 reply 回填。
+
+### cloud / OpenCode 事件 parity 约束
+
+SS 侧判断协议是否一致时，看的是处理后的效果，而不是原始 event 名称是否相同。对于 OpenCode 有等价语义的 cloud event，必须同时约束：
+
+1. translator 输出的 `StreamMessage` 关键字段一致；
+2. `partId` 对应的 `partSeq` 稳定且与 OpenCode 一样从 1 开始，同一个 partId 后续 delta/done 继续使用同一个 partSeq；
+3. history/snapshot 通过 `ProtocolMessageMapper` 看到的用户可见 part 形态一致；
+4. `MessagePersistenceService` 对终态事件的落盘语义一致。
+
+| 语义族 | cloud event | OpenCode 来源 | SS 处理后要求 |
+| --- | --- | --- | --- |
+| 文本 | `text.delta` / `text.done` | `message.part.delta/updated` + `part.type=text` | `text.delta/done` 进入同一 text part；done 历史为 `type=text` |
+| 思考 | `thinking.delta` / `thinking.done` | `part.type=reasoning` | 对外统一为 `thinking.delta/done`；done 历史为 `type=thinking` |
+| 工具 | `tool.update` | `part.type=tool` | 保留 `toolName/toolCallId/status/input/output/error/title`；`input` 为 JSON object 时不能被 `asText` 压扁 |
+| step | `step.start` / `step.done` | `step-start` / `step-finish` 或 `message.updated.finish` | step.start 只参与 live/context；step.done 更新 usage stats，不作为普通 history part 暴露 |
+| question | `question` + `tool.update(toolName=question)` | `question.asked` + question tool completion | 只有一个可见 question part，回复更新原 part |
+| permission | `permission.ask` / `permission.reply` | `permission.*` | ask 默认 `pending`，reply 默认 `completed`，reply 回填原 pending part |
+| session | `session.status/title/error` | `session.status/idle/updated/error` | status 归一到 `busy/retry/idle` 语义；title/error 字段一致 |
+| file | `file` | `part.type=file` | `fileName/fileUrl/fileMime` 历史字段一致 |
+
+cloud-only 扩展类型 `planning.delta/done`、`searching`、`search_result`、`reference`、`ask_more` 没有 OpenCode 等价事件。它们可以参与 live/context，但在没有显式历史契约前，`ProtocolMessageMapper.toProtocolStreamingPart` 不能把它们误映射成 text/tool/question/permission/file。
+
+测试要求：
+
+- `CloudOpenCodeProtocolParityTest` 必须覆盖上表的 OpenCode 等价语义族，以及 cloud-only 扩展类型的 live-only 行为。
+- 如果新增 cloud event，先判断是否有 OpenCode 等价语义；有则加入 parity 矩阵，无则明确标注 cloud-only，并补 history mapper 防误归类测试。
+
 规则：
 
 - 持久化实体、可变协议 DTO：`@Data + @Builder + @NoArgsConstructor + @AllArgsConstructor`

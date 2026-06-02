@@ -440,6 +440,10 @@ public class OpenCodeEventTranslator {
         String messageType = resolved
                 ? StreamMessage.Types.PERMISSION_REPLY
                 : StreamMessage.Types.PERMISSION_ASK;
+        String normalizedStatus = status;
+        if (normalizedStatus == null || normalizedStatus.isBlank()) {
+            normalizedStatus = resolved ? "completed" : "pending";
+        }
 
         return messageBuilder(
                 messageType,
@@ -453,7 +457,7 @@ public class OpenCodeEventTranslator {
                         .metadata(jsonNodeToMap(props.get("metadata")))
                         .response(response)
                         .build())
-                .status(status)
+                .status(normalizedStatus)
                 .title(props.path("title").asText(props.path("permission").asText(null)))
                 .build();
     }

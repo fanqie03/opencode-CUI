@@ -109,6 +109,18 @@
         LIMIT 1
     </select>
 
+    <select id="findPendingQuestionPartByToolCallId" resultMap="SkillMessagePartResultMap">
+        SELECT <include refid="allColumns"/>
+        FROM skill_message_part
+        WHERE session_id = #{sessionId}
+          AND part_type = 'tool'
+          AND tool_name = 'question'
+          AND tool_call_id = #{toolCallId}
+          AND (tool_output IS NULL OR tool_output = '')
+        ORDER BY updated_at DESC, seq DESC
+        LIMIT 1
+    </select>
+
     <select id="findByMessageId" resultMap="SkillMessagePartResultMap">
         SELECT <include refid="allColumns"/>
         FROM skill_message_part

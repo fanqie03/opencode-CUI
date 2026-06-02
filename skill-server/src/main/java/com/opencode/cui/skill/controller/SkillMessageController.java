@@ -20,6 +20,7 @@ import com.opencode.cui.skill.service.AssistantAvailabilityService;
 import com.opencode.cui.skill.service.AssistantOfflineMessageProvider;
 import com.opencode.cui.skill.service.ProtocolUtils;
 import com.opencode.cui.skill.service.SessionAccessControlService;
+import com.opencode.cui.skill.service.MessagePersistenceService;
 import com.opencode.cui.skill.service.SkillMessageService;
 import com.opencode.cui.skill.service.GatewayMessageRouter;
 import com.opencode.cui.skill.service.SkillMessageFlowService;
@@ -91,12 +92,13 @@ public class SkillMessageController {
             AssistantAccountResolverService assistantAccountResolverService,
             DefaultAssistantRuleService ruleService,
             AllowedSlashCommandsResolver allowedSlashCommandsResolver,
+            MessagePersistenceService persistenceService,
             ApplicationEventPublisher eventPublisher) {
         this(messageService, imMessageService, objectMapper, accessControlService,
                 new SkillMessageFlowService(
                         messageService, gatewayRelayService, objectMapper, messageRouter, assistantIdProperties,
                         assistantInfoService, scopeDispatcher, availabilityService, assistantAccountResolverService,
-                        ruleService, allowedSlashCommandsResolver, eventPublisher));
+                        ruleService, allowedSlashCommandsResolver, eventPublisher, persistenceService));
     }
 
     /**

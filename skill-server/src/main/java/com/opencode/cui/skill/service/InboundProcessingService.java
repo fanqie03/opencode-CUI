@@ -59,6 +59,7 @@ public class InboundProcessingService {
     private final ContextInjectionService contextInjectionService;
     private final GatewayRelayService gatewayRelayService;
     private final SkillMessageService messageService;
+    private final MessagePersistenceService persistenceService;
     private final SessionRebuildService rebuildService;
     private final ObjectMapper objectMapper;
     private final AssistantInfoService assistantInfoService;
@@ -83,6 +84,7 @@ public class InboundProcessingService {
             ContextInjectionService contextInjectionService,
             GatewayRelayService gatewayRelayService,
             SkillMessageService messageService,
+            MessagePersistenceService persistenceService,
             SessionRebuildService rebuildService,
             ObjectMapper objectMapper,
             AssistantInfoService assistantInfoService,
@@ -105,6 +107,7 @@ public class InboundProcessingService {
         this.contextInjectionService = contextInjectionService;
         this.gatewayRelayService = gatewayRelayService;
         this.messageService = messageService;
+        this.persistenceService = persistenceService;
         this.rebuildService = rebuildService;
         this.objectMapper = objectMapper;
         this.assistantInfoService = assistantInfoService;
@@ -538,6 +541,7 @@ public class InboundProcessingService {
                 businessDomain,
                 sessionType,
                 sessionId));
+        recordQuestionReplyForHistory(session.getId(), toolCallId, content);
 
         writeInvokeSource(session, inboundSource);
         return InboundResult.ok(sessionId, String.valueOf(session.getId()));
@@ -625,6 +629,7 @@ public class InboundProcessingService {
                 .subagentSessionId(subagentSessionId)
                 .build();
         gatewayRelayService.publishProtocolMessage(String.valueOf(session.getId()), replyMsg);
+        recordPermissionReplyForHistory(session.getId(), permissionId, response);
 
         writeInvokeSource(session, inboundSource);
         return InboundResult.ok(sessionId, String.valueOf(session.getId()));
@@ -721,6 +726,24 @@ public class InboundProcessingService {
             redisMessageBroker.setInvokeSource(
                     String.valueOf(session.getId()), inboundSource,
                     deliveryProperties.getInvokeSourceTtlSeconds());
+        }
+    }
+
+    private void recordQuestionReplyForHistory(Long sessionId, String toolCallId, String answer) {
+        try {
+            persistenceService.recordQuestionReply(sessionId, toolCallId, answer, null);
+        } catch (Exception e) {
+            log.warn("Failed to record inbound question reply for history: sessionId={}, toolCallId={}, error={}",
+                    sessionId, toolCallId, e.getMessage());
+        }
+    }
+
+    private void recordPermissionReplyForHistory(Long sessionId, String permissionId, String response) {
+        try {
+            persistenceService.recordPermissionReply(sessionId, permissionId, response);
+        } catch (Exception e) {
+            log.warn("Failed to record inbound permission reply for history: sessionId={}, permissionId={}, error={}",
+                    sessionId, permissionId, e.getMessage());
         }
     }
 

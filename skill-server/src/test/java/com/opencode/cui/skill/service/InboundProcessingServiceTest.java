@@ -57,6 +57,8 @@ class InboundProcessingServiceTest {
     @Mock
     private SkillMessageService messageService;
     @Mock
+    private MessagePersistenceService persistenceService;
+    @Mock
     private SessionRebuildService rebuildService;
     @Mock
     private AssistantInfoService assistantInfoService;
@@ -111,6 +113,7 @@ class InboundProcessingServiceTest {
                 contextInjectionService,
                 gatewayRelayService,
                 messageService,
+                persistenceService,
                 rebuildService,
                 objectMapper,
                 assistantInfoService,
@@ -655,6 +658,7 @@ class InboundProcessingServiceTest {
         assertTrue(payload.has("messageId"), "gateway payload should carry messageId");
         assertFalse(payload.has("imGroupId"),
                 "direct session: imGroupId should be absent (null skipped by PayloadBuilder)");
+        verify(persistenceService).recordQuestionReply(101L, "tc-001", "yes", null);
     }
 
     @Test
@@ -741,6 +745,7 @@ class InboundProcessingServiceTest {
         assertEquals(StreamMessage.Types.PERMISSION_REPLY, msgCaptor.getValue().getType());
         assertEquals("perm-001", msgCaptor.getValue().getPermission().getPermissionId());
         assertEquals("allow", msgCaptor.getValue().getPermission().getResponse());
+        verify(persistenceService).recordPermissionReply(101L, "perm-001", "allow");
     }
 
     @Test

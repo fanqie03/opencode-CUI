@@ -67,6 +67,8 @@ public class ProtocolMessagePart {
     /** 问题内容 */
     private String question;
 
+    private String questionId;
+
     /** 选项列表 */
     private List<String> options;
 

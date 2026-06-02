@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/skill-server/backend/index.md", "reason": "skill-server backend spec index and required checklist"}
+{"file": ".trellis/spec/skill-server/backend/directory-structure.md", "reason": "protocol translator and persistence placement rules"}
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "service/test conventions and existing StreamMessageEmitter/Redis patterns"}
+{"file": ".trellis/spec/skill-server/backend/type-safety.md", "reason": "StreamMessage, cloud/opencode protocol, question/permission contracts"}
+{"file": ".trellis/spec/skill-server/backend/database-guidelines.md", "reason": "message/part persistence and after-commit cache refresh rules"}
+{"file": ".trellis/spec/skill-server/backend/error-handling.md", "reason": "stream/session error semantics"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "stream message source-to-history data flow"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "avoid duplicating protocol normalization logic"}

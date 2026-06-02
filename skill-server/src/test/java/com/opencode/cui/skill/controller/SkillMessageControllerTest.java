@@ -24,6 +24,7 @@ import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
 import com.opencode.cui.skill.service.GatewayMessageRouter;
 import com.opencode.cui.skill.service.SessionAccessControlService;
+import com.opencode.cui.skill.service.MessagePersistenceService;
 import com.opencode.cui.skill.service.SkillMessageService;
 import com.opencode.cui.skill.service.SkillSessionService;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
@@ -80,6 +81,8 @@ class SkillMessageControllerTest {
     private DefaultAssistantRuleService ruleService;
     @Mock
     private AllowedSlashCommandsResolver allowedSlashCommandsResolver;
+    @Mock
+    private MessagePersistenceService persistenceService;
 
     private AssistantIdProperties assistantIdProperties;
     private SkillMessageController controller;
@@ -104,7 +107,7 @@ class SkillMessageControllerTest {
                 gatewayApiClient, assistantIdProperties, imMessageService, new ObjectMapper(),
                 accessControlService, messageRouter, assistantInfoService, scopeDispatcher,
                 offlineMessageProvider, availabilityService, assistantAccountResolverService, ruleService,
-                allowedSlashCommandsResolver,
+                allowedSlashCommandsResolver, persistenceService,
                 org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class));
         // 默认 scopeDispatcher 返回 personal 策略（requiresOnlineCheck=true）
         com.opencode.cui.skill.service.scope.AssistantScopeStrategy personalStrategy =
@@ -213,12 +216,14 @@ class SkillMessageControllerTest {
         var request = new SkillMessageController.SendMessageRequest();
         request.setContent("yes");
         request.setToolCallId("tc-001");
+        request.setQuestionId("q-001");
 
         ResponseEntity<?> response = controller.sendMessage("1", "1", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         ArgumentCaptor<InvokeCommand> cmdCaptor = ArgumentCaptor.forClass(InvokeCommand.class);
         verify(gatewayRelayService).sendInvokeToGateway(cmdCaptor.capture());
         assertEquals("question_reply", cmdCaptor.getValue().action());
+        verify(persistenceService).recordQuestionReply(1L, "tc-001", "yes", "q-001");
     }
 
     @Test
@@ -337,6 +342,7 @@ class SkillMessageControllerTest {
         verify(gatewayRelayService).sendInvokeToGateway(cmdCaptor.capture());
         assertEquals("permission_reply", cmdCaptor.getValue().action());
         verify(gatewayRelayService).publishProtocolMessage(eq("1"), any());
+        verify(persistenceService).recordPermissionReply(1L, "p-abc", "once");
     }
 
     @Test

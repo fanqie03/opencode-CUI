@@ -1,7 +1,9 @@
 package com.opencode.cui.skill.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.opencode.cui.skill.model.SkillMessage;
 import com.opencode.cui.skill.model.SkillMessagePart;
 import com.opencode.cui.skill.model.StreamMessage;
@@ -261,6 +263,42 @@ public class MessagePersistenceService {
         messageService.scheduleLatestHistoryRefreshAfterCommit(sessionId);
     }
 
+    @Transactional
+    public boolean recordQuestionReply(Long sessionId, String toolCallId, String answer, String questionId) {
+        boolean updated = updateQuestionReplyPart(
+                sessionId,
+                questionId,
+                toolCallId,
+                "completed",
+                answer,
+                null,
+                null,
+                null,
+                null,
+                null);
+        if (updated) {
+            messageService.scheduleLatestHistoryRefreshAfterCommit(sessionId);
+        }
+        return updated;
+    }
+
+    @Transactional
+    public boolean recordPermissionReply(Long sessionId, String permissionId, String response) {
+        StreamMessage msg = StreamMessage.builder()
+                .type(StreamMessage.Types.PERMISSION_REPLY)
+                .status("completed")
+                .permission(StreamMessage.PermissionInfo.builder()
+                        .permissionId(permissionId)
+                        .response(response)
+                        .build())
+                .build();
+        boolean updated = updatePermissionReplyByPermissionId(sessionId, msg);
+        if (updated) {
+            messageService.scheduleLatestHistoryRefreshAfterCommit(sessionId);
+        }
+        return updated;
+    }
+
     // ==================== 持久化逻辑 ====================
 
     private boolean persistTextPart(Long sessionId, StreamMessage msg, String partType,
@@ -304,13 +342,32 @@ public class MessagePersistenceService {
             return false;
         }
 
-        String inputJson = null;
         var tool = msg.getTool();
-        if (tool != null && tool.getInput() != null) {
-            try {
-                inputJson = objectMapper.writeValueAsString(tool.getInput());
-            } catch (JsonProcessingException e) {
-                log.warn("Failed to serialize tool input: {}", e.getMessage());
+        String inputJson = serializeToolInput(msg);
+        String toolName = tool != null ? tool.getToolName() : null;
+        String toolStatus = resolveToolStatus(msg);
+        if (isQuestionToolUpdate(msg)
+                && mergeQuestionToolUpdateIntoExistingQuestion(sessionId, msg, active, toolStatus)) {
+            return true;
+        }
+        if (StreamMessage.Types.QUESTION.equals(msg.getType()) && (toolName == null || toolName.isBlank())) {
+            toolName = "question";
+        }
+        if (StreamMessage.Types.QUESTION.equals(msg.getType()) && isResolvedQuestionStatus(toolStatus)) {
+            String toolCallId = tool != null ? tool.getToolCallId() : null;
+            String toolOutput = tool != null ? tool.getOutput() : null;
+            if (updateQuestionReplyPart(
+                    sessionId,
+                    msg.getPartId(),
+                    toolCallId,
+                    toolStatus,
+                    toolOutput,
+                    msg.getError(),
+                    msg.getTitle(),
+                    inputJson,
+                    msg.getSubagentSessionId(),
+                    msg.getSubagentName())) {
+                return true;
             }
         }
 
@@ -321,9 +378,9 @@ public class MessagePersistenceService {
                 .partId(msg.getPartId() != null ? msg.getPartId() : "tool-" + active.messageSeq())
                 .seq(resolvePartSeq(active.dbId(), msg))
                 .partType("tool")
-                .toolName(tool != null ? tool.getToolName() : null)
+                .toolName(toolName)
                 .toolCallId(tool != null ? tool.getToolCallId() : null)
-                .toolStatus(msg.getStatus())
+                .toolStatus(toolStatus)
                 .toolInput(inputJson)
                 .toolOutput(tool != null ? tool.getOutput() : null)
                 .toolError(msg.getError())
@@ -338,16 +395,123 @@ public class MessagePersistenceService {
         partRepository.upsert(part);
         log.debug("Persisted tool part immediately: sessionId={}, protocolId={}, tool={}, status={}",
                 sessionId, active.protocolMessageId(),
-                tool != null ? tool.getToolName() : null, msg.getStatus());
+                toolName, toolStatus);
         return true;
+    }
+
+    private boolean mergeQuestionToolUpdateIntoExistingQuestion(Long sessionId,
+            StreamMessage msg,
+            ActiveMessageTracker.ActiveMessageRef active,
+            String toolStatus) {
+        var tool = msg.getTool();
+        String toolOutput = tool != null ? tool.getOutput() : null;
+        SkillMessagePart existing = findCanonicalQuestionPartInMessage(
+                active.dbId(), msg.getPartId(), toolOutput);
+        if (existing == null) {
+            return false;
+        }
+
+        existing.setToolStatus(toolStatus != null && !toolStatus.isBlank() ? toolStatus : existing.getToolStatus());
+        if (existing.getToolOutput() == null || existing.getToolOutput().isBlank()) {
+            existing.setToolOutput(normalizeQuestionToolUpdateOutput(existing.getToolInput(), toolOutput));
+        }
+        if (msg.getError() != null) {
+            existing.setToolError(msg.getError());
+        }
+        if (msg.getTitle() != null) {
+            existing.setToolTitle(msg.getTitle());
+        }
+        if (msg.getSubagentSessionId() != null) {
+            existing.setSubagentSessionId(msg.getSubagentSessionId());
+        }
+        if (msg.getSubagentName() != null) {
+            existing.setSubagentName(msg.getSubagentName());
+        }
+        existing.setUpdatedAt(null);
+        partRepository.upsert(existing);
+        log.info("Merged question tool.update into existing question part: sessionId={}, toolUpdatePartId={}, questionPartId={}, status={}",
+                sessionId, msg.getPartId(), existing.getPartId(), existing.getToolStatus());
+        return true;
+    }
+
+    private SkillMessagePart findCanonicalQuestionPartInMessage(Long messageDbId,
+            String toolUpdatePartId,
+            String toolOutput) {
+        if (messageDbId == null) {
+            return null;
+        }
+        List<SkillMessagePart> parts = partRepository.findByMessageId(messageDbId);
+        if (parts == null || parts.isEmpty()) {
+            return null;
+        }
+        List<SkillMessagePart> candidates = parts.stream()
+                .filter(this::isQuestionPart)
+                .filter(part -> toolUpdatePartId == null || !toolUpdatePartId.equals(part.getPartId()))
+                .filter(this::hasQuestionInput)
+                .toList();
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        if (toolOutput != null && !toolOutput.isBlank()) {
+            return candidates.stream()
+                    .filter(part -> questionOutputMentionsQuestion(part.getToolInput(), toolOutput))
+                    .findFirst()
+                    .orElse(candidates.size() == 1 ? candidates.get(0) : null);
+        }
+        return candidates.size() == 1 ? candidates.get(0) : null;
+    }
+
+    private boolean hasQuestionInput(SkillMessagePart part) {
+        return part.getToolInput() != null && !part.getToolInput().isBlank();
+    }
+
+    private String normalizeQuestionToolUpdateOutput(String inputJson, String output) {
+        if (output == null) {
+            return null;
+        }
+        if (inputJson == null || inputJson.isBlank()) {
+            return output;
+        }
+        try {
+            JsonNode inputNode = objectMapper.readTree(inputJson);
+            return ProtocolUtils.normalizeQuestionAnswerOutput(output, inputNode);
+        } catch (JsonProcessingException e) {
+            log.debug("Failed to parse question input while merging tool.update: {}", e.getMessage());
+            return output;
+        }
+    }
+
+    private boolean questionOutputMentionsQuestion(String inputJson, String output) {
+        if (inputJson == null || inputJson.isBlank() || output == null || output.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode inputNode = objectMapper.readTree(inputJson);
+            JsonNode questionNode = ProtocolUtils.resolveQuestionPayload(inputNode);
+            String question = questionNode != null ? questionNode.path("question").asText(null) : null;
+            return question != null && !question.isBlank() && output.contains(question);
+        } catch (JsonProcessingException e) {
+            log.debug("Failed to parse question input while matching tool.update: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean isQuestionToolUpdate(StreamMessage msg) {
+        if (msg == null || !StreamMessage.Types.TOOL_UPDATE.equals(msg.getType()) || msg.getTool() == null) {
+            return false;
+        }
+        return "question".equals(msg.getTool().getToolName());
     }
 
     private boolean persistPermissionPart(Long sessionId, StreamMessage msg,
             ActiveMessageTracker.ActiveMessageRef active) {
-        // permission.reply 没有 active message 时（常见于 subagent 权限回复），
-        // 直接按 permissionId 更新已有 permission part 的 status 和 response
-        if (active == null && StreamMessage.Types.PERMISSION_REPLY.equals(msg.getType())) {
-            return updatePermissionReplyByPermissionId(sessionId, msg);
+        // A reply should complete the original permission card first. If the
+        // original card was persisted with a different partId, match by toolCallId.
+        if (StreamMessage.Types.PERMISSION_REPLY.equals(msg.getType())) {
+            boolean updated = updatePermissionReplyByPermissionId(sessionId, msg);
+            if (updated || active == null) {
+                return updated;
+            }
         }
         if (active == null) {
             return false;
@@ -375,7 +539,7 @@ public class MessagePersistenceService {
                 .content(msg.getTitle() != null ? msg.getTitle() : msg.getContent())
                 .toolName(permission != null ? permission.getPermType() : null)
                 .toolCallId(permissionId)
-                .toolStatus(msg.getStatus())
+                .toolStatus(resolvePermissionStatus(msg))
                 .toolInput(metadataJson)
                 .toolOutput(permission != null ? permission.getResponse() : null)
                 .subagentSessionId(msg.getSubagentSessionId())
@@ -397,7 +561,8 @@ public class MessagePersistenceService {
      */
     private boolean updatePermissionReplyByPermissionId(Long sessionId, StreamMessage msg) {
         var permission = msg.getPermission();
-        if (permission == null || permission.getPermissionId() == null) {
+        if (sessionId == null || permission == null || permission.getPermissionId() == null
+                || permission.getPermissionId().isBlank()) {
             return false;
         }
         String permissionId = permission.getPermissionId();
@@ -405,12 +570,9 @@ public class MessagePersistenceService {
         String status = msg.getStatus() != null ? msg.getStatus() : "completed";
 
         // 先查 DB（已刷盘的场景）
-        SkillMessagePart existing = partRepository.findByPartId(sessionId, permissionId);
+        SkillMessagePart existing = findPermissionPartForReply(sessionId, permissionId);
         if (existing != null) {
-            existing.setToolStatus(status);
-            existing.setToolOutput(response);
-            existing.setUpdatedAt(null);
-            partRepository.upsert(existing);
+            updatePermissionPart(existing, status, response);
             log.info("Updated permission reply by permissionId (DB): sessionId={}, permissionId={}, response={}",
                     sessionId, permissionId, response);
             return true;
@@ -428,6 +590,108 @@ public class MessagePersistenceService {
         log.debug("Permission part not found in DB or Redis buffer: sessionId={}, permissionId={}",
                 sessionId, permissionId);
         return false;
+    }
+
+    private boolean updateQuestionReplyPart(Long sessionId,
+            String partId,
+            String toolCallId,
+            String status,
+            String output,
+            String error,
+            String title,
+            String inputJson,
+            String subagentSessionId,
+            String subagentName) {
+        if (sessionId == null || ((partId == null || partId.isBlank())
+                && (toolCallId == null || toolCallId.isBlank()))) {
+            return false;
+        }
+        SkillMessagePart existing = findQuestionPartForReply(sessionId, partId, toolCallId);
+        if (existing == null) {
+            log.debug("Question part not found for reply: sessionId={}, partId={}, toolCallId={}",
+                    sessionId, partId, toolCallId);
+            return false;
+        }
+
+        existing.setToolStatus(status != null && !status.isBlank() ? status : "completed");
+        if (output != null) {
+            existing.setToolOutput(output);
+        }
+        if (error != null) {
+            existing.setToolError(error);
+        }
+        if (title != null) {
+            existing.setToolTitle(title);
+        }
+        if (inputJson != null) {
+            existing.setToolInput(inputJson);
+        }
+        if (subagentSessionId != null) {
+            existing.setSubagentSessionId(subagentSessionId);
+        }
+        if (subagentName != null) {
+            existing.setSubagentName(subagentName);
+        }
+        existing.setUpdatedAt(null);
+        partRepository.upsert(existing);
+        log.info("Updated question reply by protocol id: sessionId={}, partId={}, toolCallId={}, status={}",
+                sessionId, existing.getPartId(), existing.getToolCallId(), existing.getToolStatus());
+        return true;
+    }
+
+    private SkillMessagePart findQuestionPartForReply(Long sessionId, String partId, String toolCallId) {
+        if (partId != null && !partId.isBlank()) {
+            SkillMessagePart byPartId = partRepository.findByPartId(sessionId, partId);
+            if (isQuestionPart(byPartId)) {
+                return byPartId;
+            }
+        }
+        if (toolCallId == null || toolCallId.isBlank()) {
+            return null;
+        }
+        SkillMessagePart byToolCallId = partRepository.findPendingQuestionPartByToolCallId(sessionId, toolCallId);
+        return isQuestionPart(byToolCallId, toolCallId) ? byToolCallId : null;
+    }
+
+    private boolean isQuestionPart(SkillMessagePart part, String toolCallId) {
+        if (!isQuestionPart(part)) {
+            return false;
+        }
+        return toolCallId == null || toolCallId.isBlank() || toolCallId.equals(part.getToolCallId());
+    }
+
+    private boolean isQuestionPart(SkillMessagePart part) {
+        return part != null && "tool".equals(part.getPartType()) && "question".equals(part.getToolName());
+    }
+
+    private SkillMessagePart findPermissionPartForReply(Long sessionId, String permissionId) {
+        if (permissionId == null || permissionId.isBlank()) {
+            return null;
+        }
+        SkillMessagePart byPartId = partRepository.findByPartId(sessionId, permissionId);
+        if (isPermissionPart(byPartId)) {
+            return byPartId;
+        }
+        SkillMessagePart byToolCallId = partRepository.findPendingPermissionPartByToolCallId(sessionId, permissionId);
+        return isPermissionPart(byToolCallId, permissionId) ? byToolCallId : null;
+    }
+
+    private boolean isPermissionPart(SkillMessagePart part, String permissionId) {
+        if (!isPermissionPart(part)) {
+            return false;
+        }
+        return permissionId == null || permissionId.isBlank() || permissionId.equals(part.getToolCallId());
+    }
+
+    private boolean isPermissionPart(SkillMessagePart part) {
+        return part != null && "permission".equals(part.getPartType());
+    }
+
+    private void updatePermissionPart(SkillMessagePart part, String status, String response) {
+        part.setToolStatus(status);
+        part.setToolOutput(response);
+        part.setUpdatedAt(null);
+        partRepository.upsert(part);
     }
 
     private boolean persistFilePart(Long sessionId, StreamMessage msg,
@@ -555,6 +819,84 @@ public class MessagePersistenceService {
                 true;
             default -> false;
         };
+    }
+
+    private String serializeToolInput(StreamMessage msg) {
+        Object input = resolveToolInput(msg);
+        if (input == null) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(input);
+        } catch (JsonProcessingException e) {
+            log.warn("Failed to serialize tool input: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private Object resolveToolInput(StreamMessage msg) {
+        var tool = msg.getTool();
+        if (tool != null && tool.getInput() != null) {
+            return tool.getInput();
+        }
+        if (StreamMessage.Types.QUESTION.equals(msg.getType())) {
+            return buildQuestionInput(msg.getQuestionInfo());
+        }
+        return null;
+    }
+
+    private JsonNode buildQuestionInput(StreamMessage.QuestionInfo questionInfo) {
+        if (questionInfo == null) {
+            return null;
+        }
+        ObjectNode input = objectMapper.createObjectNode();
+        putText(input, "header", questionInfo.getHeader());
+        putText(input, "question", questionInfo.getQuestion());
+        if (questionInfo.getOptions() != null && !questionInfo.getOptions().isEmpty()) {
+            input.set("options", objectMapper.valueToTree(questionInfo.getOptions()));
+        }
+        if (questionInfo.getMultiSelect() != null) {
+            input.put("multiSelect", questionInfo.getMultiSelect());
+        }
+        if (questionInfo.getQuestions() != null && !questionInfo.getQuestions().isEmpty()) {
+            input.set("questions", objectMapper.valueToTree(questionInfo.getQuestions()));
+        }
+        if (questionInfo.getExtParam() != null && !questionInfo.getExtParam().isNull()) {
+            input.set("extParam", questionInfo.getExtParam());
+        }
+        putText(input, "questionId", questionInfo.getQuestionId());
+        return input.size() == 0 ? null : input;
+    }
+
+    private static void putText(ObjectNode node, String field, String value) {
+        if (value != null && !value.isBlank()) {
+            node.put(field, value);
+        }
+    }
+
+    private String resolvePermissionStatus(StreamMessage msg) {
+        if (msg.getStatus() != null && !msg.getStatus().isBlank()) {
+            return msg.getStatus();
+        }
+        return switch (msg.getType()) {
+            case StreamMessage.Types.PERMISSION_ASK -> "pending";
+            case StreamMessage.Types.PERMISSION_REPLY -> "completed";
+            default -> null;
+        };
+    }
+
+    private String resolveToolStatus(StreamMessage msg) {
+        if (msg.getStatus() != null && !msg.getStatus().isBlank()) {
+            return msg.getStatus();
+        }
+        if (StreamMessage.Types.QUESTION.equals(msg.getType())) {
+            return "running";
+        }
+        return null;
+    }
+
+    private boolean isResolvedQuestionStatus(String status) {
+        return "completed".equals(status) || "error".equals(status);
     }
 
     private String inferPermissionResponseFromToolOutcome(StreamMessage msg) {

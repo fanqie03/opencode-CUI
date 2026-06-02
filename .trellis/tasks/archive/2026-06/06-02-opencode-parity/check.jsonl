@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/skill-server/backend/index.md", "reason": "skill-server backend quality checklist"}
+{"file": ".trellis/spec/skill-server/backend/directory-structure.md", "reason": "verify code stays in expected protocol/persistence modules"}
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "verify service/test conventions"}
+{"file": ".trellis/spec/skill-server/backend/type-safety.md", "reason": "verify protocol field contracts and parity requirements"}
+{"file": ".trellis/spec/skill-server/backend/database-guidelines.md", "reason": "verify persistence/history/cache refresh behavior"}
+{"file": ".trellis/spec/skill-server/backend/error-handling.md", "reason": "verify stream/session error semantics"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "verify cloud/opencode data flow across translator, persistence, history"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "verify no duplicate protocol normalization drift"}

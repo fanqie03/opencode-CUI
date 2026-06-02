@@ -84,7 +84,8 @@ public final class ProtocolMessageMapper {
                         .toolCallId(part.getToolCallId())
                         .status(part.getToolStatus())
                         .input(inputNode)
-                        .output(normalizedOutput);
+                        .output(normalizedOutput)
+                        .questionId(resolveQuestionId(inputNode, questionNode));
                 if ("completed".equals(part.getToolStatus())) {
                     builder.answered(true);
                 }
@@ -170,6 +171,7 @@ public final class ProtocolMessageMapper {
                 if (q != null) {
                     builder.header(q.getHeader())
                             .question(q.getQuestion())
+                            .questionId(q.getQuestionId())
                             .options(q.getOptions());
                 }
             }
@@ -207,6 +209,33 @@ public final class ProtocolMessageMapper {
             return message.getMessageId();
         }
         return message.getId() != null ? String.valueOf(message.getId()) : null;
+    }
+
+    private static String resolveQuestionId(JsonNode inputNode, JsonNode questionNode) {
+        String fromInput = firstText(inputNode, "questionId");
+        if (fromInput != null) {
+            return fromInput;
+        }
+        fromInput = firstText(inputNode, "id");
+        if (fromInput != null) {
+            return fromInput;
+        }
+        String fromQuestion = firstText(questionNode, "questionId");
+        if (fromQuestion != null) {
+            return fromQuestion;
+        }
+        return firstText(questionNode, "id");
+    }
+
+    private static String firstText(JsonNode node, String fieldName) {
+        if (node == null || !node.isObject()) {
+            return null;
+        }
+        JsonNode value = node.get(fieldName);
+        if (value == null || !value.isTextual() || value.asText().isBlank()) {
+            return null;
+        }
+        return value.asText();
     }
 
     private static String normalizePartType(SkillMessagePart part) {

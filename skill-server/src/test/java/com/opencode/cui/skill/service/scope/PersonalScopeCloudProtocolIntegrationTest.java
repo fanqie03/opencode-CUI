@@ -113,10 +113,11 @@ class PersonalScopeCloudProtocolIntegrationTest {
     }
 
     @Test
-    @DisplayName("cloud text.delta through router: same partId -> partSeq 0 then 1 (current impl, G4)")
+    @DisplayName("cloud text.delta through router: same partId keeps partSeq, new partId increments")
     void routerCloudTextDelta_partSeqIncrements() {
         router.route("tool_event", AK, USER_ID, buildToolEventNode(buildCloudTextDelta("m1", "p1", "hello ")));
         router.route("tool_event", AK, USER_ID, buildToolEventNode(buildCloudTextDelta("m1", "p1", "world")));
+        router.route("tool_event", AK, USER_ID, buildToolEventNode(buildCloudTextDelta("m1", "p2", "think")));
 
         ArgumentCaptor<StreamMessage> captor = ArgumentCaptor.forClass(StreamMessage.class);
         verify(emitter, atLeastOnce()).emitToSession(any(), anyString(), anyString(), captor.capture());
@@ -124,11 +125,13 @@ class PersonalScopeCloudProtocolIntegrationTest {
         List<StreamMessage> captured = captor.getAllValues().stream()
                 .filter(m -> StreamMessage.Types.TEXT_DELTA.equals(m.getType()))
                 .toList();
-        assertEquals(2, captured.size(), "expected two TEXT_DELTA emitted by emitter");
+        assertEquals(3, captured.size(), "expected three TEXT_DELTA emitted by emitter");
         assertEquals("hello ", captured.get(0).getContent());
         assertEquals("world", captured.get(1).getContent());
-        assertEquals(Integer.valueOf(0), captured.get(0).getPartSeq());
+        assertEquals("think", captured.get(2).getContent());
+        assertEquals(Integer.valueOf(1), captured.get(0).getPartSeq());
         assertEquals(Integer.valueOf(1), captured.get(1).getPartSeq());
+        assertEquals(Integer.valueOf(2), captured.get(2).getPartSeq());
     }
 
     @Test
@@ -158,7 +161,7 @@ class PersonalScopeCloudProtocolIntegrationTest {
     }
 
     @Test
-    @DisplayName("session.status=idle through router clears partSeq counter; next text.delta restarts at 0")
+    @DisplayName("session.status=idle through router clears partSeq counter; next text.delta restarts at 1")
     void routerSessionIdle_clearsPartSeqCounter() {
         router.route("tool_event", AK, USER_ID, buildToolEventNode(buildCloudTextDelta("m1", "p1", "a")));
         router.route("tool_event", AK, USER_ID, buildToolEventNode(buildCloudSessionStatusIdle()));
@@ -175,9 +178,9 @@ class PersonalScopeCloudProtocolIntegrationTest {
                 .toList();
 
         assertEquals(2, textDeltas.size());
-        assertEquals(Integer.valueOf(0), textDeltas.get(0).getPartSeq());
-        assertEquals(Integer.valueOf(0), textDeltas.get(1).getPartSeq(),
-                "after idle the counter is cleared; next delta for same partId restarts at 0");
+        assertEquals(Integer.valueOf(1), textDeltas.get(0).getPartSeq());
+        assertEquals(Integer.valueOf(1), textDeltas.get(1).getPartSeq(),
+                "after idle the counter is cleared; next delta for same partId restarts at 1");
 
         StreamMessage idleMsg = statusMsgs.stream()
                 .filter(m -> "idle".equals(m.getSessionStatus()))

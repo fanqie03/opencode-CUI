@@ -109,6 +109,7 @@ class CloudEventTranslatorTest {
     void question() {
         ObjectNode e = event("question");
         e.put("toolCallId", "call-q");
+        e.put("questionId", "question-request-1");
         e.put("question", "Continue?");
         e.put("header", "Confirmation");
         e.put("status", "running");
@@ -126,7 +127,34 @@ class CloudEventTranslatorTest {
         assertNotNull(msg.getQuestionInfo());
         assertEquals("Continue?", msg.getQuestionInfo().getQuestion());
         assertEquals("Confirmation", msg.getQuestionInfo().getHeader());
+        assertEquals("question-request-1", msg.getQuestionInfo().getQuestionId());
         assertEquals(List.of("Yes", "No"), msg.getQuestionInfo().getOptions());
+    }
+
+    @Test
+    @DisplayName("projected cloud question defaults to running and preserves questionId")
+    void projectedCloudQuestionDefaultsRunningAndPreservesQuestionId() throws Exception {
+        String json = """
+            {"protocol":"cloud","type":"question",
+             "properties":{
+               "messageId":"msg-1",
+               "partId":"part-display-1",
+               "questionId":"question-target-1",
+               "toolCallId":"question-target-1",
+               "questions":[{"header":"h","question":"q","options":[{"label":"A"}]}]}}
+            """;
+        StreamMessage msg = translator.translate(om.readTree(json));
+
+        assertNotNull(msg);
+        assertEquals(StreamMessage.Types.QUESTION, msg.getType());
+        assertEquals("msg-1", msg.getMessageId());
+        assertEquals("part-display-1", msg.getPartId());
+        assertEquals("question-target-1", msg.getTool().getToolCallId());
+        assertEquals("running", msg.getStatus());
+        assertNotNull(msg.getQuestionInfo());
+        assertEquals("question-target-1", msg.getQuestionInfo().getQuestionId());
+        assertEquals("q", msg.getQuestionInfo().getQuestion());
+        assertEquals(List.of("A"), msg.getQuestionInfo().getOptions());
     }
 
     @Test
@@ -216,6 +244,7 @@ class CloudEventTranslatorTest {
         assertNotNull(msg.getPermission());
         assertEquals("perm-1", msg.getPermission().getPermissionId());
         assertEquals("file_write", msg.getPermission().getPermType());
+        assertEquals("pending", msg.getStatus());
         assertEquals("Write to file", msg.getTitle());
     }
 
@@ -236,6 +265,7 @@ class CloudEventTranslatorTest {
         assertNotNull(msg.getPermission());
         assertEquals("perm-2", msg.getPermission().getPermissionId());
         assertEquals("once", msg.getPermission().getResponse());
+        assertEquals("completed", msg.getStatus());
     }
 
     // ==================== session.status ====================

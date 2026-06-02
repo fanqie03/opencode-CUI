@@ -1,0 +1,4 @@
+{"file":".trellis/spec/skill-server/backend/index.md","reason":"verify skill-server backend checklist before reporting completion"}
+{"file":".trellis/spec/skill-server/backend/type-safety.md","reason":"verify cloud question history contract remains accurate after duplicate-part fix"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"check API/history output shape against cross-layer protocol expectations"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"check the fix uses centralized helpers instead of ad hoc duplication"}

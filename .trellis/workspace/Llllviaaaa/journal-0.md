@@ -99,3 +99,36 @@ Notes:
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: SS 云端交互历史协议对齐
+
+**Date**: 2026-06-02
+**Task**: SS 云端交互历史协议对齐
+**Branch**: `codex/ss-protocol-question-permission`
+
+### Summary
+
+修复 skill-server 对 cloud question/permission 缺省状态、questionId、canonical input 和 reply 回填的历史记录归一问题；plugin 子模块已更新到 origin/main，未修改 plugin 代码；验证 skill-server 全量 mvn test 1054 个用例通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cb009c6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
