@@ -53,6 +53,7 @@ public class StandardProtocolHandler implements AssistantSquareProtocolHandler {
         List<GatewayMessage> out = new ArrayList<>();
 
         String messageId = data.path("messageId").asText(null);
+        rememberMessageId(session, messageId);
 
         // 1) 顶层终态：error → TOOL_ERROR
         if ("error".equalsIgnoreCase(eventType)) {
@@ -62,6 +63,7 @@ public class StandardProtocolHandler implements AssistantSquareProtocolHandler {
             }
             out.add(GatewayMessage.builder()
                     .type(GatewayMessage.Type.TOOL_ERROR)
+                    .messageId(session.getLastMessageId())
                     .error(message)
                     .build());
             return out;
@@ -74,7 +76,7 @@ public class StandardProtocolHandler implements AssistantSquareProtocolHandler {
         // 3) 首事件前补 step.start（无论该事件本身是否支持都补，保证 step 边界对齐）
         if (!session.isStepStarted()) {
             session.setStepStarted(true);
-            out.add(buildSessionStatus("busy"));
+            out.add(buildSessionStatus("busy", session.getLastMessageId()));
             out.add(buildStepStart(messageId));
         }
 
@@ -133,12 +135,14 @@ public class StandardProtocolHandler implements AssistantSquareProtocolHandler {
             event.put("type", "step.done");
             ObjectNode props = objectMapper.createObjectNode();
             props.put("role", "assistant");
+            putMessageId(props, session.getLastMessageId());
             event.set("properties", props);
             out.add(GatewayMessage.builder()
                     .type(GatewayMessage.Type.TOOL_EVENT)
+                    .messageId(session.getLastMessageId())
                     .event(event)
                     .build());
-            out.add(buildSessionStatus("idle"));
+            out.add(buildSessionStatus("idle", session.getLastMessageId()));
         }
         return out;
     }
@@ -193,6 +197,12 @@ public class StandardProtocolHandler implements AssistantSquareProtocolHandler {
         return idx > 0 ? streamType.substring(0, idx) : streamType;
     }
 
+    private void rememberMessageId(AssistantSquareDecoderSession session, String messageId) {
+        if (messageId != null && !messageId.isBlank()) {
+            session.setLastMessageId(messageId);
+        }
+    }
+
     /**
      * 从 data 里提取流式 part 的 delta 文本。
      *
@@ -240,12 +250,11 @@ public class StandardProtocolHandler implements AssistantSquareProtocolHandler {
         event.put("type", streamType);
         ObjectNode props = objectMapper.createObjectNode();
         props.put("content", delta);
-        if (messageId != null && !messageId.isBlank()) {
-            props.put("messageId", messageId);
-        }
+        putMessageId(props, messageId);
         event.set("properties", props);
         return GatewayMessage.builder()
                 .type(GatewayMessage.Type.TOOL_EVENT)
+                .messageId(messageId)
                 .event(event)
                 .build();
     }
@@ -260,12 +269,11 @@ public class StandardProtocolHandler implements AssistantSquareProtocolHandler {
         event.put("type", type);
         ObjectNode props = objectMapper.createObjectNode();
         props.put("content", content);
-        if (messageId != null && !messageId.isBlank()) {
-            props.put("messageId", messageId);
-        }
+        putMessageId(props, messageId);
         event.set("properties", props);
         return GatewayMessage.builder()
                 .type(GatewayMessage.Type.TOOL_EVENT)
+                .messageId(messageId)
                 .event(event)
                 .build();
     }
@@ -275,25 +283,26 @@ public class StandardProtocolHandler implements AssistantSquareProtocolHandler {
         event.put("type", "step.start");
         ObjectNode props = objectMapper.createObjectNode();
         props.put("role", "assistant");
-        if (messageId != null && !messageId.isBlank()) {
-            props.put("messageId", messageId);
-        }
+        putMessageId(props, messageId);
         event.set("properties", props);
         return GatewayMessage.builder()
                 .type(GatewayMessage.Type.TOOL_EVENT)
+                .messageId(messageId)
                 .event(event)
                 .build();
     }
 
-    private GatewayMessage buildSessionStatus(String status) {
+    private GatewayMessage buildSessionStatus(String status, String messageId) {
         ObjectNode event = objectMapper.createObjectNode();
         event.put("type", "session.status");
         ObjectNode props = objectMapper.createObjectNode();
         props.put("status", status);
         props.put("sessionStatus", status);
+        putMessageId(props, messageId);
         event.set("properties", props);
         return GatewayMessage.builder()
                 .type(GatewayMessage.Type.TOOL_EVENT)
+                .messageId(messageId)
                 .event(event)
                 .build();
     }
@@ -302,9 +311,7 @@ public class StandardProtocolHandler implements AssistantSquareProtocolHandler {
         ObjectNode event = objectMapper.createObjectNode();
         event.put("type", streamType);
         ObjectNode props = objectMapper.createObjectNode();
-        if (messageId != null && !messageId.isBlank()) {
-            props.put("messageId", messageId);
-        }
+        putMessageId(props, messageId);
         // 按事件类型透传 payload（字段命名贴近 OpenCode 标准协议）
         switch (streamType) {
             case "searching": {
@@ -333,8 +340,15 @@ public class StandardProtocolHandler implements AssistantSquareProtocolHandler {
         event.set("properties", props);
         return GatewayMessage.builder()
                 .type(GatewayMessage.Type.TOOL_EVENT)
+                .messageId(messageId)
                 .event(event)
                 .build();
+    }
+
+    private static void putMessageId(ObjectNode props, String messageId) {
+        if (messageId != null && !messageId.isBlank()) {
+            props.put("messageId", messageId);
+        }
     }
 
     private JsonNode firstNonMissing(JsonNode data, String... fields) {

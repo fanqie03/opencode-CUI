@@ -149,6 +149,36 @@ class AgentWebSocketHandlerTest {
         assertSentMessageType(GatewayMessage.Type.REGISTER_OK);
     }
 
+    @Test
+    @DisplayName("close skips offline notification when AK already belongs to a newer gateway owner")
+    void closeSkipsOfflineWhenNewerOwnerExists() throws Exception {
+        allowRegisterLock();
+        when(deviceBindingService.validate("ak-1", "AA:BB:CC:DD:EE:FF", "openx")).thenReturn(true);
+        when(redisMessageBroker.getConnAk("ak-1")).thenReturn(null, "gw-remote");
+        when(redisMessageBroker.getInternalAgentInstance("ak-1")).thenReturn(null, null);
+        when(eventRelayService.hasAgentSession("ak-1")).thenReturn(false);
+        when(agentRegistryService.register(
+                "user-1",
+                "ak-1",
+                "MacBook Pro",
+                "AA:BB:CC:DD:EE:FF",
+                "macOS",
+                "openx",
+                "1.0.0"))
+                .thenReturn(AgentConnection.builder().id(100L).akId("ak-1").build());
+        when(redisMessageBroker.drainPending("ak-1")).thenReturn(List.of());
+        when(redisMessageBroker.conditionalRemoveConnAk("ak-1", GATEWAY_INSTANCE_ID)).thenReturn(false);
+        when(redisMessageBroker.conditionalRemoveInternalAgent("ak-1", GATEWAY_INSTANCE_ID)).thenReturn(false);
+
+        handleRegister();
+        handler.afterConnectionClosed(session, CloseStatus.NORMAL);
+
+        verify(agentRegistryService).markOffline(100L);
+        verify(eventRelayService).removeAgentSession("ak-1");
+        verify(eventRelayService, never()).relayToSkillServer(eq("ak-1"),
+                org.mockito.ArgumentMatchers.argThat(message -> GatewayMessage.Type.AGENT_OFFLINE.equals(message.getType())));
+    }
+
     private void allowRegisterLock() {
         when(valueOperations.setIfAbsent(
                 eq("gw:register:lock:ak-1"),

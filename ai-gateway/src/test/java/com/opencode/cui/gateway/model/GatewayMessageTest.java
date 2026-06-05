@@ -18,13 +18,15 @@ class GatewayMessageTest {
     @Test
     void testToolEventSerialization() throws Exception {
         JsonNode event = objectMapper.readTree("{\"type\":\"message.part.updated\",\"delta\":\"hello\"}");
-        GatewayMessage msg = GatewayMessage.toolEvent("sess-42", event);
+        GatewayMessage msg = GatewayMessage.toolEvent("sess-42", event)
+                .withMessageId("msg-42");
 
         String json = objectMapper.writeValueAsString(msg);
         GatewayMessage deserialized = objectMapper.readValue(json, GatewayMessage.class);
 
         assertEquals("tool_event", deserialized.getType());
         assertEquals("sess-42", deserialized.getToolSessionId());
+        assertEquals("msg-42", deserialized.getMessageId());
         assertNotNull(deserialized.getEvent());
         assertEquals("message.part.updated", deserialized.getEvent().get("type").asText());
     }

@@ -241,27 +241,28 @@ class RedisMessageBrokerTest {
 
         @SuppressWarnings({"unchecked", "rawtypes"})
         @Test
-        @DisplayName("enqueueSourceL2Work writes one stream record and ensures group")
-        void enqueueSourceL2WorkWritesStreamRecord() {
-            when(streamOperations.add(eq("gw:l2:source:skill-server"), any(Map.class)))
+        @DisplayName("enqueueSourceL2Work writes one target mailbox stream record and ensures group")
+        void enqueueSourceL2WorkWritesMailboxStreamRecord() {
+            when(streamOperations.add(eq("gw:l2:source:skill-server:gw-remote"), any(Map.class)))
                     .thenReturn(RecordId.of("1-0"));
 
             String streamId = broker.enqueueSourceL2Work(
-                    "skill-server", "{\"type\":\"tool_done\"}", "T1", "trace-1", "tool_done", 10000);
+                    "skill-server", "gw-remote", "{\"type\":\"tool_done\"}", "msg-1", "trace-1", "tool_done", 10000);
 
             assertEquals("1-0", streamId);
-            verify(streamOperations).add(eq("gw:l2:source:skill-server"), any(Map.class));
+            verify(streamOperations).add(eq("gw:l2:source:skill-server:gw-remote"), any(Map.class));
             verify(streamOperations).createGroup(
-                    eq("gw:l2:source:skill-server"), any(ReadOffset.class), eq("gw-l2-skill-server"));
-            verify(streamOperations).trim("gw:l2:source:skill-server", 10000, true);
+                    eq("gw:l2:source:skill-server:gw-remote"), any(ReadOffset.class), eq("gw-l2-skill-server:gw-remote"));
+            verify(streamOperations).trim("gw:l2:source:skill-server:gw-remote", 10000, true);
+            verify(redisTemplate).expire("gw:l2:source:skill-server:gw-remote", Duration.ofHours(2));
         }
 
         @Test
-        @DisplayName("ackSourceL2Work acknowledges the stream group")
-        void ackSourceL2WorkAcknowledgesGroup() {
-            broker.ackSourceL2Work("skill-server", "1-0");
+        @DisplayName("ackSourceL2Work acknowledges the target mailbox stream group")
+        void ackSourceL2WorkAcknowledgesMailboxGroup() {
+            broker.ackSourceL2Work("skill-server", "gw-remote", "1-0");
 
-            verify(streamOperations).acknowledge("gw:l2:source:skill-server", "gw-l2-skill-server", "1-0");
+            verify(streamOperations).acknowledge("gw:l2:source:skill-server:gw-remote", "gw-l2-skill-server:gw-remote", "1-0");
         }
     }
 

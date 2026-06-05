@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AsyncSessionSender {
 
@@ -18,15 +19,26 @@ public class AsyncSessionSender {
     private final WebSocketSession session;
     private final BlockingQueue<TextMessage> queue;
     private final Thread senderThread;
+    private final Runnable failureCallback;
+    private final AtomicBoolean failureNotified = new AtomicBoolean(false);
     private volatile boolean running = true;
 
     public AsyncSessionSender(WebSocketSession session) {
-        this(session, DEFAULT_QUEUE_CAPACITY);
+        this(session, DEFAULT_QUEUE_CAPACITY, null);
+    }
+
+    public AsyncSessionSender(WebSocketSession session, Runnable failureCallback) {
+        this(session, DEFAULT_QUEUE_CAPACITY, failureCallback);
     }
 
     public AsyncSessionSender(WebSocketSession session, int queueCapacity) {
+        this(session, queueCapacity, null);
+    }
+
+    public AsyncSessionSender(WebSocketSession session, int queueCapacity, Runnable failureCallback) {
         this.session = session;
         this.queue = new LinkedBlockingQueue<>(queueCapacity);
+        this.failureCallback = failureCallback;
         this.senderThread = new Thread(this::sendLoop, "ws-sender-" + session.getId());
         this.senderThread.setDaemon(true);
     }
@@ -84,10 +96,22 @@ public class AsyncSessionSender {
                 log.error("[AsyncSender] Send failed: linkId={}, remaining={}",
                         session.getId(), queue.size(), e);
                 running = false;
+                notifyFailure();
                 break;
             }
         }
         log.info("[AsyncSender] Sender thread stopped: linkId={}, droppedMessages={}",
                 session.getId(), queue.size());
+    }
+
+    private void notifyFailure() {
+        if (failureCallback != null && failureNotified.compareAndSet(false, true)) {
+            try {
+                failureCallback.run();
+            } catch (Exception e) {
+                log.warn("[AsyncSender] Failure callback failed: linkId={}, error={}",
+                        session.getId(), e.getMessage(), e);
+            }
+        }
     }
 }

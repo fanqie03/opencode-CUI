@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-05-ss-gw-asyncsender-session/prd.md", "reason": "Acceptance criteria and root-cause notes for final verification."}
+{"file": ".trellis/spec/ai-gateway/backend/index.md", "reason": "ai-gateway backend verification expectations for WebSocket, Redis route, logging, and tests."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check that the fix eliminates divergent sender paths instead of adding another copy."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check SS/GW relay flow and source delivery semantics remain coherent across layers."}

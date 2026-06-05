@@ -64,11 +64,12 @@ public record RelayMessage(
 }
 ```
 
-`relayType` 的现有取值包括 `to-agent`（默认/空）、`to-source`、`to-cloud-control`。`to-source` 只表示精准投递到本机某个 Source WebSocket；GW→SS 缺少本机连接时不再使用 `RelayMessage` 做 `to-source-broadcast` 广播兜底，而是由 `SkillRelayService` 写入 `gw:l2:source:skill-server` Redis Stream。`to-cloud-control` 只用于 GW 内部云端控制帧（例如跨 GW 的 `abort_session`），接收端必须交给本机 cloud/business 路由处理，不要按 Agent 下行消息解析。
+`relayType` 的现有取值包括 `to-agent`（默认/空）、`to-source`、`to-cloud-control`。`to-source` 只表示精准投递到本机某个 Source WebSocket；GW→SS 缺少本机连接时不再使用 `RelayMessage` 做 `to-source-broadcast` 广播兜底，而是由 `SkillRelayService` 选择一个拥有本机 SS 连接的 `targetGw`，写入 `gw:l2:source:skill-server:{targetGw}` mailbox Stream。`to-cloud-control` 只用于 GW 内部云端控制帧（例如跨 GW 的 `abort_session`），接收端必须交给本机 cloud/business 路由处理，不要按 Agent 下行消息解析。
 
-回源路由键不只存在于扁平字段。`GatewayMessage.toolSessionId` 和
-`GatewayMessage.payload.toolSessionId` 都是合法的 SS session route key；解析路由键时用
-Jackson `JsonNode.path("toolSessionId")` 读取半结构化 payload，不要先把 payload 转成临时
+回源路由键不只存在于扁平字段。`GatewayMessage.messageId` 是 agent/cloud 回复流的主路由键；
+`GatewayMessage.traceId` 是 terminal 事件补齐和缺少 `messageId` 时的降级路由键。
+`GatewayMessage.toolSessionId` 和 `GatewayMessage.payload.toolSessionId` 仍是合法的最后降级 route key；
+解析路由键时用 Jackson `JsonNode.path("toolSessionId")` 读取半结构化 payload，不要先把 payload 转成临时
 `Map`，也不要把 payload-only 消息当成没有 route key。
 
 `RelayMessageTest` 明确验证了 Jackson round-trip、`type="relay"` 判别字段、`routingKeys` 的 null/empty 行为和 `toCloudControl(...)` factory。来源：`src/test/java/com/opencode/cui/gateway/model/RelayMessageTest.java:24-175`。

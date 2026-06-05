@@ -191,7 +191,7 @@ public class EventRelayService {
                 log.warn("[EXIT->SOURCE] Failed to enqueue to-source relay: sourceType={}, sourceInstanceId={}",
                         targetSourceType, targetSourceInstanceId);
             } else {
-                log.info("[EXIT->SOURCE] Delivered to-source relay: sourceType={}, sourceInstanceId={}",
+                log.info("[EXIT->SOURCE] Enqueued to-source relay: sourceType={}, sourceInstanceId={}",
                         targetSourceType, targetSourceInstanceId);
             }
         } else {
@@ -356,7 +356,7 @@ public class EventRelayService {
                 return false;
             }
             rememberAgentTrace(message);
-            log.info("[EXIT->AGENT] Sent to local agent (V2 direct): ak={}, type={}",
+            log.info("[EXIT->AGENT] Enqueued to local agent (V2 direct): ak={}, type={}",
                     ak, message.getType());
             return true;
         } catch (IOException e) {
@@ -383,7 +383,7 @@ public class EventRelayService {
                         ak, message.getType());
             } else {
                 rememberAgentTrace(agentMessage);
-                log.info("[EXIT->AGENT] Sent to local agent: type={}, seq={}",
+                log.info("[EXIT->AGENT] Enqueued to local agent: type={}, seq={}",
                         message.getType(), message.getSequenceNumber());
             }
         } catch (IOException e) {

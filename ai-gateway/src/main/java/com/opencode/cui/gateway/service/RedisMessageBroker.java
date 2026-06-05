@@ -38,6 +38,7 @@ import java.util.function.Consumer;
  *   <li>{@code conn:ak:{ak}} — Agent 连接在哪个 Gateway 实例上（KV + TTL，供 SS 查询）</li>
  *   <li>{@code gw:internal:agent:{ak}} — GW 内部中转用的 Agent 位置注册（KV + TTL，与 conn:ak 双写）</li>
  *   <li>{@code gw:source-conn:{sourceType}:{sourceInstanceId}} — Source 连接注册 HASH（gwInstanceId → timestamp）</li>
+ *   <li>{@code gw:l2:source:{sourceType}:{targetGw}} — Source L2 单目标 mailbox Stream</li>
  *   <li>{@code gw:route:{toolSessionId}} — Session 路由映射（sourceType:sourceInstanceId）</li>
  *   <li>{@code gw:route:w:{welinkSessionId}} — WeLink Session 路由映射（sourceType:sourceInstanceId）</li>
  *   <li>{@code gw:cloud-stream:{toolSessionId}} — 云端流持有者（gatewayInstanceId）</li>
@@ -203,12 +204,13 @@ public class RedisMessageBroker {
      * @param ak                 Agent Access Key
      * @param expectedInstanceId 预期的 Gateway 实例 ID（本实例 ID）
      */
-    public void conditionalRemoveConnAk(String ak, String expectedInstanceId) {
+    public boolean conditionalRemoveConnAk(String ak, String expectedInstanceId) {
         if (ak == null || ak.isBlank() || expectedInstanceId == null) {
-            return;
+            return false;
         }
-        redisTemplate.execute(CONDITIONAL_DELETE_SCRIPT,
+        Long removed = redisTemplate.execute(CONDITIONAL_DELETE_SCRIPT,
                 java.util.List.of(connAkKey(ak)), expectedInstanceId);
+        return removed != null && removed > 0;
     }
 
     // ==================== 云端流持有者路由表 ====================
@@ -327,10 +329,9 @@ public class RedisMessageBroker {
     }
 
     /**
-     * Removes the AK entry from the internal agent registry on Agent disconnect.
-     * Uses unconditional delete (paired with {@link #conditionalRemoveConnAk} for the
-     * external {@code conn:ak} key; for simplicity, the internal key mirrors the same
-     * lifecycle — callers ensure correctness by only removing on the owning instance).
+     * Removes the AK entry from the internal agent registry.
+     * Prefer {@link #conditionalRemoveInternalAgent(String, String)} for disconnect
+     * cleanup so a late close cannot remove a newer owner.
      *
      * @param ak Agent Access Key
      */
@@ -340,6 +341,17 @@ public class RedisMessageBroker {
         }
         redisTemplate.delete(internalAgentKey(ak));
         log.info("RedisMessageBroker.removeInternalAgent: ak={}", ak);
+    }
+
+    public boolean conditionalRemoveInternalAgent(String ak, String expectedInstanceId) {
+        if (ak == null || ak.isBlank() || expectedInstanceId == null || expectedInstanceId.isBlank()) {
+            return false;
+        }
+        Long removed = redisTemplate.execute(CONDITIONAL_DELETE_SCRIPT,
+                java.util.List.of(internalAgentKey(ak)), expectedInstanceId);
+        log.info("RedisMessageBroker.conditionalRemoveInternalAgent: ak={}, expected={}, removed={}",
+                ak, expectedInstanceId, removed);
+        return removed != null && removed > 0;
     }
 
     /**
@@ -466,10 +478,12 @@ public class RedisMessageBroker {
     private static final String SOURCE_L2_STREAM_KEY_PREFIX = "gw:l2:source:";
     private static final String SOURCE_L2_GROUP_PREFIX = "gw-l2-";
     private static final String SOURCE_L2_DEAD_LETTER_SUFFIX = ":dead";
+    private static final Duration SOURCE_L2_MAILBOX_TTL = Duration.ofHours(2);
     private static final String SOURCE_L2_FIELD_PAYLOAD = "payload";
     private static final String SOURCE_L2_FIELD_ROUTING_KEY = "routingKey";
     private static final String SOURCE_L2_FIELD_TRACE_ID = "traceId";
     private static final String SOURCE_L2_FIELD_MESSAGE_TYPE = "messageType";
+    private static final String SOURCE_L2_FIELD_TARGET_GW = "targetGw";
     private static final String SOURCE_L2_FIELD_ENQUEUED_AT = "enqueuedAt";
     private static final String SOURCE_L2_FIELD_ATTEMPT = "attempt";
     private static final String SOURCE_L2_FIELD_REQUEUED_AT = "requeuedAt";
@@ -492,6 +506,10 @@ public class RedisMessageBroker {
 
         public String messageType() {
             return fields.get(SOURCE_L2_FIELD_MESSAGE_TYPE);
+        }
+
+        public String targetGw() {
+            return fields.get(SOURCE_L2_FIELD_TARGET_GW);
         }
 
         public int attempt() {
@@ -771,16 +789,55 @@ public class RedisMessageBroker {
         return gwIds;
     }
 
+    /**
+     * Discovers GW instance IDs that currently hold connections for one source type.
+     *
+     * <p>This is used by GW-to-SS L2 mailbox routing to choose exactly one target GW
+     * that has a local Source WebSocket for the requested source type.</p>
+     */
+    public Set<String> discoverSourceGwInstances(String sourceType) {
+        if (sourceType == null || sourceType.isBlank()) {
+            return Collections.emptySet();
+        }
+        Set<String> keys = redisTemplate.keys(SOURCE_CONN_KEY_PREFIX + sourceType + ":*");
+        if (keys == null || keys.isEmpty()) {
+            return Collections.emptySet();
+        }
+        long now = Instant.now().getEpochSecond();
+        Set<String> gwIds = new HashSet<>();
+        for (String key : keys) {
+            Map<Object, Object> entries = redisTemplate.opsForHash().entries(key);
+            for (Map.Entry<Object, Object> entry : entries.entrySet()) {
+                String field = String.valueOf(entry.getKey());
+                try {
+                    long ts = Long.parseLong(String.valueOf(entry.getValue()));
+                    if (now - ts <= 30) {
+                        int sep = field.indexOf('#');
+                        gwIds.add(sep > 0 ? field.substring(0, sep) : field);
+                    } else {
+                        redisTemplate.opsForHash().delete(key, field);
+                    }
+                } catch (NumberFormatException ignored) {
+                    redisTemplate.opsForHash().delete(key, field);
+                }
+            }
+        }
+        return gwIds;
+    }
+
     // ==================== Source L2 stream (GW-local Redis) ====================
 
-    public String enqueueSourceL2Work(String sourceType, String payload, String routingKey,
+    public String enqueueSourceL2Work(String sourceType, String targetGwId, String payload, String routingKey,
                                       String traceId, String messageType, long maxLen) {
-        if (sourceType == null || sourceType.isBlank() || payload == null || payload.isBlank()) {
+        if (sourceType == null || sourceType.isBlank()
+                || targetGwId == null || targetGwId.isBlank()
+                || payload == null || payload.isBlank()) {
             return null;
         }
-        String streamKey = sourceL2StreamKey(sourceType);
+        String streamKey = sourceL2StreamKey(sourceType, targetGwId);
         Map<String, String> fields = new LinkedHashMap<>();
         fields.put(SOURCE_L2_FIELD_PAYLOAD, payload);
+        fields.put(SOURCE_L2_FIELD_TARGET_GW, targetGwId);
         putIfNotBlank(fields, SOURCE_L2_FIELD_ROUTING_KEY, routingKey);
         putIfNotBlank(fields, SOURCE_L2_FIELD_TRACE_ID, traceId);
         putIfNotBlank(fields, SOURCE_L2_FIELD_MESSAGE_TYPE, messageType);
@@ -789,25 +846,28 @@ public class RedisMessageBroker {
 
         try {
             RecordId recordId = redisTemplate.opsForStream().add(streamKey, fields);
-            ensureSourceL2Group(sourceType);
+            ensureSourceL2Group(sourceType, targetGwId);
             trimSourceL2Stream(streamKey, maxLen);
+            redisTemplate.expire(streamKey, SOURCE_L2_MAILBOX_TTL);
             return recordId == null ? null : recordId.getValue();
         } catch (Exception e) {
-            log.error("RedisMessageBroker.enqueueSourceL2Work: failed, sourceType={}, type={}",
-                    sourceType, messageType, e);
+            log.error("RedisMessageBroker.enqueueSourceL2Work: failed, sourceType={}, targetGw={}, type={}",
+                    sourceType, targetGwId, messageType, e);
             return null;
         }
     }
 
     @SuppressWarnings("unchecked")
-    public List<SourceL2Work> readSourceL2Work(String sourceType, String consumerName,
+    public List<SourceL2Work> readSourceL2Work(String sourceType, String targetGwId, String consumerName,
                                                int count, Duration blockTimeout) {
-        if (sourceType == null || sourceType.isBlank() || consumerName == null || consumerName.isBlank()) {
+        if (sourceType == null || sourceType.isBlank()
+                || targetGwId == null || targetGwId.isBlank()
+                || consumerName == null || consumerName.isBlank()) {
             return Collections.emptyList();
         }
-        ensureSourceL2Group(sourceType);
-        String streamKey = sourceL2StreamKey(sourceType);
-        String group = sourceL2Group(sourceType);
+        ensureSourceL2Group(sourceType, targetGwId);
+        String streamKey = sourceL2StreamKey(sourceType, targetGwId);
+        String group = sourceL2Group(sourceType, targetGwId);
         StreamReadOptions options = StreamReadOptions.empty().count(Math.max(1, count));
         if (blockTimeout != null && !blockTimeout.isNegative() && !blockTimeout.isZero()) {
             options = options.block(blockTimeout);
@@ -826,55 +886,67 @@ public class RedisMessageBroker {
                     .toList();
         } catch (Exception e) {
             if (isMissingStreamOrGroup(e)) {
-                log.debug("RedisMessageBroker.readSourceL2Work: stream/group not ready, sourceType={}", sourceType);
+                log.debug("RedisMessageBroker.readSourceL2Work: stream/group not ready, sourceType={}, targetGw={}",
+                        sourceType, targetGwId);
                 return Collections.emptyList();
             }
-            log.error("RedisMessageBroker.readSourceL2Work: failed, sourceType={}, consumer={}",
-                    sourceType, consumerName, e);
+            log.error("RedisMessageBroker.readSourceL2Work: failed, sourceType={}, targetGw={}, consumer={}",
+                    sourceType, targetGwId, consumerName, e);
             return Collections.emptyList();
         }
     }
 
-    public void ackSourceL2Work(String sourceType, String streamId) {
-        if (sourceType == null || sourceType.isBlank() || streamId == null || streamId.isBlank()) {
+    public void ackSourceL2Work(String sourceType, String targetGwId, String streamId) {
+        if (sourceType == null || sourceType.isBlank()
+                || targetGwId == null || targetGwId.isBlank()
+                || streamId == null || streamId.isBlank()) {
             return;
         }
-        redisTemplate.opsForStream().acknowledge(sourceL2StreamKey(sourceType), sourceL2Group(sourceType), streamId);
+        redisTemplate.opsForStream().acknowledge(
+                sourceL2StreamKey(sourceType, targetGwId), sourceL2Group(sourceType, targetGwId), streamId);
     }
 
-    public String requeueSourceL2Work(String sourceType, SourceL2Work work, int nextAttempt, long maxLen) {
-        if (sourceType == null || sourceType.isBlank() || work == null || work.payload() == null) {
+    public String requeueSourceL2Work(String sourceType, String targetGwId, SourceL2Work work,
+                                      int nextAttempt, long maxLen) {
+        if (sourceType == null || sourceType.isBlank()
+                || targetGwId == null || targetGwId.isBlank()
+                || work == null || work.payload() == null) {
             return null;
         }
-        String streamKey = sourceL2StreamKey(sourceType);
+        String streamKey = sourceL2StreamKey(sourceType, targetGwId);
         Map<String, String> fields = new LinkedHashMap<>(work.fields());
+        fields.put(SOURCE_L2_FIELD_TARGET_GW, targetGwId);
         fields.put(SOURCE_L2_FIELD_ATTEMPT, String.valueOf(Math.max(0, nextAttempt)));
         fields.put(SOURCE_L2_FIELD_REQUEUED_AT, String.valueOf(Instant.now().toEpochMilli()));
         try {
             RecordId recordId = redisTemplate.opsForStream().add(streamKey, fields);
             trimSourceL2Stream(streamKey, maxLen);
+            redisTemplate.expire(streamKey, SOURCE_L2_MAILBOX_TTL);
             return recordId == null ? null : recordId.getValue();
         } catch (Exception e) {
-            log.error("RedisMessageBroker.requeueSourceL2Work: failed, sourceType={}, streamId={}",
-                    sourceType, work.id(), e);
+            log.error("RedisMessageBroker.requeueSourceL2Work: failed, sourceType={}, targetGw={}, streamId={}",
+                    sourceType, targetGwId, work.id(), e);
             return null;
         }
     }
 
-    public String deadLetterSourceL2Work(String sourceType, SourceL2Work work, String failureReason) {
-        if (sourceType == null || sourceType.isBlank() || work == null || work.payload() == null) {
+    public String deadLetterSourceL2Work(String sourceType, String targetGwId, SourceL2Work work, String failureReason) {
+        if (sourceType == null || sourceType.isBlank()
+                || targetGwId == null || targetGwId.isBlank()
+                || work == null || work.payload() == null) {
             return null;
         }
         Map<String, String> fields = new LinkedHashMap<>(work.fields());
+        fields.put(SOURCE_L2_FIELD_TARGET_GW, targetGwId);
         fields.put(SOURCE_L2_FIELD_FAILED_STREAM_ID, work.id());
         fields.put(SOURCE_L2_FIELD_FAILURE_REASON, failureReason == null ? "unknown" : failureReason);
         fields.put(SOURCE_L2_FIELD_DEAD_LETTERED_AT, String.valueOf(Instant.now().toEpochMilli()));
         try {
-            RecordId recordId = redisTemplate.opsForStream().add(sourceL2DeadLetterKey(sourceType), fields);
+            RecordId recordId = redisTemplate.opsForStream().add(sourceL2DeadLetterKey(sourceType, targetGwId), fields);
             return recordId == null ? null : recordId.getValue();
         } catch (Exception e) {
-            log.error("RedisMessageBroker.deadLetterSourceL2Work: failed, sourceType={}, streamId={}",
-                    sourceType, work.id(), e);
+            log.error("RedisMessageBroker.deadLetterSourceL2Work: failed, sourceType={}, targetGw={}, streamId={}",
+                    sourceType, targetGwId, work.id(), e);
             return null;
         }
     }
@@ -886,19 +958,19 @@ public class RedisMessageBroker {
         return new SourceL2Work(record.getId().getValue(), fields);
     }
 
-    private void ensureSourceL2Group(String sourceType) {
-        String streamKey = sourceL2StreamKey(sourceType);
-        String group = sourceL2Group(sourceType);
+    private void ensureSourceL2Group(String sourceType, String targetGwId) {
+        String streamKey = sourceL2StreamKey(sourceType, targetGwId);
+        String group = sourceL2Group(sourceType, targetGwId);
         try {
             redisTemplate.opsForStream().createGroup(streamKey, ReadOffset.from("0-0"), group);
         } catch (Exception e) {
             if (isGroupAlreadyExists(e) || isMissingStreamOrGroup(e)) {
-                log.debug("RedisMessageBroker.ensureSourceL2Group: ignored, sourceType={}, reason={}",
-                        sourceType, e.getMessage());
+                log.debug("RedisMessageBroker.ensureSourceL2Group: ignored, sourceType={}, targetGw={}, reason={}",
+                        sourceType, targetGwId, e.getMessage());
                 return;
             }
-            log.warn("RedisMessageBroker.ensureSourceL2Group: failed, sourceType={}, reason={}",
-                    sourceType, e.getMessage());
+            log.warn("RedisMessageBroker.ensureSourceL2Group: failed, sourceType={}, targetGw={}, reason={}",
+                    sourceType, targetGwId, e.getMessage());
         }
     }
 
@@ -914,16 +986,16 @@ public class RedisMessageBroker {
         }
     }
 
-    private String sourceL2StreamKey(String sourceType) {
-        return SOURCE_L2_STREAM_KEY_PREFIX + sourceType;
+    private String sourceL2StreamKey(String sourceType, String targetGwId) {
+        return SOURCE_L2_STREAM_KEY_PREFIX + sourceType + ":" + targetGwId;
     }
 
-    private String sourceL2DeadLetterKey(String sourceType) {
-        return sourceL2StreamKey(sourceType) + SOURCE_L2_DEAD_LETTER_SUFFIX;
+    private String sourceL2DeadLetterKey(String sourceType, String targetGwId) {
+        return sourceL2StreamKey(sourceType, targetGwId) + SOURCE_L2_DEAD_LETTER_SUFFIX;
     }
 
-    private String sourceL2Group(String sourceType) {
-        return SOURCE_L2_GROUP_PREFIX + sourceType;
+    private String sourceL2Group(String sourceType, String targetGwId) {
+        return SOURCE_L2_GROUP_PREFIX + sourceType + ":" + targetGwId;
     }
 
     private static void putIfNotBlank(Map<String, String> fields, String key, String value) {

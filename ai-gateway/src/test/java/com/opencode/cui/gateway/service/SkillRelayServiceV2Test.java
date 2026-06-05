@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -30,6 +31,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 /**
@@ -53,6 +55,7 @@ class SkillRelayServiceV2Test {
 
     private SkillRelayService service;
     private UpstreamRoutingTable routingTable;
+    private GatewayMessageIdentityService messageIdentityService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final String INSTANCE_ID = "gw-local";
@@ -62,7 +65,9 @@ class SkillRelayServiceV2Test {
     @BeforeEach
     void setUp() {
         routingTable = new UpstreamRoutingTable(100000, 30);
-        service = new SkillRelayService(redisMessageBroker, objectMapper, INSTANCE_ID, routingTable, List.of());
+        messageIdentityService = new GatewayMessageIdentityService();
+        service = new SkillRelayService(redisMessageBroker, objectMapper, INSTANCE_ID, routingTable,
+                messageIdentityService, List.of());
         service.setEventRelayService(eventRelayService);
     }
 
@@ -465,8 +470,8 @@ class SkillRelayServiceV2Test {
     class RouteConfirmRejectTests {
 
         @Test
-        @DisplayName("handleRouteConfirm should learn route in UpstreamRoutingTable")
-        void handleRouteConfirm_shouldLearnRoute() {
+        @DisplayName("handleRouteConfirm is compatibility-only and does not learn routes")
+        void handleRouteConfirm_shouldNotLearnRoute() {
             GatewayMessage confirm = GatewayMessage.builder()
                     .type("route_confirm")
                     .toolSessionId("T1")
@@ -476,10 +481,9 @@ class SkillRelayServiceV2Test {
 
             service.handleRouteConfirm(confirm);
 
-            // Verify route was learned
             String resolvedType = routingTable.resolveSourceType(
                     GatewayMessage.builder().toolSessionId("T1").build());
-            assertEquals(SOURCE_TYPE_SKILL, resolvedType);
+            assertNull(resolvedType);
         }
 
         @Test
@@ -551,15 +555,18 @@ class SkillRelayServiceV2Test {
     class L2RoutingTests {
 
         @Test
-        @DisplayName("no local skill-server enqueues one L2 stream work item")
-        void l2Routing_noLocalSkillServerEnqueuesStreamWorkItem() throws Exception {
+        @DisplayName("no local skill-server enqueues one target-GW mailbox work item")
+        void l2Routing_noLocalSkillServerEnqueuesMailboxWorkItem() throws Exception {
+            when(redisMessageBroker.discoverSourceGwInstances(SOURCE_TYPE_SKILL))
+                    .thenReturn(Set.of("gw-remote-1"));
             when(redisMessageBroker.enqueueSourceL2Work(
-                    eq(SOURCE_TYPE_SKILL), anyString(), eq("T1"), anyString(),
+                    eq(SOURCE_TYPE_SKILL), eq("gw-remote-1"), anyString(), eq("trace-1"), anyString(),
                     eq(GatewayMessage.Type.TOOL_EVENT), anyLong()))
                     .thenReturn("1-0");
             GatewayMessage msg = GatewayMessage.builder()
                     .type(GatewayMessage.Type.TOOL_EVENT)
                     .toolSessionId("T1")
+                    .traceId("trace-1")
                     .source(SOURCE_TYPE_SKILL)
                     .build();
 
@@ -567,24 +574,27 @@ class SkillRelayServiceV2Test {
 
             assertTrue(result);
             verify(redisMessageBroker).enqueueSourceL2Work(
-                    eq(SOURCE_TYPE_SKILL), anyString(), eq("T1"), anyString(),
+                    eq(SOURCE_TYPE_SKILL), eq("gw-remote-1"), anyString(), eq("trace-1"), anyString(),
                     eq(GatewayMessage.Type.TOOL_EVENT), anyLong());
             verify(redisMessageBroker, never()).getSessionRoute(anyString());
             verify(redisMessageBroker, never()).publishToSourceRelay(anyString(), anyString(), anyString(), anyString());
         }
 
         @Test
-        @DisplayName("L2 enqueue uses payload.toolSessionId when top-level toolSessionId is absent")
-        void l2Routing_payloadToolSessionIdEnqueuedAsRoutingKey() throws Exception {
+        @DisplayName("L2 enqueue uses messageId before payload.toolSessionId")
+        void l2Routing_messageIdEnqueuedAsRoutingKey() throws Exception {
             ObjectNode payload = objectMapper.createObjectNode();
             payload.put("toolSessionId", "T-payload-l2");
+            when(redisMessageBroker.discoverSourceGwInstances(SOURCE_TYPE_SKILL))
+                    .thenReturn(Set.of("gw-remote-1"));
             when(redisMessageBroker.enqueueSourceL2Work(
-                    eq(SOURCE_TYPE_SKILL), anyString(), eq("T-payload-l2"), anyString(),
+                    eq(SOURCE_TYPE_SKILL), eq("gw-remote-1"), anyString(), eq("msg-1"), anyString(),
                     eq(GatewayMessage.Type.TOOL_EVENT), anyLong()))
                     .thenReturn("1-1");
             GatewayMessage msg = GatewayMessage.builder()
                     .type(GatewayMessage.Type.TOOL_EVENT)
                     .source(SOURCE_TYPE_SKILL)
+                    .messageId("msg-1")
                     .payload(payload)
                     .build();
 
@@ -592,7 +602,7 @@ class SkillRelayServiceV2Test {
 
             assertTrue(result);
             verify(redisMessageBroker).enqueueSourceL2Work(
-                    eq(SOURCE_TYPE_SKILL), anyString(), eq("T-payload-l2"), anyString(),
+                    eq(SOURCE_TYPE_SKILL), eq("gw-remote-1"), anyString(), eq("msg-1"), anyString(),
                     eq(GatewayMessage.Type.TOOL_EVENT), anyLong());
             verify(redisMessageBroker, never()).getSessionRoute(anyString());
             verify(redisMessageBroker, never()).publishToSourceRelay(anyString(), anyString(), anyString(), anyString());
@@ -613,14 +623,14 @@ class SkillRelayServiceV2Test {
                     "messageType", GatewayMessage.Type.TOOL_DONE,
                     "attempt", "0"));
             when(redisMessageBroker.readSourceL2Work(
-                    eq(SOURCE_TYPE_SKILL), eq(INSTANCE_ID), anyInt(), any(Duration.class)))
+                    eq(SOURCE_TYPE_SKILL), eq(INSTANCE_ID), eq(INSTANCE_ID), anyInt(), any(Duration.class)))
                     .thenReturn(List.of(work));
 
             service.consumeSkillServerL2Work();
 
             awaitSend();
             verify(ss1Session).sendMessage(any(TextMessage.class));
-            verify(redisMessageBroker).ackSourceL2Work(SOURCE_TYPE_SKILL, "1-0");
+            verify(redisMessageBroker).ackSourceL2Work(SOURCE_TYPE_SKILL, INSTANCE_ID, "1-0");
         }
 
         @Test
@@ -629,7 +639,7 @@ class SkillRelayServiceV2Test {
             service.consumeSkillServerL2Work();
 
             verify(redisMessageBroker, never()).readSourceL2Work(
-                    anyString(), anyString(), anyInt(), any(Duration.class));
+                    anyString(), anyString(), anyString(), anyInt(), any(Duration.class));
         }
     }
 
@@ -690,6 +700,36 @@ class SkillRelayServiceV2Test {
             registerSs2();
 
             assertEquals(3, service.getActiveSourceConnectionCount());
+        }
+
+        @Test
+        @DisplayName("same messageId uses the same local source link")
+        void sameMessageIdUsesSameLocalLink() throws Exception {
+            registerSs1();
+            registerSs2();
+
+            GatewayMessage first = GatewayMessage.builder()
+                    .type(GatewayMessage.Type.TOOL_EVENT)
+                    .messageId("msg-affinity")
+                    .toolSessionId("tool-a")
+                    .build();
+            GatewayMessage second = GatewayMessage.builder()
+                    .type(GatewayMessage.Type.TOOL_EVENT)
+                    .messageId("msg-affinity")
+                    .toolSessionId("tool-b")
+                    .build();
+
+            assertTrue(service.relayToSkill(first));
+            assertTrue(service.relayToSkill(second));
+
+            awaitSend();
+            try {
+                verify(ss1Session, times(2)).sendMessage(any(TextMessage.class));
+                verify(ss2Session, never()).sendMessage(any(TextMessage.class));
+            } catch (AssertionError notSs1) {
+                verify(ss2Session, times(2)).sendMessage(any(TextMessage.class));
+                verify(ss1Session, never()).sendMessage(any(TextMessage.class));
+            }
         }
 
         @Test

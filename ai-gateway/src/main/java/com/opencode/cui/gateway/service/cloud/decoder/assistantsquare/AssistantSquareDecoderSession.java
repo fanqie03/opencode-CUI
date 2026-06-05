@@ -20,6 +20,9 @@ public class AssistantSquareDecoderSession implements DecoderSession {
     /** 当前 part 所属 messageId（切换检测用）。 */
     private String openPartMessageId;
 
+    /** 最近一次看到的 messageId，用于 step/session tail 事件补齐。 */
+    private String lastMessageId;
+
     /** 累积内容（done 时一并发出）。 */
     private StringBuilder openPartContent;
 

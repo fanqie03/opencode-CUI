@@ -27,9 +27,9 @@ import java.util.UUID;
  * REGISTER_REJECTED   | reason
  * HEARTBEAT           | (无额外字段)
  * INVOKE              | ak, welinkSessionId, action, payload, userId, source, suppressReply?
- * TOOL_EVENT          | toolSessionId, event
- * TOOL_DONE           | toolSessionId, usage
- * TOOL_ERROR          | toolSessionId, error, reason
+ * TOOL_EVENT          | toolSessionId, messageId, event
+ * TOOL_DONE           | toolSessionId, messageId, usage
+ * TOOL_ERROR          | toolSessionId, messageId, error, reason
  * SESSION_CREATED     | welinkSessionId, toolSessionId
  * AGENT_ONLINE        | ak, toolType, toolVersion
  * AGENT_OFFLINE       | ak
@@ -47,6 +47,7 @@ import java.util.UUID;
  * <li>{@code toolSessionId} — OpenCode 侧会话 ID</li>
  * <li>{@code userId} / {@code source} — 服务端注入的路由上下文，下行时剥离</li>
  * <li>{@code traceId} — 跨服务追踪 ID</li>
+ * <li>{@code messageId} — Agent/cloud 回复消息 ID，同一回复流的顺序与链路亲和主键</li>
  * </ul>
  */
 @Data
@@ -104,6 +105,9 @@ public class GatewayMessage {
 
     /** 跨服务追踪 ID，用于链路可观测性 */
     private String traceId;
+
+    /** Agent/cloud 返回的消息 ID，用于同一回复流的顺序与链路亲和 */
+    private String messageId;
 
     // ==================== Invoke 字段 ====================
 
@@ -347,6 +351,13 @@ public class GatewayMessage {
     public GatewayMessage withTraceId(String traceId) {
         return this.toBuilder()
                 .traceId(traceId)
+                .build();
+    }
+
+    /** 复制消息并设置 agent/cloud 回复 messageId */
+    public GatewayMessage withMessageId(String messageId) {
+        return this.toBuilder()
+                .messageId(messageId)
                 .build();
     }
 

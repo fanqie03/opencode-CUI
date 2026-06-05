@@ -311,15 +311,24 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             // 从中继服务移除（使用 ak）
             eventRelayService.removeAgentSession(ak);
 
-            // v3: 条件删除 conn:ak（仅删本实例注册的，防误删已重连到其他 GW 的 Agent）
-            redisMessageBroker.conditionalRemoveConnAk(ak, gatewayInstanceId);
+            // v3: 条件删除 owner keys（仅删本实例注册的，防误删已重连到其他 GW 的 Agent）
+            boolean removedConnOwner = redisMessageBroker.conditionalRemoveConnAk(ak, gatewayInstanceId);
+            boolean removedInternalOwner = redisMessageBroker.conditionalRemoveInternalAgent(ak, gatewayInstanceId);
 
-            // Phase 1.3: remove gw:internal:agent:{ak} in sync with conn:ak cleanup
-            redisMessageBroker.removeInternalAgent(ak);
-
-            // 通知 Skill Server Agent 已离线（使用 ak）
-            GatewayMessage offlineMsg = GatewayMessage.agentOffline(ak);
-            eventRelayService.relayToSkillServer(ak, offlineMsg);
+            String currentConnOwner = redisMessageBroker.getConnAk(ak);
+            String currentInternalOwner = redisMessageBroker.getInternalAgentInstance(ak);
+            boolean ownerElsewhere = isRemoteOwner(currentConnOwner) || isRemoteOwner(currentInternalOwner);
+            if (ownerElsewhere) {
+                log.info("Skip agent_offline because agent has a newer owner: ak={}, connOwner={}, internalOwner={}",
+                        ak, currentConnOwner, currentInternalOwner);
+            } else if (removedConnOwner || removedInternalOwner || (currentConnOwner == null && currentInternalOwner == null)) {
+                // 通知 Skill Server Agent 已离线（使用 ak）
+                GatewayMessage offlineMsg = GatewayMessage.agentOffline(ak);
+                eventRelayService.relayToSkillServer(ak, offlineMsg);
+            } else {
+                log.info("Skip agent_offline because owner removal was not confirmed: ak={}, connOwner={}, internalOwner={}",
+                        ak, currentConnOwner, currentInternalOwner);
+            }
         } else {
             log.info("PCAgent WebSocket closed (not registered): sessionId={}, status={}",
                     session.getId(), status);

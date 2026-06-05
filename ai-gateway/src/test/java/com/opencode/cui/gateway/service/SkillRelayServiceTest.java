@@ -46,6 +46,7 @@ class SkillRelayServiceTest {
 
     private SkillRelayService service;
     private UpstreamRoutingTable routingTable;
+    private GatewayMessageIdentityService messageIdentityService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final String INSTANCE_ID = "gw-local";
@@ -55,7 +56,9 @@ class SkillRelayServiceTest {
     @BeforeEach
     void setUp() {
         routingTable = new UpstreamRoutingTable(100000, 30);
-        service = new SkillRelayService(redisMessageBroker, objectMapper, INSTANCE_ID, routingTable, List.of());
+        messageIdentityService = new GatewayMessageIdentityService();
+        service = new SkillRelayService(redisMessageBroker, objectMapper, INSTANCE_ID, routingTable,
+                messageIdentityService, List.of());
     }
 
     /** Wait for AsyncSessionSender background thread to flush the send queue. */
@@ -101,7 +104,8 @@ class SkillRelayServiceTest {
         InvokeRouteStrategy businessStrategy = mock(InvokeRouteStrategy.class);
         when(businessStrategy.getScope()).thenReturn("business");
         SkillRelayService serviceWithBusinessRoute = new SkillRelayService(
-                redisMessageBroker, objectMapper, INSTANCE_ID, routingTable, List.of(businessStrategy));
+                redisMessageBroker, objectMapper, INSTANCE_ID, routingTable,
+                messageIdentityService, List.of(businessStrategy));
 
         lenient().when(ss1Session.getId()).thenReturn("ss1-link");
         when(ss1Session.getAttributes()).thenReturn(mutableAttrs(SOURCE_TYPE_SKILL, "ss-1"));
@@ -130,7 +134,8 @@ class SkillRelayServiceTest {
         InvokeRouteStrategy businessStrategy = mock(InvokeRouteStrategy.class);
         when(businessStrategy.getScope()).thenReturn("business");
         SkillRelayService serviceWithBusinessRoute = new SkillRelayService(
-                redisMessageBroker, objectMapper, INSTANCE_ID, routingTable, List.of(businessStrategy));
+                redisMessageBroker, objectMapper, INSTANCE_ID, routingTable,
+                messageIdentityService, List.of(businessStrategy));
         GatewayMessage abort = GatewayMessage.builder()
                 .type(GatewayMessage.Type.INVOKE)
                 .action("abort_session")

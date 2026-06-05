@@ -1,6 +1,8 @@
 package com.opencode.cui.gateway.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.model.RelayMessage;
 import jakarta.annotation.PostConstruct;
@@ -47,6 +49,7 @@ public class SkillRelayService {
     private final ObjectMapper objectMapper;
     private final String gatewayInstanceId;
     private final UpstreamRoutingTable routingTable;
+    private final GatewayMessageIdentityService messageIdentityService;
 
     /** Invoke 路由策略 Map：scope → strategy */
     private final Map<String, InvokeRouteStrategy> routeStrategyMap;
@@ -77,10 +80,14 @@ public class SkillRelayService {
     private int sourceL2MaxAttempts;
 
     private final ConcurrentHashMap<String, AsyncSessionSender> sessionSenders = new ConcurrentHashMap<>();
+    private final Cache<String, String> sourceLinkAffinity = Caffeine.newBuilder()
+            .maximumSize(100_000)
+            .expireAfterAccess(Duration.ofMinutes(30))
+            .build();
 
     // ==================== Metrics counters ====================
 
-    /** Count of invoke messages delivered to a locally connected Agent. */
+    /** Count of invoke messages enqueued to a locally connected Agent. */
     private final AtomicLong relayLocalCount = new AtomicLong();
     /** Count of invoke messages relayed to a remote GW instance via Redis pub/sub. */
     private final AtomicLong relayPubsubCount = new AtomicLong();
@@ -97,11 +104,13 @@ public class SkillRelayService {
             ObjectMapper objectMapper,
             @Value("${gateway.instance-id:${HOSTNAME:gateway-local}}") String gatewayInstanceId,
             UpstreamRoutingTable routingTable,
+            GatewayMessageIdentityService messageIdentityService,
             List<InvokeRouteStrategy> invokeRouteStrategies) {
         this.redisMessageBroker = redisMessageBroker;
         this.objectMapper = objectMapper;
         this.gatewayInstanceId = gatewayInstanceId;
         this.routingTable = routingTable;
+        this.messageIdentityService = messageIdentityService;
         Map<String, InvokeRouteStrategy> strategyMap = new HashMap<>();
         for (InvokeRouteStrategy s : invokeRouteStrategies) {
             strategyMap.put(s.getScope(), s);
@@ -140,6 +149,7 @@ public class SkillRelayService {
         }
         if (ssInstanceId == null || ssInstanceId.isBlank()) {
             ssInstanceId = session.getId(); // fallback 用 WS session ID
+            session.getAttributes().put(INSTANCE_ID_ATTR, ssInstanceId);
         }
 
         String sessionId = session.getId();
@@ -165,7 +175,11 @@ public class SkillRelayService {
      * 移除 Source 服务的 WebSocket 连接。
      */
     public void removeSourceSession(WebSocketSession session) {
-        removeSessionSender(session.getId());
+        removeSessionSender(session.getId(), true);
+        removeSourceSessionState(session, "ws_closed");
+    }
+
+    private void removeSourceSessionState(WebSocketSession session, String reason) {
 
         String sourceType = resolveBoundSource(session);
         if (sourceType == null || sourceType.isBlank()) {
@@ -213,9 +227,10 @@ public class SkillRelayService {
         if (ssInstanceId != null) {
             redisMessageBroker.unregisterSourceConnection(sourceType, ssInstanceId, gatewayInstanceId, sessionId);
         }
+        removeLinkAffinities(sessionId);
 
-        log.info("[Mesh] Removed source session: sourceType={}, ssInstanceId={}, sessionId={}, gwInstanceId={}, activeLinks={}",
-                sourceType, ssInstanceId, sessionId, gatewayInstanceId, getActiveConnectionCount(sourceType));
+        log.info("[Mesh] Removed source session: reason={}, sourceType={}, ssInstanceId={}, sessionId={}, gwInstanceId={}, activeLinks={}",
+                reason, sourceType, ssInstanceId, sessionId, gatewayInstanceId, getActiveConnectionCount(sourceType));
     }
 
     // ==================== 上行消息路由 ====================
@@ -227,10 +242,10 @@ public class SkillRelayService {
      * <ol>
      * <li>Resolve sourceType from UpstreamRoutingTable, message.source, or default skill-server</li>
      * <li>Hash-select exactly one local connection for that sourceType</li>
-     * <li>If local skill-server is absent, enqueue exactly one GW Redis Stream work item</li>
+     * <li>If local skill-server is absent, enqueue exactly one target-GW mailbox work item</li>
      * </ol>
      *
-     * @return true if the message was delivered, false if delivery failed
+     * @return true if the message was accepted by a local sender or one target-GW mailbox
      */
     public boolean relayToSkill(GatewayMessage message) {
         return v2RelayToSkillWithoutBroadcast(message);
@@ -240,17 +255,25 @@ public class SkillRelayService {
      * V2: Two-level upstream routing.
      *
      * <p>Level 1: local GW to exactly one local Source connection.</p>
-     * <p>Level 2: one GW Redis Stream work item consumed by a GW with local skill-server.</p>
+     * <p>Level 2: one target-GW Redis Stream mailbox consumed only by that GW.</p>
      */
     private boolean v2RelayToSkillWithoutBroadcast(GatewayMessage message) {
-        GatewayMessage tracedMessage = message.ensureTraceId();
+        GatewayMessage tracedMessage = messageIdentityService.normalizeForSkillRelay(message);
+        if (tracedMessage == null) {
+            return false;
+        }
         String routingKey = resolveRoutingKey(tracedMessage);
         String targetSourceType = resolveTargetSourceType(tracedMessage);
 
-        WebSocketSession delivered = deliverToOneLocalSource(targetSourceType, tracedMessage, routingKey, "[V2-L1]");
-        if (delivered != null) {
+        LocalDeliveryResult localDelivery = deliverToOneLocalSource(targetSourceType, tracedMessage, routingKey, "[V2-L1]");
+        if (localDelivery.delivered()) {
             routingHitCount.incrementAndGet();
             return true;
+        }
+        if (localDelivery.affinityBroken()) {
+            log.warn("[V2-L1] Route locked to an invalid local source link; not rerouting message: sourceType={}, routingKey={}, type={}",
+                    targetSourceType, routingKey, tracedMessage.getType());
+            return false;
         }
 
         if (!isSkillServerSource(targetSourceType)) {
@@ -264,7 +287,7 @@ public class SkillRelayService {
 
     /**
      * Resolves the routing key for consistent hash selection.
-     * Priority: welinkSessionId > toolSessionId > payload.toolSessionId > ak > traceId.
+     * Priority: messageId > traceId > toolSessionId > payload.toolSessionId > welinkSessionId > ak.
      */
     private String resolveTargetSourceType(GatewayMessage message) {
         String sourceType = canonicalSourceType(routingTable.resolveSourceType(message));
@@ -293,48 +316,93 @@ public class SkillRelayService {
         return SOURCE_TYPE_SKILL_SERVER.equals(canonicalSourceType(sourceType));
     }
 
-    private WebSocketSession deliverToOneLocalSource(String sourceType, GatewayMessage message,
-                                                     String routingKey, String stage) {
-        WebSocketSession target = selectOneLocalSourceSession(sourceType, routingKey);
+    private record LocalSourceSelection(WebSocketSession session, boolean affinityBroken) {}
+
+    private record LocalDeliveryResult(WebSocketSession session, boolean affinityBroken) {
+        boolean delivered() {
+            return session != null;
+        }
+    }
+
+    private LocalDeliveryResult deliverToOneLocalSource(String sourceType, GatewayMessage message,
+                                                       String routingKey, String stage) {
+        LocalSourceSelection selection = selectOneLocalSourceSession(sourceType, routingKey);
+        WebSocketSession target = selection.session();
         if (target == null) {
             log.debug("{} No local source connection: sourceType={}, routingKey={}, type={}",
                     stage, sourceType, routingKey, message.getType());
-            return null;
+            return new LocalDeliveryResult(null, selection.affinityBroken());
         }
         String sourceInstanceId = resolveSsInstanceId(target);
         logRoutingInfo(message,
                 "{} Delivering to one local source: sourceType={}, sourceInstanceId={}, linkId={}, routingKey={}, type={}",
                 stage, sourceType, sourceInstanceId, target.getId(), routingKey, message.getType());
-        return sendToSession(target, message) ? target : null;
+        if (!sendToSession(target, message)) {
+            return new LocalDeliveryResult(null, false);
+        }
+        if (isTerminalMessage(message) && routingKey != null && !routingKey.isBlank()) {
+            sourceLinkAffinity.invalidate(affinityKey(sourceType, routingKey));
+        }
+        return new LocalDeliveryResult(target, false);
     }
 
-    private WebSocketSession selectOneLocalSourceSession(String sourceType, String routingKey) {
+    private LocalSourceSelection selectOneLocalSourceSession(String sourceType, String routingKey) {
         if (sourceType == null || sourceType.isBlank()) {
-            return null;
+            return new LocalSourceSelection(null, false);
         }
+
+        if (routingKey != null && !routingKey.isBlank()) {
+            String affinityKey = affinityKey(sourceType, routingKey);
+            String boundSessionId = sourceLinkAffinity.getIfPresent(affinityKey);
+            if (boundSessionId != null && !boundSessionId.isBlank()) {
+                WebSocketSession bound = findLocalSourceConnectionBySessionId(sourceType, boundSessionId);
+                if (isSelectableSourceSession(bound)) {
+                    return new LocalSourceSelection(bound, false);
+                }
+                sourceLinkAffinity.invalidate(affinityKey);
+                log.warn("[V2-L1] Bound source link is no longer selectable: sourceType={}, routingKey={}, linkId={}",
+                        sourceType, routingKey, boundSessionId);
+                return new LocalSourceSelection(null, true);
+            }
+        }
+
+        WebSocketSession selected = null;
         ConsistentHashRing<WebSocketSession> ring = hashRings.get(sourceType);
         if (ring != null && !ring.isEmpty() && routingKey != null && !routingKey.isBlank()) {
             WebSocketSession target = ring.getNode(routingKey);
-            if (target != null && target.isOpen()) {
-                return target;
+            if (isSelectableSourceSession(target)) {
+                selected = target;
             }
         }
-        Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(sourceType);
-        if (instanceMap == null) {
-            return null;
+        if (selected == null) {
+            Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(sourceType);
+            if (instanceMap == null) {
+                return new LocalSourceSelection(null, false);
+            }
+            selected = instanceMap.values().stream()
+                    .flatMap(sessionMap -> sessionMap.values().stream())
+                    .filter(this::isSelectableSourceSession)
+                    .findFirst()
+                    .orElse(null);
         }
-        return instanceMap.values().stream()
-                .flatMap(sessionMap -> sessionMap.values().stream())
-                .filter(WebSocketSession::isOpen)
-                .findFirst()
-                .orElse(null);
+        if (selected != null && routingKey != null && !routingKey.isBlank()) {
+            sourceLinkAffinity.put(affinityKey(sourceType, routingKey), selected.getId());
+        }
+        return new LocalSourceSelection(selected, false);
     }
 
     private boolean enqueueSkillServerL2Work(GatewayMessage message, String routingKey) {
         try {
+            String targetGateway = selectTargetSourceGateway(SOURCE_TYPE_SKILL_SERVER, routingKey);
+            if (targetGateway == null || targetGateway.isBlank()) {
+                log.warn("[V2-L2] No remote GW with skill-server connection: routingKey={}, type={}",
+                        routingKey, message.getType());
+                return false;
+            }
             String payload = objectMapper.writeValueAsString(message);
             String streamId = redisMessageBroker.enqueueSourceL2Work(
                     SOURCE_TYPE_SKILL_SERVER,
+                    targetGateway,
                     payload,
                     routingKey,
                     message.getTraceId(),
@@ -347,8 +415,8 @@ public class SkillRelayService {
             }
             routingRedisL2Count.incrementAndGet();
             logRoutingInfo(message,
-                    "[V2-L2] Enqueued one skill-server L2 work item: streamId={}, routingKey={}, type={}",
-                    streamId, routingKey, message.getType());
+                    "[V2-L2] Enqueued one skill-server L2 mailbox item: targetGw={}, streamId={}, routingKey={}, type={}",
+                    targetGateway, streamId, routingKey, message.getType());
             return true;
         } catch (Exception e) {
             log.error("[V2-L2] Failed to serialize skill-server L2 work item: routingKey={}, type={}",
@@ -357,10 +425,33 @@ public class SkillRelayService {
         }
     }
 
+    private String selectTargetSourceGateway(String sourceType, String routingKey) {
+        var discovered = redisMessageBroker.discoverSourceGwInstances(sourceType);
+        var gwIds = new java.util.ArrayList<>(discovered == null ? java.util.Collections.<String>emptySet() : discovered);
+        gwIds.removeIf(gw -> gw == null || gw.isBlank() || gatewayInstanceId.equals(gw));
+        if (gwIds.isEmpty()) {
+            return null;
+        }
+        String stableKey = (routingKey == null || routingKey.isBlank())
+                ? gatewayInstanceId + ":" + System.nanoTime()
+                : routingKey;
+        return gwIds.stream()
+                .max(java.util.Comparator.comparingLong(gw -> rendezvousScore(stableKey, gw)))
+                .orElse(null);
+    }
+
+    private static long rendezvousScore(String routingKey, String gwId) {
+        return Integer.toUnsignedLong((routingKey + "|" + gwId).hashCode());
+    }
+
     private String resolveRoutingKey(GatewayMessage message) {
-        String welinkSessionId = message.getWelinkSessionId();
-        if (welinkSessionId != null && !welinkSessionId.isBlank()) {
-            return welinkSessionId;
+        String messageId = messageIdentityService.extractMessageId(message);
+        if (messageId != null && !messageId.isBlank()) {
+            return messageId;
+        }
+        String traceId = message.getTraceId();
+        if (traceId != null && !traceId.isBlank()) {
+            return traceId;
         }
         String toolSessionId = message.getToolSessionId();
         if (toolSessionId != null && !toolSessionId.isBlank()) {
@@ -370,13 +461,13 @@ public class SkillRelayService {
         if (payloadToolSessionId != null && !payloadToolSessionId.isBlank()) {
             return payloadToolSessionId;
         }
+        String welinkSessionId = message.getWelinkSessionId();
+        if (welinkSessionId != null && !welinkSessionId.isBlank()) {
+            return welinkSessionId;
+        }
         String ak = message.getAk();
         if (ak != null && !ak.isBlank()) {
             return ak;
-        }
-        String traceId = message.getTraceId();
-        if (traceId != null && !traceId.isBlank()) {
-            return traceId;
         }
         return null;
     }
@@ -581,7 +672,7 @@ public class SkillRelayService {
 
         if (deliverToLocalAgent(ak, agentMessage)) {
             relayLocalCount.incrementAndGet();
-            log.info("[EXIT->AGENT] Delivered invoke locally: ak={}, action={}, source={}",
+            log.info("[EXIT->AGENT] Enqueued invoke locally: ak={}, action={}, source={}",
                     ak, tracedMessage.getAction(), messageSource);
             return;
         }
@@ -602,7 +693,7 @@ public class SkillRelayService {
     /**
      * Attempts to deliver a message to a locally connected Agent.
      *
-     * @return true if the Agent is local and message was delivered
+     * @return true if the Agent is local and message was accepted by its local sender
      */
     private boolean deliverToLocalAgent(String ak, GatewayMessage message) {
         if (eventRelayService == null) {
@@ -680,25 +771,14 @@ public class SkillRelayService {
 
     /**
      * Handles route_confirm messages from source services.
-     * Learns the confirmed route in UpstreamRoutingTable.
+     * Kept only for rolling compatibility; correctness no longer depends on
+     * source-side route confirmation.
      */
     public void handleRouteConfirm(GatewayMessage message) {
         String toolSessionId = message.getToolSessionId();
         String sourceType = message.getSource();
-        log.info("[ENTRY] SkillRelayService.handleRouteConfirm: toolSessionId={}, sourceType={}",
+        log.info("[ENTRY] SkillRelayService.handleRouteConfirm: ignored_compat, toolSessionId={}, sourceType={}",
                 toolSessionId, sourceType);
-
-        if (toolSessionId != null && sourceType != null) {
-            List<String> keys = new ArrayList<>();
-            keys.add(toolSessionId);
-            String welinkSessionId = message.getWelinkSessionId();
-            if (welinkSessionId != null && !welinkSessionId.isBlank()) {
-                keys.add(UpstreamRoutingTable.WELINK_KEY_PREFIX + welinkSessionId);
-            }
-            routingTable.learnFromRelay(keys, sourceType);
-            log.info("[EXIT] SkillRelayService.handleRouteConfirm: learned route toolSessionId={} -> sourceType={}",
-                    toolSessionId, sourceType);
-        }
     }
 
     /**
@@ -744,18 +824,37 @@ public class SkillRelayService {
     }
 
     private AsyncSessionSender getOrCreateSender(WebSocketSession session) {
-        return sessionSenders.computeIfAbsent(session.getId(), k -> {
-            AsyncSessionSender sender = new AsyncSessionSender(session);
+        return sessionSenders.compute(session.getId(), (linkId, existing) -> {
+            if (existing != null && existing.isRunning() && session.isOpen()) {
+                return existing;
+            }
+            if (existing != null) {
+                existing.shutdown();
+            }
+            AsyncSessionSender sender = new AsyncSessionSender(session,
+                    () -> handleSourceSenderFailure(session, "sender_write_failed"));
             sender.start();
             return sender;
         });
     }
 
     public void removeSessionSender(String sessionId) {
+        removeSessionSender(sessionId, true);
+    }
+
+    private void removeSessionSender(String sessionId, boolean shutdown) {
         AsyncSessionSender sender = sessionSenders.remove(sessionId);
-        if (sender != null) {
+        if (sender != null && shutdown) {
             sender.shutdown();
         }
+    }
+
+    private void handleSourceSenderFailure(WebSocketSession session, String reason) {
+        if (session == null) {
+            return;
+        }
+        sessionSenders.remove(session.getId());
+        removeSourceSessionState(session, reason);
     }
 
     private void logRoutingInfo(GatewayMessage message, String format, Object... args) {
@@ -774,6 +873,8 @@ public class SkillRelayService {
             if (enqueued) {
                 logRoutingInfo(message, "[EXIT->SS] Enqueued to skill session: linkId={}, type={}, pending={}",
                         session.getId(), message.getType(), sender.pendingCount());
+            } else if (!session.isOpen() || !sender.isRunning()) {
+                handleSourceSenderFailure(session, "enqueue_rejected_link_invalid");
             }
             return enqueued;
         } catch (IOException e) {
@@ -826,9 +927,49 @@ public class SkillRelayService {
             return null;
         }
         return sessionMap.values().stream()
-                .filter(WebSocketSession::isOpen)
+                .filter(this::isSelectableSourceSession)
                 .findFirst()
                 .orElse(null);
+    }
+
+    private WebSocketSession findLocalSourceConnectionBySessionId(String sourceType, String sessionId) {
+        if (sourceType == null || sourceType.isBlank() || sessionId == null || sessionId.isBlank()) {
+            return null;
+        }
+        Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(sourceType);
+        if (instanceMap == null) {
+            return null;
+        }
+        return instanceMap.values().stream()
+                .map(sessionMap -> sessionMap.get(sessionId))
+                .filter(this::isSelectableSourceSession)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private boolean isSelectableSourceSession(WebSocketSession session) {
+        if (session == null || !session.isOpen()) {
+            return false;
+        }
+        AsyncSessionSender sender = sessionSenders.get(session.getId());
+        return sender == null || sender.isRunning();
+    }
+
+    private String affinityKey(String sourceType, String routingKey) {
+        return sourceType + ":" + routingKey;
+    }
+
+    private void removeLinkAffinities(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        sourceLinkAffinity.asMap().entrySet().removeIf(entry -> sessionId.equals(entry.getValue()));
+    }
+
+    private static boolean isTerminalMessage(GatewayMessage message) {
+        return message != null
+                && (GatewayMessage.Type.TOOL_DONE.equals(message.getType())
+                || GatewayMessage.Type.TOOL_ERROR.equals(message.getType()));
     }
 
     // ==================== 定时任务 ====================
@@ -844,6 +985,7 @@ public class SkillRelayService {
         }
         List<RedisMessageBroker.SourceL2Work> works = redisMessageBroker.readSourceL2Work(
                 SOURCE_TYPE_SKILL_SERVER,
+                gatewayInstanceId,
                 gatewayInstanceId,
                 Math.max(1, sourceL2PollBatchSize),
                 Duration.ofMillis(Math.max(0, sourceL2PollBlockMs)));
@@ -861,22 +1003,25 @@ public class SkillRelayService {
                 failSourceL2Work(work, "empty_payload");
                 return;
             }
-            GatewayMessage message = objectMapper.readValue(work.payload(), GatewayMessage.class).ensureTraceId();
+            GatewayMessage message = messageIdentityService.normalizeForSkillRelay(
+                    objectMapper.readValue(work.payload(), GatewayMessage.class));
             String routingKey = firstNonBlank(work.routingKey(), resolveRoutingKey(message));
             logRoutingInfo(message,
                     "[V2-L2-CONSUME] Claimed skill-server L2 work item: streamId={}, consumerGw={}, routingKey={}, type={}",
                     work.id(), gatewayInstanceId, routingKey, message.getType());
 
-            WebSocketSession delivered = deliverToOneLocalSource(SOURCE_TYPE_SKILL_SERVER, message, routingKey,
+            LocalDeliveryResult delivery = deliverToOneLocalSource(SOURCE_TYPE_SKILL_SERVER, message, routingKey,
                     "[V2-L2-CONSUME]");
-            if (delivered == null) {
-                failSourceL2Work(work, "local_delivery_failed");
+            if (!delivery.delivered()) {
+                failSourceL2Work(work, delivery.affinityBroken()
+                        ? "local_link_affinity_broken"
+                        : "local_delivery_failed");
                 return;
             }
-            redisMessageBroker.ackSourceL2Work(SOURCE_TYPE_SKILL_SERVER, work.id());
+            redisMessageBroker.ackSourceL2Work(SOURCE_TYPE_SKILL_SERVER, gatewayInstanceId, work.id());
             logRoutingInfo(message,
-                    "[V2-L2-CONSUME] Delivered to one local skill-server: streamId={}, sourceInstanceId={}, linkId={}, routingKey={}, type={}",
-                    work.id(), resolveSsInstanceId(delivered), delivered.getId(), routingKey, message.getType());
+                    "[V2-L2-CONSUME] Enqueued to one local skill-server: streamId={}, sourceInstanceId={}, linkId={}, routingKey={}, type={}",
+                    work.id(), resolveSsInstanceId(delivery.session()), delivery.session().getId(), routingKey, message.getType());
         } catch (Exception e) {
             log.error("[V2-L2-CONSUME] Failed to consume skill-server L2 work item: streamId={}",
                     work == null ? null : work.id(), e);
@@ -889,9 +1034,9 @@ public class SkillRelayService {
     private void failSourceL2Work(RedisMessageBroker.SourceL2Work work, String reason) {
         int nextAttempt = work.attempt() + 1;
         if (nextAttempt >= Math.max(1, sourceL2MaxAttempts)) {
-            String deadLetterId = redisMessageBroker.deadLetterSourceL2Work(SOURCE_TYPE_SKILL_SERVER, work, reason);
+            String deadLetterId = redisMessageBroker.deadLetterSourceL2Work(SOURCE_TYPE_SKILL_SERVER, gatewayInstanceId, work, reason);
             if (deadLetterId != null && !deadLetterId.isBlank()) {
-                redisMessageBroker.ackSourceL2Work(SOURCE_TYPE_SKILL_SERVER, work.id());
+                redisMessageBroker.ackSourceL2Work(SOURCE_TYPE_SKILL_SERVER, gatewayInstanceId, work.id());
                 log.warn("[V2-L2-CONSUME] Dead-lettered skill-server L2 work item: streamId={}, deadLetterId={}, attempts={}, reason={}",
                         work.id(), deadLetterId, nextAttempt, reason);
             }
@@ -899,9 +1044,9 @@ public class SkillRelayService {
         }
 
         String requeuedId = redisMessageBroker.requeueSourceL2Work(
-                SOURCE_TYPE_SKILL_SERVER, work, nextAttempt, sourceL2StreamMaxLen);
+                SOURCE_TYPE_SKILL_SERVER, gatewayInstanceId, work, nextAttempt, sourceL2StreamMaxLen);
         if (requeuedId != null && !requeuedId.isBlank()) {
-            redisMessageBroker.ackSourceL2Work(SOURCE_TYPE_SKILL_SERVER, work.id());
+            redisMessageBroker.ackSourceL2Work(SOURCE_TYPE_SKILL_SERVER, gatewayInstanceId, work.id());
             log.warn("[V2-L2-CONSUME] Requeued skill-server L2 work item: streamId={}, requeuedId={}, nextAttempt={}, reason={}",
                     work.id(), requeuedId, nextAttempt, reason);
         }
@@ -947,6 +1092,7 @@ public class SkillRelayService {
         }
 
         for (StaleEntry stale : staleEntries) {
+            removeSessionSender(stale.sessionId(), true);
             Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(stale.sourceType());
             if (instanceMap != null) {
                 Map<String, WebSocketSession> sessionMap = instanceMap.get(stale.ssInstanceId());
@@ -968,6 +1114,7 @@ public class SkillRelayService {
             });
 
             redisMessageBroker.unregisterSourceConnection(stale.sourceType(), stale.ssInstanceId(), gatewayInstanceId, stale.sessionId());
+            removeLinkAffinities(stale.sessionId());
 
             log.info("[Mesh] Lazy-cleaned stale session during heartbeat: sourceType={}, ssInstanceId={}, sessionId={}",
                     stale.sourceType(), stale.ssInstanceId(), stale.sessionId());
@@ -983,8 +1130,11 @@ public class SkillRelayService {
 
     @PreDestroy
     public void destroy() {
+        sessionSenders.values().forEach(AsyncSessionSender::shutdown);
+        sessionSenders.clear();
         sourceTypeSessions.clear();
         hashRings.clear();
+        sourceLinkAffinity.invalidateAll();
         log.info("SkillRelayService destroyed: cleared all mesh connections and hash rings");
     }
 }

@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-05-ss-gw-asyncsender-session/prd.md", "reason": "Task-specific requirements, assumptions, and acceptance criteria for the asyncSender session contention fix."}
+{"file": ".trellis/spec/ai-gateway/backend/index.md", "reason": "ai-gateway backend spec index and required pre-development checklist for WebSocket/service routing work."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Avoid duplicate sender registries or divergent helper logic when fixing shared session send behavior."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Reason through SS -> GW -> Agent/source relay boundaries and delivery semantics."}

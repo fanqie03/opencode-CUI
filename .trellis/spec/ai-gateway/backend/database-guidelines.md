@@ -94,8 +94,8 @@ public void checkTimeouts() { ... }
 | `gw:internal:agent:{ak}` | KV + TTL | Gateway 内部路由表；与 `conn:ak` 双写 |
 | `gw:pending:{ak}` | List + TTL | Agent 离线时缓存下行消息 |
 | `gw:source-conn:{sourceType}:{sourceInstanceId}` | Hash + TTL | Source 连接注册表 |
-| `gw:l2:source:{sourceType}` | Redis Stream | GW→Source L2 工作队列；当前只允许 `sourceType=skill-server` |
-| `gw:l2:source:{sourceType}:dead` | Redis Stream | GW→Source L2 死信队列 |
+| `gw:l2:source:{sourceType}:{targetGw}` | Redis Stream + TTL | GW→Source L2 单目标 mailbox；当前只允许 `sourceType=skill-server` |
+| `gw:l2:source:{sourceType}:{targetGw}:dead` | Redis Stream | GW→Source L2 mailbox 死信队列 |
 | `gw:route:{toolSessionId}` | KV + TTL | `toolSessionId -> sourceType:sourceInstanceId` |
 | `gw:route:w:{welinkSessionId}` | KV + TTL | `welinkSessionId -> sourceType:sourceInstanceId` |
 | `gw:cloud-stream:{toolSessionId}` | KV + TTL | 云端 SSE/WebSocket 流最近 owner：`toolSessionId -> gatewayInstanceId`，保留兼容 fallback |
@@ -109,23 +109,26 @@ public void checkTimeouts() { ... }
 
 `gw:cloud-stream:{toolSessionId}` / `gw:cloud-stream:{toolSessionId}:owners` 只用于云端流取消的 GW owner 查找；它们不能替代 `gw:route:{toolSessionId}`，后者记录的是 source service 路由。KV key 保留最近 owner 兼容，set key 才是 multi-stream abort fan-out 的全量 owner 集合。删除云端流 owner 必须走条件删除并从 set 中移除当前 GW，避免非 owner GW 清掉仍在使用的流 owner。
 
-## Source L2 Stream 模式
+## Source L2 Mailbox Stream 模式
 
-`gw:l2:source:skill-server` 是 GW Redis 内的工作队列，不依赖 skill-server Redis。它只解决
-“当前 GW 没有本机 SS 连接，但集群里其他 GW 可能有 SS 连接”的单点转交问题，不做 source pod
-精准路由，也不广播。
+`gw:l2:source:skill-server:{targetGw}` 是 GW Redis 内按目标 GW 隔离的 mailbox Stream，不依赖
+skill-server Redis。它只解决“当前 GW 没有本机 SS 连接，但集群里其他 GW 可能有 SS 连接”的单点转交问题：
+发送方必须先从 `gw:source-conn:skill-server:*` 中选出一个有 SS 连接的 `targetGw`，再写入该 GW 的
+mailbox。它不做 source pod 精准路由，也不广播。
 
 签名：
 
 ```java
 // Source: ai-gateway/src/main/java/com/opencode/cui/gateway/service/RedisMessageBroker.java
-public String enqueueSourceL2Work(String sourceType, String payload, String routingKey,
+public String enqueueSourceL2Work(String sourceType, String targetGwId, String payload, String routingKey,
                                   String traceId, String messageType, long maxLen)
-public List<SourceL2Work> readSourceL2Work(String sourceType, String consumerName,
+public List<SourceL2Work> readSourceL2Work(String sourceType, String targetGwId, String consumerName,
                                            int count, Duration blockTimeout)
-public void ackSourceL2Work(String sourceType, String streamId)
-public String requeueSourceL2Work(String sourceType, SourceL2Work work, int nextAttempt, long maxLen)
-public String deadLetterSourceL2Work(String sourceType, SourceL2Work work, String failureReason)
+public void ackSourceL2Work(String sourceType, String targetGwId, String streamId)
+public String requeueSourceL2Work(String sourceType, String targetGwId, SourceL2Work work,
+                                  int nextAttempt, long maxLen)
+public String deadLetterSourceL2Work(String sourceType, String targetGwId, SourceL2Work work,
+                                     String failureReason)
 ```
 
 Stream 字段：
@@ -133,7 +136,8 @@ Stream 字段：
 | 字段 | 说明 |
 |------|------|
 | `payload` | 序列化后的 `GatewayMessage`，必填 |
-| `routingKey` | L1 consistent hash 选择本机 SS 连接的 key |
+| `targetGw` | 目标 GW instanceId，必须与 mailbox key 后缀一致 |
+| `routingKey` | `messageId` 优先的 L1 link affinity / L2 target-GW 选择 key |
 | `traceId` | 观测链路 ID |
 | `messageType` | `GatewayMessage.Type` |
 | `enqueuedAt` | 入队毫秒时间戳 |
@@ -155,12 +159,12 @@ Stream 字段：
 
 | Case | Required behavior |
 | --- | --- |
-| `sourceType` 或 `payload` 为空 | 不入队，返回 `null`。 |
-| 入队成功 | `XADD gw:l2:source:skill-server`，确保 group `gw-l2-skill-server`，再按 `max-len` 裁剪。 |
+| `sourceType`、`targetGwId` 或 `payload` 为空 | 不入队，返回 `null`。 |
+| 入队成功 | `XADD gw:l2:source:skill-server:{targetGw}`，确保 group `gw-l2-skill-server:{targetGw}`，按 `max-len` 裁剪，并给 mailbox key 设置 2 小时 TTL。 |
 | 消费前本机无 `skill-server` | `SkillRelayService.consumeSkillServerL2Work()` 不调用 `readSourceL2Work(...)`。 |
-| 消费发送成功 | `ackSourceL2Work("skill-server", streamId)`。 |
+| 消费发送成功 | `ackSourceL2Work("skill-server", targetGwId, streamId)`。 |
 | 消费发送失败且未达最大次数 | `requeueSourceL2Work(...)` 写入新消息，再 ACK 原消息。 |
-| 消费发送失败且达到最大次数 | `deadLetterSourceL2Work(...)` 写入 `gw:l2:source:skill-server:dead`，再 ACK 原消息。 |
+| 消费发送失败且达到最大次数 | `deadLetterSourceL2Work(...)` 写入 `gw:l2:source:skill-server:{targetGw}:dead`，再 ACK 原消息。 |
 
 ## Pending Queue 模式
 

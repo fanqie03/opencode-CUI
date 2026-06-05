@@ -345,13 +345,14 @@ new active handle.
 
 ## Agent-to-SS 回源 L1/L2 路由
 
-Agent/cloud 事件回 SS 时，`toolSessionId` 可能在 `GatewayMessage.toolSessionId`
-顶层字段，也可能只存在于 `payload.toolSessionId`。GW 的回源路由必须把这两种形态视为同一类
-SS-owned session key，但回源链路只允许两层：
+Agent/cloud 事件回 SS 时，`messageId` 是同一条 agent/cloud 回复流的顺序主键；
+`traceId` 是一次调用链路的上下文与 terminal 事件补齐依据。`toolSessionId` 可能在
+`GatewayMessage.toolSessionId` 顶层字段，也可能只存在于 `payload.toolSessionId`，但它只作为
+缺少 `messageId/traceId` 时的降级路由键。回源链路只允许两层：
 
 - L1：当前 GW 直接选择一个本机 `skill-server` Source WebSocket 并发送。
-- L2：当前 GW 写入一个 `gw:l2:source:skill-server` Redis Stream 工作项，由任意有本机
-  `skill-server` 连接的 GW 消费后再走 L1。
+- L2：当前 GW 先按 routing key 从有本机 `skill-server` 连接的 GW 中确定一个 `targetGw`，
+  再写入 `gw:l2:source:skill-server:{targetGw}` mailbox Stream；只有 `targetGw` 消费后再走 L1。
 
 ### 1. Scope / Trigger
 
@@ -365,8 +366,8 @@ SS-owned session key，但回源链路只允许两层：
 ```java
 public boolean relayToSkill(GatewayMessage message)
 private boolean v2RelayToSkillWithoutBroadcast(GatewayMessage message)
-private WebSocketSession deliverToOneLocalSource(String sourceType, GatewayMessage message,
-                                                 String routingKey, String stage)
+private LocalDeliveryResult deliverToOneLocalSource(String sourceType, GatewayMessage message,
+                                                    String routingKey, String stage)
 private boolean enqueueSkillServerL2Work(GatewayMessage message, String routingKey)
 public void consumeSkillServerL2Work()
 ```
@@ -377,13 +378,19 @@ public void consumeSkillServerL2Work()
 - `SkillRelayService.resolveTargetSourceType(...)` 优先使用 `UpstreamRoutingTable.resolveSourceType(...)`，
   再用 `GatewayMessage.source`，最后默认 `skill-server`；历史值 `skill-service` 必须规范化为
   `skill-server`。
-- `SkillRelayService.resolveRoutingKey(...)` 的优先级是 `welinkSessionId`、顶层
-  `toolSessionId`、`payload.toolSessionId`、`ak`、`traceId`。
+- `GatewayMessageIdentityService.normalizeForSkillRelay(...)` 必须先把
+  `event.properties.messageId` / 顶层 `messageId` 归一到 `GatewayMessage.messageId`；如果
+  `tool_done/tool_error` 没带 `messageId`，用同一 `traceId` 下已学习到的 `messageId` 补齐。
+- `SkillRelayService.resolveRoutingKey(...)` 的优先级是 `messageId`、`traceId`、顶层
+  `toolSessionId`、`payload.toolSessionId`、`welinkSessionId`、`ak`。
 - L1 对目标 sourceType 的本机连接只选择一个：优先用 consistent hash ring，缺少 routing key
   或 ring 不可用时取一个 open session。
-- L2 只支持 `skill-server`，不尝试读取 SS Redis，也不维护“哪个 GW 有 SS”的精准全局索引。
-- L2 写入 Redis Stream 后即认为 GW 已接管投递；消费端只有在本机存在 `skill-server` 连接时才
-  `XREADGROUP`，成功发送后 `XACK`。
+- 同一 `sourceType + routingKey` 会绑定一条本机 link；绑定 link 失效后不能静默换 link 继续发，
+  必须移除本地连接池 / hash ring / Redis source-conn，并让当前投递失败或进入死信路径。
+- L2 只支持 `skill-server`，不读取 SS Redis；目标 GW 来自 `gw:source-conn:skill-server:*`
+  中仍存活的 GW 实例，并用 routing key 做确定性单目标选择。
+- L2 写入 target-GW mailbox Stream 后即认为 GW 已接管跨 GW 转交；消费端只有在本机存在
+  `skill-server` 连接时才读取自己的 mailbox，成功 enqueue 到本机 SS link 后 `XACK`。
 - 禁止恢复 L3：不得调用 `discoverAllSourceGwInstances()`、`publishToSourceRelay(...)` fan-out、
   `RelayMessage.to-source-broadcast` 或任何 “broadcast to all source GW” 兜底。
 
@@ -392,19 +399,22 @@ public void consumeSkillServerL2Work()
 | Case | Required behavior |
 | --- | --- |
 | 当前 GW 有本机 `skill-server` | L1 发送给一个本机 SS WebSocket，返回 `true`，不写 Redis Stream。 |
-| 当前 GW 无本机 `skill-server` | L2 写入一条 `gw:l2:source:skill-server` 工作项，返回入队结果。 |
+| 当前 GW 无本机 `skill-server` | L2 选择一个 `targetGw` 并写入 `gw:l2:source:skill-server:{targetGw}` mailbox，返回入队结果。 |
 | 目标 sourceType 不是 `skill-server` 且无本机连接 | 返回 `false`，不写 L2，因为 L2 只承诺 SS 回源。 |
-| L2 消费端无本机 `skill-server` | 不读取 Stream，避免 claim 后无法投递。 |
+| L2 消费端无本机 `skill-server` | 不读取自己的 mailbox Stream，避免 claim 后无法投递。 |
 | L2 消费端发送失败 | 按 `attempt` 重入队；达到 `gateway.l2-source-stream.max-attempts` 后写 `:dead` 死信并 ACK 原消息。 |
-| `payload.toolSessionId` 是唯一 session key | 作为 routing key 参与 L1 hash 与 L2 工作项字段，不退化为广播。 |
+| `messageId` 存在 | 作为 routing key 参与 L1 link affinity 与 L2 target-GW 选择。 |
+| `messageId` 缺失但 `traceId` 存在 | 用 `traceId` 作为降级 routing key，并保留 WARN 诊断。 |
+| `payload.toolSessionId` 是唯一 session key | 只作为最后降级 routing key，不退化为广播。 |
 
 ### 5. Good / Base / Bad Cases
 
-Good: `tool_done` 只有 `payload.toolSessionId=T1`，当前 GW 无本机 SS；GW 写入一条
-`gw:l2:source:skill-server`，另一个有本机 SS 的 GW 消费并发送给一个 SS 连接。
+Good: `tool_event` 携带 `messageId=M1`，当前 GW 无本机 SS；GW 用 `M1` 选择一个
+`targetGw=gw-b`，写入 `gw:l2:source:skill-server:gw-b`，`gw-b` 消费后用 `M1` 绑定一条本机
+SS link，后续同 `M1` 的事件继续走同一 link。
 
-Base: `agent_online` 无 session key 但有 `ak`；GW 使用 `ak` 做 routing key，L1/L2 仍只选一个
-SS 连接。
+Base: `tool_done` 没带 `messageId`，但同一 `traceId` 前面已经学习到 `messageId=M1`；GW 补齐
+顶层 `messageId=M1` 后再路由。
 
 Bad: 当前 GW 无本机 SS 时，对所有 `gw:source-conn:skill-server:*` 查出的 GW 发
 `to-source-broadcast`，导致 16 个 GW 中多个实例重复尝试、SS 收到重复回源事件。
@@ -412,11 +422,14 @@ Bad: 当前 GW 无本机 SS 时，对所有 `gw:source-conn:skill-server:*` 查�
 ### 6. Tests Required
 
 - `SkillRelayServiceV2Test`: 无本机 `skill-server` 时 `relayToSkill(...)` 只调用
-  `RedisMessageBroker.enqueueSourceL2Work(...)`，不调用 `publishToSourceRelay(...)`。
-- `SkillRelayServiceV2Test`: `payload.toolSessionId` 能作为 L2 `routingKey` 入队，且不调用
+  `RedisMessageBroker.enqueueSourceL2Work(sourceType, targetGw, ...)`，不调用 `publishToSourceRelay(...)`。
+- `SkillRelayServiceV2Test`: 同一 `messageId` 的两条本地回源事件只发送到同一条 SS link。
+- `SkillRelayServiceV2Test`: `messageId` 能作为 L2 `routingKey` 入队，且不调用
   `discoverAllSourceGwInstances()`。
-- `SkillRelayServiceV2Test`: `consumeSkillServerL2Work()` 在本机无 SS 时不读 Stream；有 SS 时发送
-  一个连接并 `ackSourceL2Work(...)`。
+- `GatewayMessageIdentityServiceTest`: `tool_done/tool_error` 缺 `messageId` 时能通过同一 `traceId`
+  找回已学习的 `messageId`。
+- `SkillRelayServiceV2Test`: `consumeSkillServerL2Work()` 在本机无 SS 时不读自己的 mailbox；
+  有 SS 时发送一个连接并 `ackSourceL2Work(sourceType, targetGw, streamId)`。
 - `EventRelayServiceTest`: Redis relay 只处理 `to-source` 和 `to-cloud-control`，不存在
   `to-source-broadcast` 分支。
 
@@ -432,8 +445,9 @@ gwIds.forEach(gw -> redisMessageBroker.publishToSourceRelay(gw, "skill-server", 
 Correct:
 
 ```java
-WebSocketSession delivered = deliverToOneLocalSource("skill-server", message, routingKey, "[V2-L1]");
-if (delivered == null) {
-    redisMessageBroker.enqueueSourceL2Work("skill-server", payload, routingKey, traceId, type, maxLen);
+LocalDeliveryResult delivered = deliverToOneLocalSource("skill-server", message, routingKey, "[V2-L1]");
+if (!delivered.delivered()) {
+    String targetGw = selectTargetSourceGateway("skill-server", routingKey);
+    redisMessageBroker.enqueueSourceL2Work("skill-server", targetGw, payload, routingKey, traceId, type, maxLen);
 }
 ```
