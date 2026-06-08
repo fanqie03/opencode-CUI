@@ -317,6 +317,8 @@ class InboundProcessingServiceTest {
         JsonNode payload = objectMapper.readTree(command.payload());
         assertEquals("ACC_V", payload.get("assistantAccount").asText());
         assertEquals("sender-real", payload.get("sendUserAccount").asText());
+        assertEquals("", payload.get("imGroupId").asText(),
+                "direct chat payload should carry imGroupId as empty string");
         verify(resolverService, never()).resolveWithStatus(anyString());
         verify(availabilityService, never()).resolve(anyString());
         verify(assistantInfoService, never()).getAssistantInfo("AK_V");
@@ -517,6 +519,8 @@ class InboundProcessingServiceTest {
         JsonNode payload = objectMapper.readTree(captor.getValue().payload());
         assertEquals("user-non-owner", payload.get("sendUserAccount").asText(),
                 "direct chat: 非 owner 的真实 senderUserAccount 必须直接透传，不能被覆盖为 owner");
+        assertEquals("", payload.get("imGroupId").asText(),
+                "direct chat payload should carry imGroupId as empty string");
     }
 
     // ==================== suppressReply 4-branch matrix（PRD AC） ====================
@@ -656,8 +660,8 @@ class InboundProcessingServiceTest {
         assertEquals("assist-001", payload.get("assistantAccount").asText(),
                 "gateway payload should carry assistantAccount for business cloud route");
         assertTrue(payload.has("messageId"), "gateway payload should carry messageId");
-        assertFalse(payload.has("imGroupId"),
-                "direct session: imGroupId should be absent (null skipped by PayloadBuilder)");
+        assertEquals("", payload.get("imGroupId").asText(),
+                "direct session: imGroupId should be empty string in downstream payload");
         verify(persistenceService).recordQuestionReply(101L, "tc-001", "yes", null);
     }
 
@@ -736,8 +740,8 @@ class InboundProcessingServiceTest {
         assertEquals("assist-001", permissionPayload.get("assistantAccount").asText(),
                 "gateway payload should carry assistantAccount for business cloud route");
         assertTrue(permissionPayload.has("messageId"), "gateway payload should carry messageId");
-        assertFalse(permissionPayload.has("imGroupId"),
-                "direct session: imGroupId should be absent (null skipped by PayloadBuilder)");
+        assertEquals("", permissionPayload.get("imGroupId").asText(),
+                "direct session: imGroupId should be empty string in downstream payload");
 
         // 验证广播
         ArgumentCaptor<StreamMessage> msgCaptor = ArgumentCaptor.forClass(StreamMessage.class);

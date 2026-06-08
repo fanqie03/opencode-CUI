@@ -1193,9 +1193,8 @@ public class GatewayMessageRouter {
             chatPayload.put("toolSessionId", toolSessionId);
             chatPayload.put("assistantAccount", req.assistantAccount());
             chatPayload.put("sendUserAccount", req.sendUserAccount());
-            // imGroupId: 单聊场景为 null, 与 dispatchChatToGateway 一致写入 "imGroupId":null
-            // （让下游 BusinessScopeStrategy 反向 extract 时能区分"未发"和"主动 null"）
-            chatPayload.put("imGroupId", req.imGroupId());
+            // imGroupId: 下发给 plugin 的空值统一写为空字符串；内部 pending 仍保留 null 语义。
+            chatPayload.put("imGroupId", req.imGroupId() != null ? req.imGroupId() : "");
             chatPayload.put("messageId", req.messageId());
 
             // PR2 platformExtParam：直接把 businessExtParam + platformExtParam 一并放进

@@ -224,7 +224,7 @@ public class ImSessionManager {
         payloadFields.put("toolSessionId", toolSessionId);
         payloadFields.put("assistantAccount", identity.assistantAccount());
         payloadFields.put("sendUserAccount", senderUserAccount);
-        payloadFields.put("imGroupId", "group".equals(sessionType) ? sessionId : null);
+        payloadFields.put("imGroupId", "group".equals(sessionType) ? sessionId : "");
         payloadFields.put("messageId", String.valueOf(System.currentTimeMillis()));
         payloadFields.put("businessExtParam", businessExtParam);
         gatewayRelayService.sendInvokeToGateway(new InvokeCommand(
