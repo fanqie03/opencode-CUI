@@ -11,6 +11,8 @@ import com.opencode.cui.gateway.model.ApiResponse;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.service.AgentRegistryService;
 import com.opencode.cui.gateway.service.EventRelayService;
+import com.opencode.cui.gateway.service.RedisMessageBroker;
+import com.opencode.cui.gateway.service.SkillRelayService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -44,11 +46,18 @@ class AgentControllerTest {
     @Mock
     private EventRelayService eventRelayService;
 
+    @Mock
+    private SkillRelayService skillRelayService;
+
+    @Mock
+    private RedisMessageBroker redisMessageBroker;
+
     private AgentController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new AgentController(agentRegistryService, eventRelayService, AUTH);
+        controller = new AgentController(agentRegistryService, eventRelayService, skillRelayService,
+                redisMessageBroker, "gw-local", AUTH);
     }
 
     @Test
@@ -130,6 +139,32 @@ class AgentControllerTest {
         assertTrue(response.getBody().getData().exists());
         assertTrue(response.getBody().getData().online());
         assertEquals("opencode", response.getBody().getData().latestToolType());
+    }
+
+    @Test
+    @DisplayName("source connections: returns local and cluster websocket links")
+    void sourceConnectionsReturnsLinks() {
+        when(skillRelayService.getLocalSourceConnectionSnapshots("skill-server"))
+                .thenReturn(List.of(new SkillRelayService.LocalSourceConnectionSnapshot(
+                        "skill-server", "ss-1", "gw-local", "link-1", true, true, 2)));
+        when(redisMessageBroker.listSourceConnectionLinks("skill-server"))
+                .thenReturn(List.of(new RedisMessageBroker.SourceConnectionLink(
+                        "skill-server", "ss-1", "gw-local", "link-1", 1_000L, 1L)));
+
+        ResponseEntity<?> response = controller.listSourceConnections("Bearer test-token", "skill-server");
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        ApiResponse<?> body = (ApiResponse<?>) response.getBody();
+        assertNotNull(body);
+        assertEquals(0, body.getCode());
+    }
+
+    @Test
+    @DisplayName("source connections: 401 when token missing")
+    void sourceConnectionsUnauthorized() {
+        ResponseEntity<?> response = controller.listSourceConnections(null, "skill-server");
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
     }
 
     @Test

@@ -641,6 +641,21 @@ class SkillRelayServiceV2Test {
             verify(redisMessageBroker, never()).readSourceL2Work(
                     anyString(), anyString(), anyString(), anyInt(), any(Duration.class));
         }
+
+        @Test
+        @DisplayName("cleanup uses active source GW registry for target mailbox lifecycle")
+        void cleanupSourceL2MailboxesUsesActiveSourceGwRegistry() {
+            Set<String> activeGwIds = Set.of(INSTANCE_ID, "gw-remote");
+            when(redisMessageBroker.discoverSourceGwInstances(SOURCE_TYPE_SKILL)).thenReturn(activeGwIds);
+            when(redisMessageBroker.cleanupOrphanSourceL2Mailboxes(
+                    eq(SOURCE_TYPE_SKILL), eq(activeGwIds), eq(Duration.ofSeconds(600))))
+                    .thenReturn(new RedisMessageBroker.SourceL2MailboxCleanupResult(2, 1, 1, 0, 0));
+
+            service.cleanupSourceL2Mailboxes();
+
+            verify(redisMessageBroker).cleanupOrphanSourceL2Mailboxes(
+                    SOURCE_TYPE_SKILL, activeGwIds, Duration.ofSeconds(600));
+        }
     }
 
     // ==================== Connection-level (multi-session per instance) ====================

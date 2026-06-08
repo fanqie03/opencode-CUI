@@ -140,6 +140,25 @@ class EventRelayServiceTest {
         verify(redisMessageBroker).getAgentUser("ak_test_001");
     }
 
+    @Test
+    @DisplayName("to-source relay delegates delivery to SkillRelayService")
+    void toSourceRelayDelegatesToSkillRelayService() throws Exception {
+        GatewayMessage payloadMessage = GatewayMessage.builder()
+                .type(GatewayMessage.Type.TOOL_EVENT)
+                .traceId("trace-1")
+                .build();
+        String payload = objectMapper.writeValueAsString(payloadMessage);
+        String rawRelay = objectMapper.writeValueAsString(
+                RelayMessage.toSource("skill-server", "ss-1", payload));
+        when(skillRelayService.sendToLocalSourceConnection("skill-server", "ss-1", payload))
+                .thenReturn(true);
+
+        service.handleGwRelayMessage(rawRelay);
+
+        verify(skillRelayService).sendToLocalSourceConnection("skill-server", "ss-1", payload);
+        verify(skillRelayService, never()).findLocalSourceConnection(anyString(), anyString());
+    }
+
     // ==================== Downstream: Skill → PCAgent ====================
 
     @Test

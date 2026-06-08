@@ -9,9 +9,14 @@ import com.opencode.cui.gateway.model.AgentSummaryResponse;
 import com.opencode.cui.gateway.model.ApiResponse;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.model.InvokeResult;
+import com.opencode.cui.gateway.model.SourceConnectionLinkResponse;
+import com.opencode.cui.gateway.model.SourceConnectionOverviewResponse;
 import com.opencode.cui.gateway.service.AgentRegistryService;
 import com.opencode.cui.gateway.service.EventRelayService;
+import com.opencode.cui.gateway.service.RedisMessageBroker;
+import com.opencode.cui.gateway.service.SkillRelayService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -50,13 +55,22 @@ public class AgentController {
 
     private final AgentRegistryService agentRegistryService;
     private final EventRelayService eventRelayService;
+    private final SkillRelayService skillRelayService;
+    private final RedisMessageBroker redisMessageBroker;
+    private final String gatewayInstanceId;
     private final String internalToken;
 
     public AgentController(AgentRegistryService agentRegistryService,
             EventRelayService eventRelayService,
+            SkillRelayService skillRelayService,
+            RedisMessageBroker redisMessageBroker,
+            @Value("${gateway.instance-id:${HOSTNAME:gateway-local}}") String gatewayInstanceId,
             InternalAuthProperties internalAuthProperties) {
         this.agentRegistryService = agentRegistryService;
         this.eventRelayService = eventRelayService;
+        this.skillRelayService = skillRelayService;
+        this.redisMessageBroker = redisMessageBroker;
+        this.gatewayInstanceId = gatewayInstanceId;
         this.internalToken = internalAuthProperties.getInternalToken();
     }
 
@@ -108,6 +122,61 @@ public class AgentController {
                 ak, agent.getStatus(), opencodeOnline, wsActive ? 1 : 0);
 
         return ResponseEntity.ok(ApiResponse.ok(status));
+    }
+
+    /** Query Source WebSocket links between SS and GW for diagnostics. */
+    @GetMapping("/source-connections")
+    public ResponseEntity<ApiResponse<SourceConnectionOverviewResponse>> listSourceConnections(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestParam(defaultValue = "skill-server") String sourceType) {
+        if (!isAuthorized(authorization)) {
+            return ResponseEntity.status(401)
+                    .body(ApiResponse.error(401, "Invalid or missing internal token"));
+        }
+
+        String normalizedSourceType = (sourceType == null || sourceType.isBlank())
+                ? "skill-server"
+                : sourceType.trim();
+        List<SourceConnectionLinkResponse> localLinks = skillRelayService
+                .getLocalSourceConnectionSnapshots(normalizedSourceType)
+                .stream()
+                .map(link -> new SourceConnectionLinkResponse(
+                        link.sourceType(),
+                        link.ssInstanceId(),
+                        link.gwInstanceId(),
+                        link.linkId(),
+                        true,
+                        link.open(),
+                        link.senderRunning(),
+                        link.pending(),
+                        null,
+                        null))
+                .toList();
+
+        List<SourceConnectionLinkResponse> clusterLinks = redisMessageBroker
+                .listSourceConnectionLinks(normalizedSourceType)
+                .stream()
+                .map(link -> new SourceConnectionLinkResponse(
+                        link.sourceType(),
+                        link.sourceInstanceId(),
+                        link.gwInstanceId(),
+                        link.linkId(),
+                        gatewayInstanceId.equals(link.gwInstanceId()),
+                        true,
+                        null,
+                        null,
+                        link.lastSeenEpochSeconds(),
+                        link.ageSeconds()))
+                .toList();
+
+        SourceConnectionOverviewResponse data = new SourceConnectionOverviewResponse(
+                gatewayInstanceId,
+                normalizedSourceType,
+                (int) localLinks.stream().filter(SourceConnectionLinkResponse::open).count(),
+                clusterLinks.size(),
+                localLinks,
+                clusterLinks);
+        return ResponseEntity.ok(ApiResponse.ok(data));
     }
 
     /** 通过 AK 向 Agent 发送 invoke 命令（新版协议端点）。 */

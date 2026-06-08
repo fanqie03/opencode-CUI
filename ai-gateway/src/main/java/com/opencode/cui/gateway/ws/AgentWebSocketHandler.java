@@ -267,9 +267,13 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
             MdcHelper.putUserId(userId);
             MdcHelper.putScenario("ws-agent-" + type);
             if (missingTraceId) {
-                log.warn("Agent event missing traceId; gateway {} traceId by correlation: type={}, toolSessionId={}, welinkSessionId={}",
-                        recoveredTraceId ? "recovered" : "generated",
-                        type, message.getToolSessionId(), message.getWelinkSessionId());
+                if (recoveredTraceId) {
+                    log.debug("Agent event missing traceId; gateway recovered traceId by correlation: type={}, toolSessionId={}, welinkSessionId={}",
+                            type, message.getToolSessionId(), message.getWelinkSessionId());
+                } else {
+                    log.debug("Agent event missing traceId; gateway generated traceId by correlation: type={}, toolSessionId={}, welinkSessionId={}",
+                            type, message.getToolSessionId(), message.getWelinkSessionId());
+                }
             }
 
             switch (type) {
@@ -573,7 +577,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         int delivered = 0;
         for (String json : pending) {
             if (!session.isOpen()) {
-                log.warn("AgentWSHandler.drainAndDeliverPending: session closed mid-drain, ak={}, remaining={}",
+                log.error("AgentWSHandler.drainAndDeliverPending: session closed mid-drain, ak={}, remaining={}",
                         ak, pending.size() - delivered);
                 break;
             }

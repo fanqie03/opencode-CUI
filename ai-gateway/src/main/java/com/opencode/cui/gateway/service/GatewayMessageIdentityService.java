@@ -54,7 +54,7 @@ public class GatewayMessageIdentityService {
 
         if (isTerminalMessage(traced) && !hasText(explicitMessageId)) {
             if (hasText(messageId)) {
-                log.warn("[MSG_ID] Recovered terminal messageId by traceId: type={}, traceId={}, messageId={}",
+                log.debug("[MSG_ID] Recovered terminal messageId by traceId: type={}, traceId={}, messageId={}",
                         traced.getType(), traced.getTraceId(), messageId);
             } else {
                 log.warn("[MSG_ID] Terminal event missing messageId and no trace binding: type={}, traceId={}, toolSessionId={}",

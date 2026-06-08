@@ -15,6 +15,7 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -372,6 +373,66 @@ class RedisMessageBrokerSourceConnTest {
             Set<String> result = broker.discoverAllSourceGwInstances();
 
             assertThat(result).isEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName("listSourceConnectionLinks")
+    class ListSourceConnectionLinksTests {
+
+        @Test
+        @DisplayName("returns compound connection links with linkId")
+        @SuppressWarnings("unchecked")
+        void returnsCompoundLinks() {
+            when(redisTemplate.keys("gw:source-conn:skill-server:*")).thenReturn(Set.of(HASH_KEY));
+            long now = System.currentTimeMillis() / 1000;
+            Map<Object, Object> entries = new HashMap<>();
+            entries.put(GW_INSTANCE + "#" + SESSION_ID, String.valueOf(now));
+            when(hashOperations.entries(HASH_KEY)).thenReturn(entries);
+
+            List<RedisMessageBroker.SourceConnectionLink> result =
+                    broker.listSourceConnectionLinks(SOURCE_TYPE);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.get(0).sourceType()).isEqualTo(SOURCE_TYPE);
+            assertThat(result.get(0).sourceInstanceId()).isEqualTo(SOURCE_INSTANCE);
+            assertThat(result.get(0).gwInstanceId()).isEqualTo(GW_INSTANCE);
+            assertThat(result.get(0).linkId()).isEqualTo(SESSION_ID);
+        }
+
+        @Test
+        @DisplayName("drops legacy plain field when compound links exist for same GW")
+        @SuppressWarnings("unchecked")
+        void dropsLegacyDuplicate() {
+            when(redisTemplate.keys("gw:source-conn:skill-server:*")).thenReturn(Set.of(HASH_KEY));
+            long now = System.currentTimeMillis() / 1000;
+            Map<Object, Object> entries = new HashMap<>();
+            entries.put(GW_INSTANCE, String.valueOf(now));
+            entries.put(GW_INSTANCE + "#" + SESSION_ID, String.valueOf(now));
+            when(hashOperations.entries(HASH_KEY)).thenReturn(entries);
+
+            List<RedisMessageBroker.SourceConnectionLink> result =
+                    broker.listSourceConnectionLinks(SOURCE_TYPE);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.get(0).linkId()).isEqualTo(SESSION_ID);
+        }
+
+        @Test
+        @DisplayName("cleans stale connection fields")
+        @SuppressWarnings("unchecked")
+        void cleansStaleFields() {
+            when(redisTemplate.keys("gw:source-conn:skill-server:*")).thenReturn(Set.of(HASH_KEY));
+            long staleTs = System.currentTimeMillis() / 1000 - 60;
+            Map<Object, Object> entries = new HashMap<>();
+            entries.put(GW_INSTANCE + "#" + SESSION_ID, String.valueOf(staleTs));
+            when(hashOperations.entries(HASH_KEY)).thenReturn(entries);
+
+            List<RedisMessageBroker.SourceConnectionLink> result =
+                    broker.listSourceConnectionLinks(SOURCE_TYPE);
+
+            assertThat(result).isEmpty();
+            verify(hashOperations).delete(HASH_KEY, GW_INSTANCE + "#" + SESSION_ID);
         }
     }
 }

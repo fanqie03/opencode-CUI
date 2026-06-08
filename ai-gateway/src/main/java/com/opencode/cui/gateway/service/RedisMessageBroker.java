@@ -20,7 +20,9 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -117,14 +119,17 @@ public class RedisMessageBroker {
      * @param message serialized GatewayMessage JSON string
      * @param ttl     expiry for the entire pending list
      */
-    public void enqueuePending(String ak, String message, Duration ttl) {
+    public long enqueuePending(String ak, String message, Duration ttl) {
         if (ak == null || ak.isBlank() || message == null) {
-            return;
+            return 0;
         }
         String key = pendingKey(ak);
-        redisTemplate.opsForList().rightPush(key, message);
+        Long pending = redisTemplate.opsForList().rightPush(key, message);
         redisTemplate.expire(key, ttl);
-        log.info("[ENTRY] RedisMessageBroker.enqueuePending: ak={}, queueKey={}", ak, key);
+        long pendingCount = pending == null ? -1 : pending;
+        log.info("[PENDING] RedisMessageBroker.enqueuePending: ak={}, queueKey={}, pending={}, ttlSeconds={}",
+                ak, key, pendingCount, ttl == null ? null : ttl.toSeconds());
+        return pendingCount;
     }
 
     /**
@@ -427,8 +432,14 @@ public class RedisMessageBroker {
     public void publishToGwRelay(String targetInstanceId, String message) {
         String channel = GW_RELAY_CHANNEL_PREFIX + targetInstanceId;
         try {
-            redisTemplate.convertAndSend(channel, message);
-            log.debug("Published to GW relay channel {}: length={}", channel, message.length());
+            Long subscribers = redisTemplate.convertAndSend(channel, message);
+            if (subscribers == null || subscribers <= 0) {
+                log.error("Published to GW relay channel with no subscribers: channel={}, length={}",
+                        channel, message.length());
+            } else {
+                log.debug("Published to GW relay channel {}: length={}, subscribers={}",
+                        channel, message.length(), subscribers);
+            }
         } catch (Exception e) {
             log.error("Failed to publish to GW relay channel {}: {}", channel, e.getMessage(), e);
         }
@@ -522,6 +533,17 @@ public class RedisMessageBroker {
             } catch (NumberFormatException ignored) {
                 return 0;
             }
+        }
+    }
+
+    public record SourceL2MailboxCleanupResult(
+            int scanned,
+            int active,
+            int emptyDeleted,
+            int orphanExpiring,
+            int errors) {
+        public boolean hasWork() {
+            return scanned > 0 || emptyDeleted > 0 || orphanExpiring > 0 || errors > 0;
         }
     }
 
@@ -717,6 +739,82 @@ public class RedisMessageBroker {
             }
         }
         return result;
+    }
+
+    public record SourceConnectionLink(
+            String sourceType,
+            String sourceInstanceId,
+            String gwInstanceId,
+            String linkId,
+            long lastSeenEpochSeconds,
+            long ageSeconds) {}
+
+    public List<SourceConnectionLink> listSourceConnectionLinks(String sourceType) {
+        if (sourceType == null || sourceType.isBlank()) {
+            return Collections.emptyList();
+        }
+        String keyPrefix = SOURCE_CONN_KEY_PREFIX + sourceType + ":";
+        Set<String> keys = redisTemplate.keys(keyPrefix + "*");
+        if (keys == null || keys.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        long now = Instant.now().getEpochSecond();
+        List<SourceConnectionLink> links = new ArrayList<>();
+        for (String key : keys) {
+            String sourceInstanceId = key.substring(keyPrefix.length());
+            Map<Object, Object> entries = redisTemplate.opsForHash().entries(key);
+            for (Map.Entry<Object, Object> entry : entries.entrySet()) {
+                String field = String.valueOf(entry.getKey());
+                try {
+                    long ts = Long.parseLong(String.valueOf(entry.getValue()));
+                    long ageSeconds = now - ts;
+                    if (ageSeconds > 30) {
+                        redisTemplate.opsForHash().delete(key, field);
+                        continue;
+                    }
+                    SourceConnectionField parsedField = parseSourceConnectionField(field);
+                    links.add(new SourceConnectionLink(
+                            sourceType,
+                            sourceInstanceId,
+                            parsedField.gwInstanceId(),
+                            parsedField.linkId(),
+                            ts,
+                            Math.max(0, ageSeconds)));
+                } catch (NumberFormatException e) {
+                    redisTemplate.opsForHash().delete(key, field);
+                }
+            }
+        }
+
+        Set<String> compoundOwners = new HashSet<>();
+        for (SourceConnectionLink link : links) {
+            if (link.linkId() != null && !link.linkId().isBlank()) {
+                compoundOwners.add(sourceOwnerKey(link));
+            }
+        }
+
+        return links.stream()
+                .filter(link -> hasText(link.linkId()) || !compoundOwners.contains(sourceOwnerKey(link)))
+                .sorted(Comparator
+                        .comparing(SourceConnectionLink::sourceInstanceId)
+                        .thenComparing(SourceConnectionLink::gwInstanceId)
+                        .thenComparing(link -> link.linkId() == null ? "" : link.linkId()))
+                .toList();
+    }
+
+    private record SourceConnectionField(String gwInstanceId, String linkId) {}
+
+    private SourceConnectionField parseSourceConnectionField(String field) {
+        int sep = field.indexOf('#');
+        if (sep > 0 && sep < field.length() - 1) {
+            return new SourceConnectionField(field.substring(0, sep), field.substring(sep + 1));
+        }
+        return new SourceConnectionField(field, null);
+    }
+
+    private static String sourceOwnerKey(SourceConnectionLink link) {
+        return link.sourceType() + ":" + link.sourceInstanceId() + ":" + link.gwInstanceId();
     }
 
     /**
@@ -951,6 +1049,62 @@ public class RedisMessageBroker {
         }
     }
 
+    public SourceL2MailboxCleanupResult cleanupOrphanSourceL2Mailboxes(
+            String sourceType, Set<String> activeGwIds, Duration orphanTtl) {
+        if (sourceType == null || sourceType.isBlank()) {
+            return new SourceL2MailboxCleanupResult(0, 0, 0, 0, 0);
+        }
+        Set<String> active = activeGwIds == null ? Collections.emptySet() : activeGwIds;
+        Duration ttl = (orphanTtl == null || orphanTtl.isZero() || orphanTtl.isNegative())
+                ? Duration.ofMinutes(10)
+                : orphanTtl;
+        String keyPrefix = SOURCE_L2_STREAM_KEY_PREFIX + sourceType + ":";
+        Set<String> keys = redisTemplate.keys(keyPrefix + "*");
+        if (keys == null || keys.isEmpty()) {
+            return new SourceL2MailboxCleanupResult(0, 0, 0, 0, 0);
+        }
+
+        int scanned = 0;
+        int activeCount = 0;
+        int emptyDeleted = 0;
+        int orphanExpiring = 0;
+        int errors = 0;
+        for (String key : keys) {
+            if (key == null || key.endsWith(SOURCE_L2_DEAD_LETTER_SUFFIX) || !key.startsWith(keyPrefix)) {
+                continue;
+            }
+            scanned++;
+            String targetGwId = key.substring(keyPrefix.length());
+            if (targetGwId.isBlank()) {
+                continue;
+            }
+            if (active.contains(targetGwId)) {
+                activeCount++;
+                continue;
+            }
+            try {
+                Long size = redisTemplate.opsForStream().size(key);
+                long streamSize = size == null ? -1L : size;
+                if (streamSize == 0L) {
+                    redisTemplate.delete(key);
+                    emptyDeleted++;
+                    log.info("RedisMessageBroker.cleanupOrphanSourceL2Mailboxes: deleted empty orphan mailbox, sourceType={}, targetGw={}, key={}",
+                            sourceType, targetGwId, key);
+                } else {
+                    redisTemplate.expire(key, ttl);
+                    orphanExpiring++;
+                    log.error("RedisMessageBroker.cleanupOrphanSourceL2Mailboxes: orphan mailbox still has messages, sourceType={}, targetGw={}, key={}, size={}, ttlSeconds={}",
+                            sourceType, targetGwId, key, streamSize, ttl.toSeconds());
+                }
+            } catch (Exception e) {
+                errors++;
+                log.error("RedisMessageBroker.cleanupOrphanSourceL2Mailboxes: failed, sourceType={}, targetGw={}, key={}",
+                        sourceType, targetGwId, key, e);
+            }
+        }
+        return new SourceL2MailboxCleanupResult(scanned, activeCount, emptyDeleted, orphanExpiring, errors);
+    }
+
     private SourceL2Work toSourceL2Work(MapRecord<String, Object, Object> record) {
         Map<String, String> fields = new LinkedHashMap<>();
         record.getValue().forEach((key, value) ->
@@ -1002,6 +1156,10 @@ public class RedisMessageBroker {
         if (value != null && !value.isBlank()) {
             fields.put(key, value);
         }
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private static boolean isGroupAlreadyExists(Exception e) {
@@ -1123,8 +1281,14 @@ public class RedisMessageBroker {
     private void publishMessage(String channel, GatewayMessage message) {
         try {
             String json = objectMapper.writeValueAsString(message);
-            redisTemplate.convertAndSend(channel, json);
-            log.debug("Published to Redis channel {}: type={}", channel, message.getType());
+            Long subscribers = redisTemplate.convertAndSend(channel, json);
+            if (subscribers == null || subscribers <= 0) {
+                log.error("Published to Redis channel with no subscribers: channel={}, type={}",
+                        channel, message.getType());
+            } else {
+                log.debug("Published to Redis channel {}: type={}, subscribers={}",
+                        channel, message.getType(), subscribers);
+            }
         } catch (JsonProcessingException e) {
             log.error("Failed to serialize message for channel {}: {}", channel, e.getMessage(), e);
         } catch (Exception e) {

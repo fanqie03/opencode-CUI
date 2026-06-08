@@ -129,6 +129,8 @@ public String requeueSourceL2Work(String sourceType, String targetGwId, SourceL2
                                   int nextAttempt, long maxLen)
 public String deadLetterSourceL2Work(String sourceType, String targetGwId, SourceL2Work work,
                                      String failureReason)
+public SourceL2MailboxCleanupResult cleanupOrphanSourceL2Mailboxes(
+        String sourceType, Set<String> activeGwIds, Duration orphanTtl)
 ```
 
 Stream 字段：
@@ -154,6 +156,8 @@ Stream 字段：
 | `gateway.l2-source-stream.poll-block-ms` | `100` | `XREADGROUP` block 时间 |
 | `gateway.l2-source-stream.poll-batch-size` | `10` | 单次最多读取工作项 |
 | `gateway.l2-source-stream.max-attempts` | `3` | 失败进入死信前的最大尝试次数 |
+| `gateway.l2-source-stream.cleanup-delay-ms` | `60000` | orphan target-GW mailbox 生命周期清理周期 |
+| `gateway.l2-source-stream.orphan-ttl-seconds` | `600` | 非空 orphan mailbox 风险保留 TTL |
 
 行为矩阵：
 
@@ -165,16 +169,20 @@ Stream 字段：
 | 消费发送成功 | `ackSourceL2Work("skill-server", targetGwId, streamId)`。 |
 | 消费发送失败且未达最大次数 | `requeueSourceL2Work(...)` 写入新消息，再 ACK 原消息。 |
 | 消费发送失败且达到最大次数 | `deadLetterSourceL2Work(...)` 写入 `gw:l2:source:skill-server:{targetGw}:dead`，再 ACK 原消息。 |
+| mailbox 的 `targetGw` 仍有活跃 `skill-server` 连接 | 清理任务跳过该 mailbox。 |
+| mailbox 的 `targetGw` 已无活跃 `skill-server` 连接且 Stream 为空 | 删除该 mailbox key，避免滚动升级后无效 stream 堆积。 |
+| mailbox 的 `targetGw` 已无活跃 `skill-server` 连接但 Stream 非空 | 不迁移、不静默删除；打 `ERROR` 并设置 `orphan-ttl-seconds`，因为没有 SS 业务 ACK 时无法判断是否会重复或乱序。 |
 
 ## Pending Queue 模式
 
 离线下行缓冲使用 Redis List，并通过 Lua 脚本原子 drain，避免 `LRANGE + DEL` 之间丢消息。
 
 ```java
-// Source: ai-gateway/src/main/java/com/opencode/cui/gateway/service/RedisMessageBroker.java:95-156
-public void enqueuePending(String ak, String message, Duration ttl) {
-    redisTemplate.opsForList().rightPush(pendingKey(ak), message);
+// Source: ai-gateway/src/main/java/com/opencode/cui/gateway/service/RedisMessageBroker.java
+public long enqueuePending(String ak, String message, Duration ttl) {
+    Long pending = redisTemplate.opsForList().rightPush(pendingKey(ak), message);
     redisTemplate.expire(pendingKey(ak), ttl);
+    return pending == null ? -1 : pending;
 }
 
 public List<String> drainPending(String ak) {

@@ -178,17 +178,17 @@ GatewayStreamEventLogHelper.inbound(Logger log, String endpoint, String result, 
 - When GW sends an invoke to a local agent, remember `toolSessionId` and `welinkSessionId` to the invoke `traceId`.
 - When a local agent stream event comes back without `traceId`, recover it from `toolSessionId` or `welinkSessionId` before setting MDC, logging the raw inbound payload, or relaying to SS.
 - If no correlation key exists, generate once via `GatewayMessage.ensureTraceId()` and remember it for later events with the same key.
-- Emit a `WARN` when a relay event is missing `traceId`; the warning should state whether GW recovered or generated the value.
+- Emit only `DEBUG` when a relay event is missing `traceId` but GW can recover or generate one from correlation keys. Reserve `WARN`/`ERROR` for cases that indicate real routing ambiguity, message loss risk, or failed delivery.
 
 ### 5. Validation & Error Matrix
 
 | Case | Required behavior |
 |------|-------------------|
 | Event has `traceId` | Preserve it and remember correlation keys. |
-| Event lacks `traceId` but has known `toolSessionId` | Recover the invoke traceId. |
-| Event lacks `traceId` but has known `welinkSessionId` | Recover the invoke traceId. |
-| Event lacks `traceId` and no known key | Generate via `GatewayMessage.ensureTraceId()` and warn. |
-| Event lacks any correlation key | Cannot guarantee turn-level trace continuity; warn and avoid inventing unrelated keys. |
+| Event lacks `traceId` but has known `toolSessionId` | Recover the invoke traceId and log at `DEBUG`. |
+| Event lacks `traceId` but has known `welinkSessionId` | Recover the invoke traceId and log at `DEBUG`. |
+| Event lacks `traceId` and has a stable correlation key | Generate via `GatewayMessage.ensureTraceId()`, remember the generated trace, and log at `DEBUG`. |
+| Event lacks any correlation key | Cannot guarantee turn-level trace continuity; use diagnostic logging only and avoid inventing unrelated keys. |
 
 ### 6. Tests Required
 

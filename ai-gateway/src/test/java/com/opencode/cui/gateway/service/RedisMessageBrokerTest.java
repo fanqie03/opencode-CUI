@@ -264,6 +264,47 @@ class RedisMessageBrokerTest {
 
             verify(streamOperations).acknowledge("gw:l2:source:skill-server:gw-remote", "gw-l2-skill-server:gw-remote", "1-0");
         }
+
+        @Test
+        @DisplayName("cleanupOrphanSourceL2Mailboxes deletes empty inactive target mailbox")
+        void cleanupOrphanSourceL2MailboxesDeletesEmptyInactiveMailbox() {
+            when(redisTemplate.keys("gw:l2:source:skill-server:*"))
+                    .thenReturn(Set.of(
+                            "gw:l2:source:skill-server:gw-live",
+                            "gw:l2:source:skill-server:gw-old",
+                            "gw:l2:source:skill-server:gw-old:dead"));
+            when(streamOperations.size("gw:l2:source:skill-server:gw-old")).thenReturn(0L);
+
+            RedisMessageBroker.SourceL2MailboxCleanupResult result = broker.cleanupOrphanSourceL2Mailboxes(
+                    "skill-server", Set.of("gw-live"), Duration.ofSeconds(30));
+
+            assertEquals(2, result.scanned());
+            assertEquals(1, result.active());
+            assertEquals(1, result.emptyDeleted());
+            assertEquals(0, result.orphanExpiring());
+            assertEquals(0, result.errors());
+            verify(redisTemplate).delete("gw:l2:source:skill-server:gw-old");
+            verify(streamOperations, never()).size("gw:l2:source:skill-server:gw-live");
+        }
+
+        @Test
+        @DisplayName("cleanupOrphanSourceL2Mailboxes keeps non-empty inactive target mailbox with short TTL")
+        void cleanupOrphanSourceL2MailboxesKeepsNonEmptyInactiveMailboxWithTtl() {
+            when(redisTemplate.keys("gw:l2:source:skill-server:*"))
+                    .thenReturn(Set.of("gw:l2:source:skill-server:gw-old"));
+            when(streamOperations.size("gw:l2:source:skill-server:gw-old")).thenReturn(3L);
+
+            RedisMessageBroker.SourceL2MailboxCleanupResult result = broker.cleanupOrphanSourceL2Mailboxes(
+                    "skill-server", Set.of("gw-live"), Duration.ofSeconds(30));
+
+            assertEquals(1, result.scanned());
+            assertEquals(0, result.active());
+            assertEquals(0, result.emptyDeleted());
+            assertEquals(1, result.orphanExpiring());
+            assertEquals(0, result.errors());
+            verify(redisTemplate).expire("gw:l2:source:skill-server:gw-old", Duration.ofSeconds(30));
+            verify(redisTemplate, never()).delete("gw:l2:source:skill-server:gw-old");
+        }
     }
 
 }

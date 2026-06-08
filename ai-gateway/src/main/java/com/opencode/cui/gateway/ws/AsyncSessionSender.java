@@ -5,10 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.io.IOException;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AsyncSessionSender {
@@ -18,63 +16,64 @@ public class AsyncSessionSender {
 
     private final WebSocketSession session;
     private final BlockingQueue<TextMessage> queue;
-    private final Thread senderThread;
     private final Runnable failureCallback;
+    private final Thread senderThread;
     private final AtomicBoolean failureNotified = new AtomicBoolean(false);
-    private volatile boolean running = true;
+    private final AtomicBoolean started = new AtomicBoolean(false);
+    private final AtomicBoolean running = new AtomicBoolean(true);
 
-    public AsyncSessionSender(WebSocketSession session) {
+    AsyncSessionSender(WebSocketSession session) {
         this(session, DEFAULT_QUEUE_CAPACITY, null);
     }
 
-    public AsyncSessionSender(WebSocketSession session, Runnable failureCallback) {
+    AsyncSessionSender(WebSocketSession session, Runnable failureCallback) {
         this(session, DEFAULT_QUEUE_CAPACITY, failureCallback);
     }
 
-    public AsyncSessionSender(WebSocketSession session, int queueCapacity) {
+    AsyncSessionSender(WebSocketSession session, int queueCapacity) {
         this(session, queueCapacity, null);
     }
 
-    public AsyncSessionSender(WebSocketSession session, int queueCapacity, Runnable failureCallback) {
+    AsyncSessionSender(WebSocketSession session, int queueCapacity, Runnable failureCallback) {
         this.session = session;
-        this.queue = new LinkedBlockingQueue<>(queueCapacity);
+        this.queue = new LinkedBlockingQueue<>(Math.max(1, queueCapacity));
         this.failureCallback = failureCallback;
         this.senderThread = new Thread(this::sendLoop, "ws-sender-" + session.getId());
         this.senderThread.setDaemon(true);
     }
 
-    /**
-     * 启动发送线程。必须在对象完全构造之后调用。
-     */
     public void start() {
-        this.senderThread.start();
+        if (started.compareAndSet(false, true)) {
+            senderThread.start();
+        }
     }
 
     public boolean enqueue(TextMessage message) {
-        if (!running) {
-            log.warn("[AsyncSender] Sender not running, rejecting message: linkId={}", session.getId());
+        if (!running.get()) {
+            log.error("[AsyncSender] Sender not running, rejecting message: linkId={}, pending={}",
+                    session.getId(), queue.size());
             return false;
         }
         boolean offered = queue.offer(message);
         if (!offered) {
-            log.warn("[AsyncSender] Queue full, dropping message: linkId={}, queueSize={}",
+            log.error("[AsyncSender] Queue full, dropping message: linkId={}, pending={}",
                     session.getId(), queue.size());
+            return false;
         }
-        return offered;
+        log.debug("[AsyncSender] Message queued: linkId={}, pending={}", session.getId(), queue.size());
+        return true;
     }
 
     public boolean isRunning() {
-        return running;
+        return running.get();
     }
 
     public void shutdown() {
-        running = false;
+        running.set(false);
+        int dropped = queue.size();
+        queue.clear();
         senderThread.interrupt();
-        try {
-            senderThread.join(5000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        log.info("[AsyncSender] Sender stopped: linkId={}, droppedMessages={}", session.getId(), dropped);
     }
 
     public int pendingCount() {
@@ -82,26 +81,28 @@ public class AsyncSessionSender {
     }
 
     private void sendLoop() {
-        while (running) {
-            try {
-                TextMessage msg = queue.poll(1, TimeUnit.SECONDS);
-                if (msg == null) {
-                    continue;
+        try {
+            while (running.get()) {
+                TextMessage msg = queue.take();
+                if (!session.isOpen()) {
+                    running.set(false);
+                    log.error("[AsyncSender] Session closed before send: linkId={}, remaining={}",
+                            session.getId(), queue.size() + 1);
+                    notifyFailure();
+                    break;
                 }
                 session.sendMessage(msg);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            } catch (IOException e) {
-                log.error("[AsyncSender] Send failed: linkId={}, remaining={}",
-                        session.getId(), queue.size(), e);
-                running = false;
-                notifyFailure();
-                break;
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            log.error("[AsyncSender] Send failed: linkId={}, remaining={}",
+                    session.getId(), queue.size(), e);
+            running.set(false);
+            notifyFailure();
+        } finally {
+            running.set(false);
         }
-        log.info("[AsyncSender] Sender thread stopped: linkId={}, droppedMessages={}",
-                session.getId(), queue.size());
     }
 
     private void notifyFailure() {

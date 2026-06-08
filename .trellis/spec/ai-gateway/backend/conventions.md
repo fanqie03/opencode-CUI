@@ -103,6 +103,23 @@ public String verify(String ak, String timestamp, String nonce, String signature
 - 正常 REST 接口统一返回 `ResponseEntity<ApiResponse<T>>`。
 - `ApiResponse.ok(data)` 表示 `code=0` 成功；`ApiResponse.error(code, message)` 表示业务失败。
 - 兼容接口可以暂时返回 `Map<String, Object>`，但新接口优先使用 `record` 或专用 DTO。例：`AgentController` 的 `/agents/{id}/status` 和 `/agents/{id}/invoke` 仍保留 legacy Map 返回；见 `controller/AgentController.java:147-197`。
+- 新增只读诊断接口仍按内部 Bearer 鉴权，返回 `ApiResponse<record>`。SS-GW 连接诊断接口固定为 `GET /api/gateway/source-connections?sourceType=skill-server`，响应 DTO 使用 `SourceConnectionOverviewResponse` / `SourceConnectionLinkResponse`，必须包含 `linkId`、`ssInstanceId`、`gwInstanceId`、`senderRunning`、`pending`。
+
+## WebSocket Sender Owner 模式
+
+`AsyncSessionSenderFactory` 是本地 WebSocket sender 生命周期的唯一 owner。`SkillRelayService` 和 `EventRelayService` 只能通过 factory 获取或移除 sender，不能各自维护 `Map<linkId, AsyncSessionSender>`。
+
+```java
+AsyncSessionSender sender = senderFactory.getOrCreate(session, onSenderFailure);
+boolean enqueued = sender.enqueue(new TextMessage(payload));
+```
+
+约束：
+
+- 一个 `linkId` 只能对应一个 `AsyncSessionSender`。
+- 每个 sender 用一个串行发送线程 drain 自己的有界队列，避免同一 `WebSocketSession` 并发 `sendMessage(...)`。
+- 队列容量由 `gateway.async-sender.queue-capacity` 配置，默认 `10000`。
+- `enqueue(...)` 返回 `false`、session closed、queue full、`sendMessage(...)` 抛异常都属于真实投递风险；调用方必须失败返回或清理连接，不能继续重选另一条 link 静默补发。
 
 ## 事务与调度
 

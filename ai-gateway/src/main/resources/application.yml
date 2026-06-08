@@ -64,6 +64,11 @@ gateway:
     poll-block-ms: ${GATEWAY_L2_SOURCE_STREAM_POLL_BLOCK_MS:100}
     poll-batch-size: ${GATEWAY_L2_SOURCE_STREAM_POLL_BATCH_SIZE:10}
     max-attempts: ${GATEWAY_L2_SOURCE_STREAM_MAX_ATTEMPTS:3}
+    cleanup-delay-ms: ${GATEWAY_L2_SOURCE_STREAM_CLEANUP_DELAY_MS:60000}
+    orphan-ttl-seconds: ${GATEWAY_L2_SOURCE_STREAM_ORPHAN_TTL_SECONDS:600}
+
+  async-sender:
+    queue-capacity: ${GATEWAY_ASYNC_SENDER_QUEUE_CAPACITY:10000}
 
   # Agent heartbeat timeout
   agent:

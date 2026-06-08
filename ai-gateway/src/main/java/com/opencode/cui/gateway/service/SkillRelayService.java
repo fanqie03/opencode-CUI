@@ -8,6 +8,7 @@ import com.opencode.cui.gateway.model.RelayMessage;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -15,6 +16,7 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import com.opencode.cui.gateway.ws.AsyncSessionSender;
+import com.opencode.cui.gateway.ws.AsyncSessionSenderFactory;
 import com.opencode.cui.gateway.service.cloud.InvokeRouteStrategy;
 
 import java.io.IOException;
@@ -24,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -50,6 +53,7 @@ public class SkillRelayService {
     private final String gatewayInstanceId;
     private final UpstreamRoutingTable routingTable;
     private final GatewayMessageIdentityService messageIdentityService;
+    private final AsyncSessionSenderFactory senderFactory;
 
     /** Invoke 路由策略 Map：scope → strategy */
     private final Map<String, InvokeRouteStrategy> routeStrategyMap;
@@ -79,7 +83,9 @@ public class SkillRelayService {
     @Value("${gateway.l2-source-stream.max-attempts:3}")
     private int sourceL2MaxAttempts;
 
-    private final ConcurrentHashMap<String, AsyncSessionSender> sessionSenders = new ConcurrentHashMap<>();
+    @Value("${gateway.l2-source-stream.orphan-ttl-seconds:600}")
+    private long sourceL2OrphanTtlSeconds = 600L;
+
     private final Cache<String, String> sourceLinkAffinity = Caffeine.newBuilder()
             .maximumSize(100_000)
             .expireAfterAccess(Duration.ofMinutes(30))
@@ -100,22 +106,35 @@ public class SkillRelayService {
     /** Lazy-initialized reference to EventRelayService (set via setter to break circular dependency). */
     private EventRelayService eventRelayService;
 
+    @Autowired
     public SkillRelayService(RedisMessageBroker redisMessageBroker,
             ObjectMapper objectMapper,
             @Value("${gateway.instance-id:${HOSTNAME:gateway-local}}") String gatewayInstanceId,
             UpstreamRoutingTable routingTable,
             GatewayMessageIdentityService messageIdentityService,
+            AsyncSessionSenderFactory senderFactory,
             List<InvokeRouteStrategy> invokeRouteStrategies) {
         this.redisMessageBroker = redisMessageBroker;
         this.objectMapper = objectMapper;
         this.gatewayInstanceId = gatewayInstanceId;
         this.routingTable = routingTable;
         this.messageIdentityService = messageIdentityService;
+        this.senderFactory = senderFactory;
         Map<String, InvokeRouteStrategy> strategyMap = new HashMap<>();
         for (InvokeRouteStrategy s : invokeRouteStrategies) {
             strategyMap.put(s.getScope(), s);
         }
         this.routeStrategyMap = strategyMap;
+    }
+
+    public SkillRelayService(RedisMessageBroker redisMessageBroker,
+            ObjectMapper objectMapper,
+            String gatewayInstanceId,
+            UpstreamRoutingTable routingTable,
+            GatewayMessageIdentityService messageIdentityService,
+            List<InvokeRouteStrategy> invokeRouteStrategies) {
+        this(redisMessageBroker, objectMapper, gatewayInstanceId, routingTable, messageIdentityService,
+                AsyncSessionSenderFactory.defaultFactory(), invokeRouteStrategies);
     }
 
     /**
@@ -271,7 +290,7 @@ public class SkillRelayService {
             return true;
         }
         if (localDelivery.affinityBroken()) {
-            log.warn("[V2-L1] Route locked to an invalid local source link; not rerouting message: sourceType={}, routingKey={}, type={}",
+            log.error("[V2-L1] Route locked to an invalid local source link; not rerouting message: sourceType={}, routingKey={}, type={}",
                     targetSourceType, routingKey, tracedMessage.getType());
             return false;
         }
@@ -360,7 +379,7 @@ public class SkillRelayService {
                     return new LocalSourceSelection(bound, false);
                 }
                 sourceLinkAffinity.invalidate(affinityKey);
-                log.warn("[V2-L1] Bound source link is no longer selectable: sourceType={}, routingKey={}, linkId={}",
+                log.debug("[V2-L1] Bound source link is no longer selectable: sourceType={}, routingKey={}, linkId={}",
                         sourceType, routingKey, boundSessionId);
                 return new LocalSourceSelection(null, true);
             }
@@ -395,7 +414,7 @@ public class SkillRelayService {
         try {
             String targetGateway = selectTargetSourceGateway(SOURCE_TYPE_SKILL_SERVER, routingKey);
             if (targetGateway == null || targetGateway.isBlank()) {
-                log.warn("[V2-L2] No remote GW with skill-server connection: routingKey={}, type={}",
+                log.error("[V2-L2] No remote GW with skill-server connection: routingKey={}, type={}",
                         routingKey, message.getType());
                 return false;
             }
@@ -409,7 +428,7 @@ public class SkillRelayService {
                     message.getType(),
                     sourceL2StreamMaxLen);
             if (streamId == null || streamId.isBlank()) {
-                log.warn("[V2-L2] Failed to enqueue skill-server L2 work item: routingKey={}, type={}",
+                log.error("[V2-L2] Failed to enqueue skill-server L2 work item: routingKey={}, type={}",
                         routingKey, message.getType());
                 return false;
             }
@@ -481,7 +500,7 @@ public class SkillRelayService {
     public void handleCloudControlRelay(String payload) {
         InvokeRouteStrategy strategy = routeStrategyMap.get("business");
         if (strategy == null) {
-            log.warn("[CLOUD_CONTROL_RX] Business route strategy missing, dropping control relay");
+            log.error("[CLOUD_CONTROL_RX] Business route strategy missing, dropping control relay");
             return;
         }
         try {
@@ -684,10 +703,10 @@ public class SkillRelayService {
             return;
         }
 
-        enqueueToPending(ak, agentMessage);
+        long pending = enqueueToPending(ak, agentMessage);
         relayPendingCount.incrementAndGet();
-        log.info("[EXIT->PENDING] Enqueued invoke to pending: ak={}, action={}, source={}",
-                ak, tracedMessage.getAction(), messageSource);
+        log.info("[EXIT->PENDING] Enqueued invoke to pending: ak={}, action={}, source={}, pending={}",
+                ak, tracedMessage.getAction(), messageSource, pending);
     }
 
     /**
@@ -758,12 +777,13 @@ public class SkillRelayService {
     /**
      * Enqueues a message to the pending queue for an offline Agent.
      */
-    private void enqueueToPending(String ak, GatewayMessage message) {
+    private long enqueueToPending(String ak, GatewayMessage message) {
         try {
             String json = objectMapper.writeValueAsString(message);
-            redisMessageBroker.enqueuePending(ak, json, PENDING_TTL);
+            return redisMessageBroker.enqueuePending(ak, json, PENDING_TTL);
         } catch (Exception e) {
             log.error("[V2] Failed to enqueue pending message: ak={}", ak, e);
+            return -1;
         }
     }
 
@@ -813,6 +833,45 @@ public class SkillRelayService {
                 .count();
     }
 
+    public record LocalSourceConnectionSnapshot(
+            String sourceType,
+            String ssInstanceId,
+            String gwInstanceId,
+            String linkId,
+            boolean open,
+            boolean senderRunning,
+            int pending) {}
+
+    public List<LocalSourceConnectionSnapshot> getLocalSourceConnectionSnapshots(String sourceType) {
+        String normalizedSourceType = canonicalSourceType(sourceType);
+        if (normalizedSourceType == null) {
+            normalizedSourceType = SOURCE_TYPE_SKILL_SERVER;
+        }
+        Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(normalizedSourceType);
+        if (instanceMap == null || instanceMap.isEmpty()) {
+            return List.of();
+        }
+
+        List<LocalSourceConnectionSnapshot> snapshots = new ArrayList<>();
+        for (Map.Entry<String, Map<String, WebSocketSession>> instanceEntry : instanceMap.entrySet()) {
+            String ssInstanceId = instanceEntry.getKey();
+            for (Map.Entry<String, WebSocketSession> sessionEntry : instanceEntry.getValue().entrySet()) {
+                String linkId = sessionEntry.getKey();
+                WebSocketSession session = sessionEntry.getValue();
+                AsyncSessionSender sender = senderFactory.get(linkId);
+                snapshots.add(new LocalSourceConnectionSnapshot(
+                        normalizedSourceType,
+                        ssInstanceId,
+                        gatewayInstanceId,
+                        linkId,
+                        session != null && session.isOpen(),
+                        sender == null || sender.isRunning(),
+                        sender == null ? 0 : sender.pendingCount()));
+            }
+        }
+        return snapshots;
+    }
+
     private int getActiveConnectionCount(String sourceType) {
         Map<String, Map<String, WebSocketSession>> instanceMap = sourceTypeSessions.get(sourceType);
         if (instanceMap == null)
@@ -824,36 +883,22 @@ public class SkillRelayService {
     }
 
     private AsyncSessionSender getOrCreateSender(WebSocketSession session) {
-        return sessionSenders.compute(session.getId(), (linkId, existing) -> {
-            if (existing != null && existing.isRunning() && session.isOpen()) {
-                return existing;
-            }
-            if (existing != null) {
-                existing.shutdown();
-            }
-            AsyncSessionSender sender = new AsyncSessionSender(session,
-                    () -> handleSourceSenderFailure(session, "sender_write_failed"));
-            sender.start();
-            return sender;
-        });
+        return senderFactory.getOrCreate(session, () -> handleSourceSenderFailure(session, "sender_write_failed"));
     }
 
     public void removeSessionSender(String sessionId) {
-        removeSessionSender(sessionId, true);
+        senderFactory.remove(sessionId);
     }
 
     private void removeSessionSender(String sessionId, boolean shutdown) {
-        AsyncSessionSender sender = sessionSenders.remove(sessionId);
-        if (sender != null && shutdown) {
-            sender.shutdown();
-        }
+        senderFactory.remove(sessionId, shutdown);
     }
 
     private void handleSourceSenderFailure(WebSocketSession session, String reason) {
         if (session == null) {
             return;
         }
-        sessionSenders.remove(session.getId());
+        senderFactory.remove(session.getId(), false);
         removeSourceSessionState(session, reason);
     }
 
@@ -875,6 +920,9 @@ public class SkillRelayService {
                         session.getId(), message.getType(), sender.pendingCount());
             } else if (!session.isOpen() || !sender.isRunning()) {
                 handleSourceSenderFailure(session, "enqueue_rejected_link_invalid");
+            } else {
+                log.error("[EXIT->SS] Failed to enqueue to skill session: linkId={}, type={}, pending={}",
+                        session.getId(), message.getType(), sender.pendingCount());
             }
             return enqueued;
         } catch (IOException e) {
@@ -932,6 +980,27 @@ public class SkillRelayService {
                 .orElse(null);
     }
 
+    public boolean sendToLocalSourceConnection(String sourceType, String sourceInstanceId, String payload) {
+        WebSocketSession session = findLocalSourceConnection(sourceType, sourceInstanceId);
+        if (session == null) {
+            return false;
+        }
+
+        AsyncSessionSender sender = getOrCreateSender(session);
+        boolean enqueued = sender.enqueue(new TextMessage(payload));
+        if (enqueued) {
+            log.info("[EXIT->SOURCE] Enqueued to-source relay: sourceType={}, sourceInstanceId={}, linkId={}, pending={}",
+                    sourceType, sourceInstanceId, session.getId(), sender.pendingCount());
+            return true;
+        }
+        if (!session.isOpen() || !sender.isRunning()) {
+            handleSourceSenderFailure(session, "to_source_enqueue_rejected_link_invalid");
+        }
+        log.error("[EXIT->SOURCE] Failed to enqueue to-source relay: sourceType={}, sourceInstanceId={}, linkId={}, pending={}",
+                sourceType, sourceInstanceId, session.getId(), sender.pendingCount());
+        return false;
+    }
+
     private WebSocketSession findLocalSourceConnectionBySessionId(String sourceType, String sessionId) {
         if (sourceType == null || sourceType.isBlank() || sessionId == null || sessionId.isBlank()) {
             return null;
@@ -951,7 +1020,7 @@ public class SkillRelayService {
         if (session == null || !session.isOpen()) {
             return false;
         }
-        AsyncSessionSender sender = sessionSenders.get(session.getId());
+        AsyncSessionSender sender = senderFactory.get(session.getId());
         return sender == null || sender.isRunning();
     }
 
@@ -1037,7 +1106,7 @@ public class SkillRelayService {
             String deadLetterId = redisMessageBroker.deadLetterSourceL2Work(SOURCE_TYPE_SKILL_SERVER, gatewayInstanceId, work, reason);
             if (deadLetterId != null && !deadLetterId.isBlank()) {
                 redisMessageBroker.ackSourceL2Work(SOURCE_TYPE_SKILL_SERVER, gatewayInstanceId, work.id());
-                log.warn("[V2-L2-CONSUME] Dead-lettered skill-server L2 work item: streamId={}, deadLetterId={}, attempts={}, reason={}",
+                log.error("[V2-L2-CONSUME] Dead-lettered skill-server L2 work item: streamId={}, deadLetterId={}, attempts={}, reason={}",
                         work.id(), deadLetterId, nextAttempt, reason);
             }
             return;
@@ -1049,6 +1118,25 @@ public class SkillRelayService {
             redisMessageBroker.ackSourceL2Work(SOURCE_TYPE_SKILL_SERVER, gatewayInstanceId, work.id());
             log.warn("[V2-L2-CONSUME] Requeued skill-server L2 work item: streamId={}, requeuedId={}, nextAttempt={}, reason={}",
                     work.id(), requeuedId, nextAttempt, reason);
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${gateway.l2-source-stream.cleanup-delay-ms:60000}")
+    public void cleanupSourceL2Mailboxes() {
+        Set<String> activeGwIds = redisMessageBroker.discoverSourceGwInstances(SOURCE_TYPE_SKILL_SERVER);
+        RedisMessageBroker.SourceL2MailboxCleanupResult result =
+                redisMessageBroker.cleanupOrphanSourceL2Mailboxes(
+                        SOURCE_TYPE_SKILL_SERVER,
+                        activeGwIds,
+                        Duration.ofSeconds(Math.max(1L, sourceL2OrphanTtlSeconds)));
+        if (result.hasWork()) {
+            log.info("[V2-L2-CLEANUP] sourceType={}, scanned={}, active={}, emptyDeleted={}, orphanExpiring={}, errors={}",
+                    SOURCE_TYPE_SKILL_SERVER,
+                    result.scanned(),
+                    result.active(),
+                    result.emptyDeleted(),
+                    result.orphanExpiring(),
+                    result.errors());
         }
     }
 
@@ -1130,8 +1218,9 @@ public class SkillRelayService {
 
     @PreDestroy
     public void destroy() {
-        sessionSenders.values().forEach(AsyncSessionSender::shutdown);
-        sessionSenders.clear();
+        sourceTypeSessions.values().forEach(instanceMap ->
+                instanceMap.values().forEach(sessionMap ->
+                        sessionMap.keySet().forEach(senderFactory::remove)));
         sourceTypeSessions.clear();
         hashRings.clear();
         sourceLinkAffinity.invalidateAll();

@@ -8,8 +8,10 @@ import com.opencode.cui.gateway.logging.MdcHelper;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.model.RelayMessage;
 import com.opencode.cui.gateway.ws.AsyncSessionSender;
+import com.opencode.cui.gateway.ws.AsyncSessionSenderFactory;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
@@ -41,7 +43,6 @@ public class EventRelayService {
 
     /** 已连接 Agent 的 WebSocket 会话映射：ak → session */
     private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, AsyncSessionSender> sessionSenders = new ConcurrentHashMap<>();
     private final Map<String, Boolean> opencodeStatusCache = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<Boolean>> pendingStatusQueries = new ConcurrentHashMap<>();
     private final Cache<String, String> agentTraceByCorrelationKey = Caffeine.newBuilder()
@@ -54,20 +55,33 @@ public class EventRelayService {
     private final SkillRelayService skillRelayService;
     private final UpstreamRoutingTable routingTable;
     private final String selfInstanceId;
+    private final AsyncSessionSenderFactory senderFactory;
 
+    @Autowired
     public EventRelayService(ObjectMapper objectMapper,
             RedisMessageBroker redisMessageBroker,
             SkillRelayService skillRelayService,
             UpstreamRoutingTable routingTable,
-            @Value("${gateway.instance-id:${HOSTNAME:gateway-local}}") String selfInstanceId) {
+            @Value("${gateway.instance-id:${HOSTNAME:gateway-local}}") String selfInstanceId,
+            AsyncSessionSenderFactory senderFactory) {
         this.objectMapper = objectMapper;
         this.redisMessageBroker = redisMessageBroker;
         this.skillRelayService = skillRelayService;
         this.routingTable = routingTable;
         this.selfInstanceId = selfInstanceId;
+        this.senderFactory = senderFactory;
 
         // Break circular dependency: SkillRelayService needs EventRelayService for local agent lookup
         skillRelayService.setEventRelayService(this);
+    }
+
+    public EventRelayService(ObjectMapper objectMapper,
+            RedisMessageBroker redisMessageBroker,
+            SkillRelayService skillRelayService,
+            UpstreamRoutingTable routingTable,
+            String selfInstanceId) {
+        this(objectMapper, redisMessageBroker, skillRelayService, routingTable, selfInstanceId,
+                AsyncSessionSenderFactory.defaultFactory());
     }
 
     /**
@@ -143,7 +157,7 @@ public class EventRelayService {
                 MdcHelper.putScenario("gw-relay-rx");
                 String ak = message.getAk();
                 if (ak == null || ak.isBlank()) {
-                    log.warn("[ERROR] EventRelayService.handleGwRelayMessage: ak is null or blank, dropping message type={}",
+                    log.error("[ERROR] EventRelayService.handleGwRelayMessage: ak is null or blank, dropping message type={}",
                             message.getType());
                     return;
                 }
@@ -183,19 +197,8 @@ public class EventRelayService {
         log.info("EventRelayService.handleToSourceRelay: targetSourceType={}, targetSourceInstanceId={}",
                 targetSourceType, targetSourceInstanceId);
 
-        WebSocketSession session = skillRelayService.findLocalSourceConnection(
-                targetSourceType, targetSourceInstanceId);
-        if (session != null) {
-            boolean enqueued = getOrCreateSender(session).enqueue(new TextMessage(payload));
-            if (!enqueued) {
-                log.warn("[EXIT->SOURCE] Failed to enqueue to-source relay: sourceType={}, sourceInstanceId={}",
-                        targetSourceType, targetSourceInstanceId);
-            } else {
-                log.info("[EXIT->SOURCE] Enqueued to-source relay: sourceType={}, sourceInstanceId={}",
-                        targetSourceType, targetSourceInstanceId);
-            }
-        } else {
-            log.debug("No local connection for source {}/{}, discarding relay",
+        if (!skillRelayService.sendToLocalSourceConnection(targetSourceType, targetSourceInstanceId, payload)) {
+            log.error("[EXIT->SOURCE] Failed to deliver source relay locally, dropping message: sourceType={}, sourceInstanceId={}",
                     targetSourceType, targetSourceInstanceId);
         }
     }
@@ -313,7 +316,7 @@ public class EventRelayService {
             boolean routed = skillRelayService.relayToSkill(forwarded);
             long elapsedMs = (System.nanoTime() - start) / 1_000_000;
             if (!routed) {
-                log.warn(
+                log.error(
                         "[ERROR] EventRelayService.relayToSkillServer: reason=route_failed, type={}, welinkSessionId={}, durationMs={}",
                         message.getType(), forwarded.getWelinkSessionId(), elapsedMs);
             } else {
@@ -349,15 +352,16 @@ public class EventRelayService {
 
         try {
             String json = objectMapper.writeValueAsString(message);
-            boolean enqueued = getOrCreateSender(session).enqueue(new TextMessage(json));
+            AsyncSessionSender sender = getOrCreateSender(session);
+            boolean enqueued = sender.enqueue(new TextMessage(json));
             if (!enqueued) {
-                log.warn("[EXIT->AGENT] Failed to enqueue message for local agent (V2 direct): ak={}, type={}",
+                log.error("[EXIT->AGENT] Failed to enqueue message for local agent (V2 direct): ak={}, type={}",
                         ak, message.getType());
                 return false;
             }
             rememberAgentTrace(message);
-            log.info("[EXIT->AGENT] Enqueued to local agent (V2 direct): ak={}, type={}",
-                    ak, message.getType());
+            log.info("[EXIT->AGENT] Enqueued to local agent (V2 direct): ak={}, type={}, pending={}",
+                    ak, message.getType(), sender.pendingCount());
             return true;
         } catch (IOException e) {
             log.error("[ERROR] Failed to serialize message for local agent (V2 direct): ak={}, type={}",
@@ -377,14 +381,15 @@ public class EventRelayService {
         try {
             GatewayMessage agentMessage = message.withoutRoutingContext();
             String json = objectMapper.writeValueAsString(agentMessage);
-            boolean enqueued = getOrCreateSender(session).enqueue(new TextMessage(json));
+            AsyncSessionSender sender = getOrCreateSender(session);
+            boolean enqueued = sender.enqueue(new TextMessage(json));
             if (!enqueued) {
-                log.warn("[EXIT->AGENT] Failed to enqueue message for local agent: ak={}, type={}",
+                log.error("[EXIT->AGENT] Failed to enqueue message for local agent: ak={}, type={}",
                         ak, message.getType());
             } else {
                 rememberAgentTrace(agentMessage);
-                log.info("[EXIT->AGENT] Enqueued to local agent: type={}, seq={}",
-                        message.getType(), message.getSequenceNumber());
+                log.info("[EXIT->AGENT] Enqueued to local agent: type={}, seq={}, pending={}",
+                        message.getType(), message.getSequenceNumber(), sender.pendingCount());
             }
         } catch (IOException e) {
             log.error("Failed to serialize message for local agent: ak={}, type={}",
@@ -516,17 +521,10 @@ public class EventRelayService {
     }
 
     private AsyncSessionSender getOrCreateSender(WebSocketSession session) {
-        return sessionSenders.computeIfAbsent(session.getId(), k -> {
-            AsyncSessionSender sender = new AsyncSessionSender(session);
-            sender.start();
-            return sender;
-        });
+        return senderFactory.getOrCreate(session);
     }
 
     public void removeSessionSender(String sessionId) {
-        AsyncSessionSender sender = sessionSenders.remove(sessionId);
-        if (sender != null) {
-            sender.shutdown();
-        }
+        senderFactory.remove(sessionId);
     }
 }
