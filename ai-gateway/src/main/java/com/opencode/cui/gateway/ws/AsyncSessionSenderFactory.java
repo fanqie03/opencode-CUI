@@ -1,5 +1,7 @@
 package com.opencode.cui.gateway.ws;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -10,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class AsyncSessionSenderFactory {
 
+    private static final Logger log = LoggerFactory.getLogger(AsyncSessionSenderFactory.class);
     private static final int DEFAULT_QUEUE_CAPACITY = 10000;
 
     private final int queueCapacity;
@@ -26,23 +29,34 @@ public class AsyncSessionSenderFactory {
     }
 
     public AsyncSessionSender getOrCreate(WebSocketSession session) {
-        return getOrCreate(session, null);
+        return getOrCreate(session, AsyncSenderIdentity.unknown(), null);
     }
 
     public AsyncSessionSender getOrCreate(WebSocketSession session, Runnable onSenderFailure) {
+        return getOrCreate(session, AsyncSenderIdentity.unknown(), onSenderFailure);
+    }
+
+    public AsyncSessionSender getOrCreate(WebSocketSession session, AsyncSenderIdentity identity) {
+        return getOrCreate(session, identity, null);
+    }
+
+    public AsyncSessionSender getOrCreate(WebSocketSession session, AsyncSenderIdentity identity,
+            Runnable onSenderFailure) {
         String sessionId = session.getId();
+        AsyncSenderIdentity requestedIdentity = AsyncSenderIdentity.orUnknown(identity);
         SenderEntry entry = senders.compute(sessionId, (linkId, existing) -> {
             Runnable failureHandler = onSenderFailure != null
                     ? onSenderFailure
                     : existing == null ? null : existing.onSenderFailure();
             if (existing != null && existing.sender().isRunning() && session.isOpen()) {
+                logIdentityMismatch(linkId, existing.sender().identity(), requestedIdentity);
                 return new SenderEntry(existing.sender(), failureHandler);
             }
             if (existing != null) {
                 existing.sender().shutdown();
             }
             AsyncSessionSender sender = new AsyncSessionSender(session, queueCapacity,
-                    () -> handleSenderFailure(linkId));
+                    () -> handleSenderFailure(linkId), requestedIdentity);
             sender.start();
             return new SenderEntry(sender, failureHandler);
         });
@@ -70,6 +84,17 @@ public class AsyncSessionSenderFactory {
         if (entry != null && entry.onSenderFailure() != null) {
             entry.onSenderFailure().run();
         }
+    }
+
+    private void logIdentityMismatch(String linkId, AsyncSenderIdentity existingIdentity,
+            AsyncSenderIdentity requestedIdentity) {
+        if (existingIdentity.equals(requestedIdentity)) {
+            return;
+        }
+        log.warn("[AsyncSender] Sender identity mismatch on existing link: linkId={}, existingChannel={}, existingPeerType={}, existingPeerId={}, requestedChannel={}, requestedPeerType={}, requestedPeerId={}",
+                linkId,
+                existingIdentity.channel(), existingIdentity.peerType(), existingIdentity.peerId(),
+                requestedIdentity.channel(), requestedIdentity.peerType(), requestedIdentity.peerId());
     }
 
     private record SenderEntry(AsyncSessionSender sender, Runnable onSenderFailure) {

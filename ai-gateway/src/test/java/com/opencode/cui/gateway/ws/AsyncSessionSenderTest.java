@@ -90,6 +90,42 @@ class AsyncSessionSenderTest {
         });
 
         assertSame(first, second);
+        assertEquals(AsyncSenderIdentity.unknown(), first.identity());
+        factory.remove("link-1");
+    }
+
+    @Test
+    @DisplayName("factory stores sender identity")
+    void factoryStoresSenderIdentity() {
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.getId()).thenReturn("link-1");
+        when(session.isOpen()).thenReturn(true);
+        AsyncSessionSenderFactory factory = new AsyncSessionSenderFactory(10);
+        AsyncSenderIdentity identity = AsyncSenderIdentity.agent("ak-1");
+
+        AsyncSessionSender sender = factory.getOrCreate(session, identity);
+
+        assertEquals(identity, sender.identity());
+        assertEquals("agent", sender.identity().channel());
+        assertEquals("ak-1", sender.identity().peerId());
+        factory.remove("link-1");
+    }
+
+    @Test
+    @DisplayName("factory keeps existing identity when a live sender is reused")
+    void factoryKeepsExistingIdentityWhenLiveSenderIsReused() {
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.getId()).thenReturn("link-1");
+        when(session.isOpen()).thenReturn(true);
+        AsyncSessionSenderFactory factory = new AsyncSessionSenderFactory(10);
+        AsyncSenderIdentity agentIdentity = AsyncSenderIdentity.agent("ak-1");
+        AsyncSenderIdentity sourceIdentity = AsyncSenderIdentity.source("skill-server", "ss-1");
+
+        AsyncSessionSender first = factory.getOrCreate(session, agentIdentity);
+        AsyncSessionSender second = factory.getOrCreate(session, sourceIdentity);
+
+        assertSame(first, second);
+        assertEquals(agentIdentity, second.identity());
         factory.remove("link-1");
     }
 

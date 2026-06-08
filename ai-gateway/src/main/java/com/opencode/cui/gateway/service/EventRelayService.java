@@ -7,6 +7,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.gateway.logging.MdcHelper;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.model.RelayMessage;
+import com.opencode.cui.gateway.ws.AsyncSenderIdentity;
 import com.opencode.cui.gateway.ws.AsyncSessionSender;
 import com.opencode.cui.gateway.ws.AsyncSessionSenderFactory;
 import jakarta.annotation.PostConstruct;
@@ -352,16 +353,16 @@ public class EventRelayService {
 
         try {
             String json = objectMapper.writeValueAsString(message);
-            AsyncSessionSender sender = getOrCreateSender(session);
+            AsyncSessionSender sender = getOrCreateSender(ak, session);
             boolean enqueued = sender.enqueue(new TextMessage(json));
             if (!enqueued) {
-                log.error("[EXIT->AGENT] Failed to enqueue message for local agent (V2 direct): ak={}, type={}",
-                        ak, message.getType());
+                log.error("[EXIT->AGENT] Failed to enqueue message for local agent (V2 direct): channel=agent, ak={}, linkId={}, type={}",
+                        ak, session.getId(), message.getType());
                 return false;
             }
             rememberAgentTrace(message);
-            log.info("[EXIT->AGENT] Enqueued to local agent (V2 direct): ak={}, type={}, pending={}",
-                    ak, message.getType(), sender.pendingCount());
+            log.info("[EXIT->AGENT] Enqueued to local agent (V2 direct): channel=agent, ak={}, linkId={}, type={}, pending={}",
+                    ak, session.getId(), message.getType(), sender.pendingCount());
             return true;
         } catch (IOException e) {
             log.error("[ERROR] Failed to serialize message for local agent (V2 direct): ak={}, type={}",
@@ -381,15 +382,15 @@ public class EventRelayService {
         try {
             GatewayMessage agentMessage = message.withoutRoutingContext();
             String json = objectMapper.writeValueAsString(agentMessage);
-            AsyncSessionSender sender = getOrCreateSender(session);
+            AsyncSessionSender sender = getOrCreateSender(ak, session);
             boolean enqueued = sender.enqueue(new TextMessage(json));
             if (!enqueued) {
-                log.error("[EXIT->AGENT] Failed to enqueue message for local agent: ak={}, type={}",
-                        ak, message.getType());
+                log.error("[EXIT->AGENT] Failed to enqueue message for local agent: channel=agent, ak={}, linkId={}, type={}",
+                        ak, session.getId(), message.getType());
             } else {
                 rememberAgentTrace(agentMessage);
-                log.info("[EXIT->AGENT] Enqueued to local agent: type={}, seq={}, pending={}",
-                        message.getType(), message.getSequenceNumber(), sender.pendingCount());
+                log.info("[EXIT->AGENT] Enqueued to local agent: channel=agent, ak={}, linkId={}, type={}, seq={}, pending={}",
+                        ak, session.getId(), message.getType(), message.getSequenceNumber(), sender.pendingCount());
             }
         } catch (IOException e) {
             log.error("Failed to serialize message for local agent: ak={}, type={}",
@@ -520,8 +521,8 @@ public class EventRelayService {
                 .count();
     }
 
-    private AsyncSessionSender getOrCreateSender(WebSocketSession session) {
-        return senderFactory.getOrCreate(session);
+    private AsyncSessionSender getOrCreateSender(String ak, WebSocketSession session) {
+        return senderFactory.getOrCreate(session, AsyncSenderIdentity.agent(ak));
     }
 
     public void removeSessionSender(String sessionId) {
