@@ -289,3 +289,81 @@ rate(chat_stream_tokens_per_second_sum[5m]) / rate(chat_stream_tokens_per_second
 
 1. `chat_stream_tpot_seconds`（TPOT）的接入点：当前流式处理路径中是否已有"每个 token 到达"的回调？需确认 `SkillMessageFlowService` 的流式处理细节。
 2. Grafana 面板由开发手工添加，是否需要在文档中提供完整的 Dashboard JSON？
+
+---
+
+## 9. 测试建议（供测试人员参考）
+
+> 以下测试用例面向手工测试 / 接口测试 / 运维验收人员，建议结合 `curl`、`Prometheus UI`（`localhost:9090`）、`actuator` 端点执行验证。
+
+### 9.1 端点与基础可用性测试
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| BASE-001 | Prometheus 端点暴露 | 服务启动，配置已加载 | GET `/actuator/prometheus` | HTTP 200，返回 Prometheus 文本格式指标，Content-Type 为 `text/plain;version=0.0.4` |
+| BASE-002 | Health 端点不受影响 | 服务启动 | GET `/actuator/health` | HTTP 200，原有 health 检查正常 |
+| BASE-003 | 端点安全限制（如有） | 配置 Spring Security / 网络隔离 | 从外网访问 `/actuator/prometheus` | 返回 401/403 或网络不可达，确保指标不外泄 |
+| BASE-004 | skill-server 标签正确 | 服务启动 | 检查 `/actuator/prometheus` 输出 | 所有指标包含 `application="skill-server"` 标签 |
+| BASE-005 | ai-gateway 标签正确 | 服务启动 | 检查 `/actuator/prometheus` 输出 | 所有指标包含 `application="ai-gateway"` 标签 |
+
+### 9.2 第三方接口调用指标验证（skill-server）
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| API-001 | Gateway 调用成功计数 | 服务启动 | 触发一次成功的 Gateway 调用（如发送消息到 Gateway） | `external_api_call_total{serviceId="gateway_invoke"}` 增加 1；`external_api_call_success_total` 增加 1 |
+| API-002 | Gateway 调用失败计数 | 服务启动 | 模拟 Gateway 超时或返回 5xx | `external_api_call_total` 增加 1；`external_api_call_failure_total` 增加 1 |
+| API-003 | 调用耗时记录 | 服务启动 | 触发多次不同耗时的调用 | `external_api_call_duration_seconds_bucket` 各 bucket 有值，`_sum` 和 `_count` 非零 |
+| API-004 | 标签完整性 | 服务启动 | 触发 IM 发送消息 | 指标包含 `serviceId="im_send_message"`、`serviceComment="IM 发送消息"`、`url="..."` |
+| API-005 | 多服务枚举覆盖 | 服务启动 | 依次触发 `assistant_info`、`assistant_instance`、`im_upload_file` | 每个服务对应独立的 `serviceId` 标签，Counter 分别累加 |
+
+### 9.3 对外 API 效率指标验证（skill-server）
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| INT-001 | 接口耗时记录 | 服务启动 | 调用任意 `/api/**` 接口 | `common_interface_duration_seconds_count` 增加 1，`_sum` 记录实际耗时（秒） |
+| INT-002 | URL 标签正确 | 服务启动 | 调用 `/api/skill/sessions/123/abort` | 指标标签 `common_interface_url="/api/skill/sessions/123/abort"` |
+| INT-003 | 拦截器范围正确 | 服务启动 | 调用非 `/api/**` 路径（如静态资源） | `common_interface_duration_seconds` 不增加 |
+
+### 9.4 流式对话效率指标验证（skill-server）
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| STR-001 | TTFT 记录 | 服务启动，发起流式对话 | 发送消息后，收到首个 token | `chat_stream_ttft_seconds_count` 增加 1，值约等于首 token 到达耗时 |
+| STR-002 | Latency 记录 | 服务启动，发起流式对话 | 完成一整轮流式对话 | `chat_stream_latency_seconds_count` 增加 1，值约等于端到端总耗时 |
+| STR-003 | tokens/s 记录 | 服务启动，发起流式对话 | 完成一整轮流式对话 | `chat_stream_tokens_per_second_count` 增加 1，`_sum` / `_count` 为平均 tokens/s |
+| STR-004 | brain_tag 标签 | 助手配置 `businessTag=TEST_TAG` | 发起流式对话 | 指标包含 `brain_tag="TEST_TAG"`；若未配置则为 `brain_tag="UNKNOWN"` |
+| STR-005 | 无 messageId 时跳过 | 服务启动 | 模拟 messageId 为 null 的流式事件 | 该轮次不记录任何流式指标，服务端无 NPE |
+| STR-006 | Caffeine Cache 淘汰 | 服务启动 | 大量流式对话后等待 30 分钟 | 内存无泄漏，过期条目被自动清理 |
+
+### 9.5 WS 连接数指标验证
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| WS-001 | skill-server Gateway WS 连接数 | 服务启动 | 连接 Gateway → 断开 → 再连接 | `gateway_ws_current_connections` 依次为 1 → 0 → 1；`gateway_ws_total_connections` 累加不减少 |
+| WS-002 | ai-gateway Skill WS 被连接数 | 服务启动 | 多个 skill-server 连接到 ai-gateway `/ws/skill` | `gateway_ws_skill_current_connections` 等于当前连接数；`gateway_ws_skill_total_connections` 累加 |
+| WS-003 | 异常断开恢复 | 服务启动 | 强制 kill skill-server 进程 | ai-gateway 侧 `gateway_ws_skill_current_connections` 正确降为 0 |
+
+### 9.6 PromQL 查询验证
+
+| 用例编号 | 用例名称 | 查询语句 | 预期结果 |
+|----------|----------|----------|----------|
+| PQL-001 | TTFT P99 | `histogram_quantile(0.99, rate(chat_stream_ttft_seconds_bucket[5m]))` | 返回 0~10s 之间的有效数值，无 `NaN`（需保证有足够样本） |
+| PQL-002 | 按 brain_tag 分组 | `rate(chat_stream_ttft_seconds_bucket[5m]) by (brain_tag)` | 返回多组时间序列，每组对应一个 `brain_tag` |
+| PQL-003 | API 成功率 | `rate(external_api_call_success_total[5m]) / rate(external_api_call_total[5m])` | 返回 0~1 之间的成功率 |
+| PQL-004 | 接口 QPS | `rate(common_interface_duration_seconds_count[1m])` | 返回每秒请求数，压测期间应明显上升 |
+
+### 9.7 风险场景验证
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| RISK-001 | 与 WeLink telemetry 共存 | 服务启动 | 触发 WeLink 事件上报和 Prometheus 指标采集 | 两者互不干扰，WeLink 事件正常上报，Prometheus 指标正常暴露 |
+| RISK-002 | 高并发指标性能 | 服务启动 | 压测 1000 QPS 持续 5 分钟 | CPU 增幅 < 5%，无内存泄漏，指标端点响应正常 |
+| RISK-003 | Micrometer 端点大数据量 | 服务运行长时间 | GET `/actuator/prometheus` | 响应时间 < 500ms，返回内容可正常被 Prometheus Server 抓取 |
+
+### 9.8 回归测试 checklist
+
+- [ ] `mvn test` 全量通过，新增单元测试覆盖 `ApiCallMetricsService`、`ChatStreamMetricsService`。
+- [ ] 存量 `LogTimer` 日志未被删除，仅新增 Micrometer 指标，确保可回滚。
+- [ ] `/actuator/health` 行为未变。
+- [ ] Prometheus 依赖未与现有依赖冲突（`mvn dependency:tree` 检查）。
+- [ ] 未引入 `actuator` 以外的额外端口暴露。

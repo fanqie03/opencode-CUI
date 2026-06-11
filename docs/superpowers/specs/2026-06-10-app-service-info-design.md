@@ -216,3 +216,61 @@ skill:
 - [ ] JSON 序列化后字段名为 `snake_case`（`app_service_name`、`app_service_id`）。
 - [ ] `SkillMessageController.sendToIm` 签名和方法体无需改动。
 - [ ] 单元测试覆盖开关开启/关闭两种场景。
+
+---
+
+## 12. 测试建议（供测试人员参考）
+
+> 以下测试用例面向手工测试 / 接口测试人员，建议结合 Postman / Mock Server / 实际 IM 环境执行。
+
+### 12.1 开关功能测试
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| SW-001 | 默认关闭时不附加字段 | `skill.im.app-service-enabled` 未配置或显式 `false` | 调用 `/send-to-im` 发送消息 | IM 接收到的请求体中**不包含** `app_service_info` 字段，其余字段正常 |
+| SW-002 | 开启后附加字段 | `skill.im.app-service-enabled=true` | 调用 `/send-to-im` 发送消息 | IM 接收到的请求体中**包含** `app_service_info` 对象，且内部有两个字段 |
+| SW-003 | 关闭后移除字段 | 先开启后修改为 `false` 并重启 | 调用 `/send-to-im` 发送消息 | IM 请求体中**不包含** `app_service_info`，与 SW-001 一致 |
+| SW-004 | 开关热刷新（如有） | 使用 Spring Cloud Config / Actuator refresh | 运行时修改开关值 | 新请求按最新开关状态执行（若不支持热刷新则需在文档中注明需重启） |
+
+### 12.2 配置值测试
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| CFG-001 | 默认名称 | `skill.im.app-service-name` 未配置，`app-service-enabled=true` | 调用 `/send-to-im` | `app_service_name` 和 `app_service_id` 均为 `"员工助手的消息"` |
+| CFG-002 | 自定义名称 | `skill.im.app-service-name=自定义服务名`，`app-service-enabled=true` | 调用 `/send-to-im` | `app_service_name` 和 `app_service_id` 均为 `"自定义服务名"` |
+| CFG-003 | 名称为空字符串 | `skill.im.app-service-name=""`，`app-service-enabled=true` | 调用 `/send-to-im` | `app_service_name` 和 `app_service_id` 为空字符串（或按业务需求处理） |
+| CFG-004 | 名称含特殊字符 | `skill.im.app-service-name="Service@123_测试"`，`app-service-enabled=true` | 调用 `/send-to-im` | 特殊字符原样透传，IM 侧正确接收，JSON 格式合法 |
+
+### 12.3 序列化格式测试
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| SER-001 | Jackson 输出 snake_case | 服务使用 Jackson 序列化 | 抓取 IM 请求实际 body | 字段名为 `app_service_name` 和 `app_service_id`，而非驼峰 `appServiceName` |
+| SER-002 | Gson 兼容（如有） | 服务引入 Gson 依赖 | 使用 Gson 序列化 `AppServiceInfo` | 字段名同样为 `app_service_name` 和 `app_service_id` |
+| SER-003 | JSON 结构完整 | `app-service-enabled=true` | 解析 IM 请求 body | `app_service_info` 为对象类型，非字符串/数组；内部字段为字符串类型 |
+| SER-004 | 无 null 字段 | `@JsonInclude(Include.NON_NULL)` 生效 | `appServiceId` 为 null（如构造时未设置） | 序列化后的 JSON 中不输出 `app_service_id` 字段 |
+
+### 12.4 IM 端到端测试
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| E2E-001 | IM 正常接收文本消息（开关关） | `app-service-enabled=false` | 通过 `/send-to-im` 发送文本到群组 | 群组成员正常收到文本消息，无异常报错 |
+| E2E-002 | IM 正常接收文本消息（开关开） | `app-service-enabled=true` | 通过 `/send-to-im` 发送文本到群组 | 群组成员正常收到文本消息，IM 侧若识别 `app_service_info` 则展示对应服务标识 |
+| E2E-003 | IM 忽略未知字段 | `app-service-enabled=true`，IM 旧版本不支持 `app_service_info` | 发送消息到旧版 IM | IM 正常显示文本内容，不因未知字段而解析失败 |
+| E2E-004 | 不同 msgType 场景 | `app-service-enabled=true` | 分别发送 text、markdown、card 等类型消息 | 所有类型消息的 body 中均包含 `app_service_info`（如设计如此） |
+
+### 12.5 兼容性回归测试
+
+| 用例编号 | 用例名称 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|
+| REG-001 | 存量接口行为不变 | 调用 `/send-to-im` 及其他 `SkillMessageController` 接口 | 所有接口返回码、响应结构、业务逻辑与改动前完全一致 |
+| REG-002 | Controller 签名未变 | 反射检查 `SkillMessageController.sendToIm` 方法签名 | 参数列表、返回值类型、注解均无变化 |
+| REG-003 | 无 Gson 依赖时不编译失败 | 若项目未引入 Gson，检查编译结果 | 因 `@SerializedName` 来自 Gson，若未引入依赖需确认编译通过（或已添加依赖） |
+
+### 12.6 回归测试 checklist
+
+- [ ] `mvn test` 全量通过，新增 `ImMessageServiceTest` 用例覆盖开关开启/关闭。
+- [ ] 使用 WireMock / Mock Server 验证实际发送的 HTTP body 结构正确。
+- [ ] 开关默认关闭时，现有生产环境行为 100% 兼容。
+- [ ] JSON 序列化后字段名严格为 `snake_case`，无驼峰残留。
+- [ ] 配置项命名无冲突，与现有 `skill.im.api-url` 等前缀一致。

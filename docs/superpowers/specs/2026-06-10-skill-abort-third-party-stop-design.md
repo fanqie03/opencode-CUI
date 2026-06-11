@@ -386,3 +386,78 @@ sequenceDiagram
 - **响应处理**：如需根据第三方终止响应做后续动作（如刷新 UI 状态），可将 `sendAbortRequest` 改为返回 `CompletableFuture`，由调用方决定等待或忽略。
 - **批量终止**：子代理场景下，abort 可能需要级联终止多个 topicId。
 - **指标监控**：增加 `abort_remote_request_total` / `abort_remote_error_total` 计数器。
+
+---
+
+## 9. 测试建议（供测试人员参考）
+
+> 以下测试用例面向手工测试 / 接口测试 / 集成测试人员，建议结合 WireMock / Mock Server / 实际第三方环境执行。
+
+### 9.1 配置与路由匹配测试
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| CFG-001 | 配置 abort remoteProperty | 助手实例 `remoteProperty` 包含 `type="abort"` | 触发 `abort_session` | `resolveRemoteRoute()` 成功匹配到 abort 配置，`invokeRemoteAbortIfConfigured()` 执行异步调用 |
+| CFG-002 | 未配置 abort 时跳过 | 助手实例 `remoteProperty` 只有 `chat` 和 `question` | 触发 `abort_session` | 不调用第三方终止接口，仅执行本地 `cancelStreamingConnection()`，日志输出 `No remote abort route configured, skipping` |
+| CFG-003 | abilityType 映射正确 | 服务启动 | 调用 `abilityType("abort_session")` | 返回 `"abort"`，与 `remoteProperty.type` 匹配 |
+| CFG-004 | 多助手实例隔离 | 助手 A 配置 abort，助手 B 未配置 | 分别对 A、B 触发 abort_session | A 调用第三方终止，B 不调用，两者互不干扰 |
+
+### 9.2 请求参数映射测试
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| PARAM-001 | 必填字段完整 | 标准 abort_session invoke | 检查构造的 `AbortRequest` | `topicId=toolSessionId`，`assistantAccount` 正确，`sendUserAccount=invokeMessage.userId` |
+| PARAM-002 | assistantAccount 降级 | `invokeMessage.assistantAccount` 为空，但 payload 含 `assistantAccount` | 触发 abort_session | `AbortRequest.assistantAccount` 取 payload.assistantAccount |
+| PARAM-003 | assistantAccount 二次降级 | `invokeMessage.assistantAccount` 和 payload.assistantAccount 均为空，payload 含 `partnerAccount` | 触发 abort_session | `AbortRequest.assistantAccount` 取 payload.partnerAccount |
+| PARAM-004 | 可选字段缺省 | payload 不含 `imGroupId`、`messageId`、`clientLang` | 触发 abort_session | `AbortRequest.imGroupId=null`，`messageId=null`，`clientLang="zh"` |
+| PARAM-005 | clientLang 非空 | payload `clientLang="en"` | 触发 abort_session | `AbortRequest.clientLang="en"` |
+| PARAM-006 | clientLang 为空字符串 | payload `clientLang=""` | 触发 abort_session | `AbortRequest.clientLang="zh"`（空字符串按缺省处理） |
+| PARAM-007 | userId 为空 | `invokeMessage.userId` 为空 | 触发 abort_session | `sendUserAccount=null`，第三方接口可能返回错误，但本地 abort 流程不受影响 |
+
+### 9.3 异步与非阻塞测试
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| ASYNC-001 | 不阻塞本地 cancel | 配置 abort remoteProperty | 触发 abort_session，第三方接口延迟 5 秒响应 | `cancelStreamingConnection()` 立即执行，SSE/WS 连接在毫秒级内关闭，不等待第三方响应 |
+| ASYNC-002 | 异步任务实际执行 | 配置 abort remoteProperty | 触发 abort_session | 第三方接口在后台收到 POST 请求，与本地 cancel 并发执行 |
+| ASYNC-003 | 线程池独立 | 服务启动 | 连续触发 20 次 abort_session | 任务提交到 `cloudAbortExecutor` 线程池，线程名以 `cloud-abort-` 开头，不与主业务线程混淆 |
+| ASYNC-004 | 队列满时丢弃策略 | 线程池队列容量=100，核心线程=2 | 快速触发 200 次 abort_session | 超出队列容量的任务被丢弃（`DiscardPolicy`），不打断主流程，不抛异常 |
+
+### 9.4 容错与异常测试
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| ERR-001 | 第三方返回非 2xx | 配置 abort，Mock 第三方返回 400/500 | 触发 abort_session | 本地 cancel 正常完成，日志输出 WARN：`Abort request returned non-2xx` |
+| ERR-002 | 第三方超时 | 配置 abort，Mock 第三方不响应 | 触发 abort_session | 10 秒超时后打 WARN 日志，本地 cancel 已完成，无阻塞 |
+| ERR-003 | 第三方网络不可达 | 配置 abort，URL 指向不存在地址 | 触发 abort_session | 打 WARN 日志，本地 cancel 正常完成 |
+| ERR-004 | 序列化异常 | `AbortRequest` 字段含非法值 | 触发 abort_session | `sendAbortRequest` 中 `writeValueAsString` 异常被捕获，打 WARN 日志，不影响本地 cancel |
+| ERR-005 | 认证头构造异常 | `cloudAuthService.applyAuth()` 抛异常 | 触发 abort_session | 异常被捕获，打 WARN 日志，本地 cancel 正常完成 |
+
+### 9.5 HTTP 请求细节测试
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| HTTP-001 | 请求方法正确 | 配置 abort | 抓取第三方请求 | HTTP 方法为 POST |
+| HTTP-002 | Content-Type 正确 | 配置 abort | 抓取第三方请求 | Header 包含 `Content-Type: application/json` |
+| HTTP-003 | X-Trace-Id 传递 | `invokeMessage.traceId="trace-123"` | 抓取第三方请求 | Header 包含 `X-Trace-Id: trace-123` |
+| HTTP-004 | 无 TraceId 时不传 | `invokeMessage.traceId=null` | 抓取第三方请求 | 请求中不包含 `X-Trace-Id` header |
+| HTTP-005 | 认证头应用 | 配置 abort，headers 含 `x-hw-id`、`x-hw-appkey` | 抓取第三方请求 | 请求包含对应认证 header，值与 remoteProperty 配置一致 |
+| HTTP-006 | 请求体结构 | 配置 abort | 解析第三方请求 body | JSON 包含 `topicId`、`assistantAccount`、`sendUserAccount`、`imGroupId`、`messageId`、`clientLang` 字段 |
+
+### 9.6 端到端流程测试
+
+| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
+|----------|----------|----------|----------|----------|
+| E2E-001 | 完整 abort 流程（有第三方） | 前端、skill-server、gateway、Mock 第三方就绪 | 前端调用 `POST /api/skill/sessions/{id}/abort` | 1. skill-server 发送 abort_session invoke；2. gateway 异步调用第三方 /stream_chat_stop；3. gateway 本地 cancel SSE/WS；4. skill-server finalize 并推送给前端 idle 状态 |
+| E2E-002 | 完整 abort 流程（无第三方） | 同上，但助手未配置 abort remoteProperty | 前端调用 abort | 1~3 步中跳过第 2 步，其余流程与 E2E-001 一致 |
+| E2E-003 | 多次 abort 同一 session | 服务启动 | 对同一 session 连续调用 3 次 abort | 每次都执行本地 cancel，每次都尝试异步调用第三方（如配置），无状态错乱 |
+| E2E-004 | abort 后新会话正常 | 执行 abort 后 | 在同一助手下开启新会话并正常对话 | 新会话不受之前 abort 影响，消息收发正常 |
+
+### 9.7 回归测试 checklist
+
+- [ ] `mvn test` 全量通过，新增 `CloudAgentServiceTest` 覆盖 abilityType、resolveRemoteRoute、buildAbortRequest、sendAbortRequest。
+- [ ] 存量 `abort_session` 流程未变：skill-server 侧 payload 契约、Gateway 侧 `cancelStreamingConnection()` 行为均保持原样。
+- [ ] `SkillSessionFlowService`、`SkillSessionController`、`BusinessInvokeRouteStrategy` 未做任何改动。
+- [ ] 线程池配置参数可通过 `application.yml` 调整，默认值合理（core=2, max=10, queue=100）。
+- [ ] 异步执行失败时不回传 `tool_error`，避免前端收到无关错误消息。
+- [ ] 专用线程池 `cloudAbortExecutor` 与 `redisListenerExecutor` 等已有线程池隔离，互不干扰。
