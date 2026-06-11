@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/ai-gateway/backend/directory-structure.md", "reason": "verify ai-gateway backend file placement and naming constraints"}
+{"file": ".trellis/spec/ai-gateway/backend/conventions.md", "reason": "verify WebSocket sender owner pattern and service orchestration constraints"}
+{"file": ".trellis/spec/ai-gateway/backend/logging-guidelines.md", "reason": "verify sender identity appears in structured diagnostics without noisy payload logging"}
+{"file": ".trellis/spec/ai-gateway/backend/type-safety.md", "reason": "verify sender identity is modeled with typed values instead of scattered string literals"}

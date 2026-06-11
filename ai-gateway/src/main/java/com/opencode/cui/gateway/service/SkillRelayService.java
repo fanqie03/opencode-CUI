@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
+import com.opencode.cui.gateway.ws.AsyncSenderIdentity;
 import com.opencode.cui.gateway.ws.AsyncSessionSender;
 import com.opencode.cui.gateway.ws.AsyncSessionSenderFactory;
 import com.opencode.cui.gateway.service.cloud.InvokeRouteStrategy;
@@ -883,7 +884,9 @@ public class SkillRelayService {
     }
 
     private AsyncSessionSender getOrCreateSender(WebSocketSession session) {
-        return senderFactory.getOrCreate(session, () -> handleSourceSenderFailure(session, "sender_write_failed"));
+        return senderFactory.getOrCreate(session,
+                AsyncSenderIdentity.source(resolveBoundSource(session), resolveSsInstanceId(session)),
+                () -> handleSourceSenderFailure(session, "sender_write_failed"));
     }
 
     public void removeSessionSender(String sessionId) {
@@ -913,16 +916,18 @@ public class SkillRelayService {
     private boolean sendToSession(WebSocketSession session, GatewayMessage message) {
         try {
             String json = objectMapper.writeValueAsString(message);
+            String sourceType = resolveBoundSource(session);
+            String sourceInstanceId = resolveSsInstanceId(session);
             AsyncSessionSender sender = getOrCreateSender(session);
             boolean enqueued = sender.enqueue(new TextMessage(json));
             if (enqueued) {
-                logRoutingInfo(message, "[EXIT->SS] Enqueued to skill session: linkId={}, type={}, pending={}",
-                        session.getId(), message.getType(), sender.pendingCount());
+                logRoutingInfo(message, "[EXIT->SS] Enqueued to skill session: channel=source, sourceType={}, sourceInstanceId={}, linkId={}, type={}, pending={}",
+                        sourceType, sourceInstanceId, session.getId(), message.getType(), sender.pendingCount());
             } else if (!session.isOpen() || !sender.isRunning()) {
                 handleSourceSenderFailure(session, "enqueue_rejected_link_invalid");
             } else {
-                log.error("[EXIT->SS] Failed to enqueue to skill session: linkId={}, type={}, pending={}",
-                        session.getId(), message.getType(), sender.pendingCount());
+                log.error("[EXIT->SS] Failed to enqueue to skill session: channel=source, sourceType={}, sourceInstanceId={}, linkId={}, type={}, pending={}",
+                        sourceType, sourceInstanceId, session.getId(), message.getType(), sender.pendingCount());
             }
             return enqueued;
         } catch (IOException e) {
@@ -989,14 +994,14 @@ public class SkillRelayService {
         AsyncSessionSender sender = getOrCreateSender(session);
         boolean enqueued = sender.enqueue(new TextMessage(payload));
         if (enqueued) {
-            log.info("[EXIT->SOURCE] Enqueued to-source relay: sourceType={}, sourceInstanceId={}, linkId={}, pending={}",
+            log.info("[EXIT->SOURCE] Enqueued to-source relay: channel=source, sourceType={}, sourceInstanceId={}, linkId={}, pending={}",
                     sourceType, sourceInstanceId, session.getId(), sender.pendingCount());
             return true;
         }
         if (!session.isOpen() || !sender.isRunning()) {
             handleSourceSenderFailure(session, "to_source_enqueue_rejected_link_invalid");
         }
-        log.error("[EXIT->SOURCE] Failed to enqueue to-source relay: sourceType={}, sourceInstanceId={}, linkId={}, pending={}",
+        log.error("[EXIT->SOURCE] Failed to enqueue to-source relay: channel=source, sourceType={}, sourceInstanceId={}, linkId={}, pending={}",
                 sourceType, sourceInstanceId, session.getId(), sender.pendingCount());
         return false;
     }

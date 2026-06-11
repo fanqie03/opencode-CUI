@@ -259,6 +259,7 @@ class ImSessionManagerTest {
         assertTrue(cmd.payload().contains("cloud-fresh-uuid"));
         assertTrue(cmd.payload().contains("assist-biz"));
         assertTrue(cmd.payload().contains("\"sendUserAccount\":\"sender-biz\""));
+        assertTrue(cmd.payload().contains("\"imGroupId\":\"\""));
     }
 
     @Test
@@ -301,6 +302,7 @@ class ImSessionManagerTest {
         assertEquals("direct", cmd.domainType());
         assertTrue(cmd.payload().contains("\"assistantAccount\":\"ACC_V\""));
         assertTrue(cmd.payload().contains("\"sendUserAccount\":\"sender-real\""));
+        assertTrue(cmd.payload().contains("\"imGroupId\":\"\""));
     }
 
     @Test

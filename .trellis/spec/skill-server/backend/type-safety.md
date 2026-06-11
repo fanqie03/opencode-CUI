@@ -481,6 +481,70 @@ payloadFields.put("sendUserAccount", effectiveSender);
 
 ---
 
+## Gateway/plugin 下行 payload 的 imGroupId 空值契约
+
+### 1. Scope / Trigger
+
+当 SS 组装发往 Gateway/plugin 的 `InvokeCommand.payload`，且 payload 类型为 `chat` / `question_reply` / `permission_reply` 时适用。本契约只约束出站 wire payload，不改变 `PendingChatRequest.imGroupId`、`InvokeCommand.businessSessionId` 或 `platformExtParam.businessSessionId` 的内部 null 语义。
+
+### 2. Signatures
+
+- 同步 chat producer：`InboundProcessingService#dispatchChatToGateway(...)`
+- 首次 business/default 会话立即 chat producer：`ImSessionManager#sendBusinessChatImmediately(...)`
+- create_session 回调后的 retry producer：`GatewayMessageRouter#retryPendingMessages(...)`
+- 反向回复 producer：`InboundProcessingService#processQuestionReply(...)` / `processPermissionReply(...)`
+- wire 字段：`payload.imGroupId`
+
+### 3. Contracts
+
+- 群聊：`payload.imGroupId` 必须是业务侧 group session id，例如 `"group-001"`。
+- 非群聊 / 空 group：`payload.imGroupId` 必须出现，且值为 `""`，不要写 JSON `null`，也不要省略 key。
+- `PendingChatRequest.imGroupId` 可继续为 Java `null`，retry producer 在下发边界转换为 `""`。
+- `platformExtParam.businessSessionId` 继续反映业务 session id 语义；旧 entry 或 direct session 可为 JSON `null`，不要为了本契约改成空字符串。
+
+### 4. Validation & Error Matrix
+
+| Case | Required behavior |
+| --- | --- |
+| `sessionType=group`, `sessionId=group-001` | 下发 payload 含 `"imGroupId":"group-001"` |
+| `sessionType=direct` | 下发 payload 含 `"imGroupId":""` |
+| retry `PendingChatRequest.imGroupId()==null` | 下发 payload 含 `"imGroupId":""`，pending 对象仍保留 null |
+| question / permission reply in direct session | 原始下发 payload 含 `"imGroupId":""` |
+
+### 5. Good / Base / Bad Cases
+
+Good:
+
+```java
+payloadFields.put("imGroupId", "group".equals(sessionType) ? sessionId : "");
+```
+
+Base:
+
+```java
+chatPayload.put("imGroupId", req.imGroupId() != null ? req.imGroupId() : "");
+```
+
+Bad:
+
+```java
+payloadFields.put("imGroupId", "group".equals(sessionType) ? sessionId : null);
+```
+
+### 6. Tests Required
+
+- `InboundProcessingServiceTest`: direct `chat` / `question_reply` / `permission_reply` payload asserts `payload.imGroupId == ""`.
+- `GatewayMessageRouterTest`: direct retry payload asserts `payload.imGroupId == ""`.
+- `ImSessionManagerTest`: business/default direct immediate chat payload asserts `"imGroupId":""`; group case keeps real id.
+
+### 7. Wrong vs Correct
+
+Wrong: changing `PayloadBuilder.buildPayloadWithObjects(...)` to serialize every null value as an empty string; that helper is shared by multiple payload fields and flows.
+
+Correct: convert only `imGroupId` at the concrete producer boundary that sends the plugin-facing payload, preserving internal DTO and platform extension null semantics.
+
+---
+
 ## MyBatis 枚举映射
 
 枚举在 XML 中统一走 `EnumTypeHandler`，按名字映射：

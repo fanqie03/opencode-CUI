@@ -110,7 +110,10 @@ public String verify(String ak, String timestamp, String nonce, String signature
 `AsyncSessionSenderFactory` 是本地 WebSocket sender 生命周期的唯一 owner。`SkillRelayService` 和 `EventRelayService` 只能通过 factory 获取或移除 sender，不能各自维护 `Map<linkId, AsyncSessionSender>`。
 
 ```java
-AsyncSessionSender sender = senderFactory.getOrCreate(session, onSenderFailure);
+AsyncSessionSender sender = senderFactory.getOrCreate(
+        session,
+        AsyncSenderIdentity.source(sourceType, sourceInstanceId),
+        onSenderFailure);
 boolean enqueued = sender.enqueue(new TextMessage(payload));
 ```
 
@@ -120,6 +123,10 @@ boolean enqueued = sender.enqueue(new TextMessage(payload));
 - 每个 sender 用一个串行发送线程 drain 自己的有界队列，避免同一 `WebSocketSession` 并发 `sendMessage(...)`。
 - 队列容量由 `gateway.async-sender.queue-capacity` 配置，默认 `10000`。
 - `enqueue(...)` 返回 `false`、session closed、queue full、`sendMessage(...)` 抛异常都属于真实投递风险；调用方必须失败返回或清理连接，不能继续重选另一条 link 静默补发。
+- `AsyncSenderIdentity` 只描述本机 sender owner 的观测身份，不进入 `GatewayMessage` / `RelayMessage` wire protocol。
+- Agent 下行调用必须传 `AsyncSenderIdentity.agent(ak)`；Source/SS 下行调用必须传 `AsyncSenderIdentity.source(sourceType, sourceInstanceId)`。
+- factory 的 map key 仍是 physical `session.getId()`；如果同一 live sender 被不同 identity 再次请求，只记录 mismatch 诊断并继续复用原 sender，不创建第二个发送线程。
+- sender 日志必须保留 `channel`、`peerType`、`peerId`、`linkId`、`pending`，这样 `[AsyncSender]` 能直接区分 `channel=agent` 与 `channel=source`。
 
 ## 事务与调度
 
