@@ -8,6 +8,7 @@
 - 已将模板中的通用示例（`SkillSessionService` 等）替换为 `ai-gateway` 真实实现（`AgentRegistryService`、`SkillRelayService`、`AkSkAuthService` 等）；凡是跨服务协议字段或中继对端的描述，仍通过 `skill-server` 字样保留必要的交叉引用，不视为残留。
 - 日志配置以 `ai-gateway/src/main/resources/log4j2-spring.xml` 为准，服务标签为 `[ai-gateway]`。
 - 所有代码片段均引自 `ai-gateway/src/main/java/com/opencode/cui/gateway/` 与 `src/test/java/com/opencode/cui/gateway/`，行号为截稿时锚点，若源码漂移请以类名/方法名为准。
+- 2026-06-12：新增 `design-and-refactoring.md`，沉淀 Java 软件设计、重构阈值、业务一致性八荣八耻、兜底边界、Wrong vs Correct 与测试要求。来源：任务 06-12-java。
 
 ## 技术栈概览
 
@@ -39,7 +40,7 @@
 
 | 任务类型 | 必读文件 |
 |---------|----------|
-| 所有后端任务 | `directory-structure.md`, `conventions.md` |
+| 所有后端任务 | `directory-structure.md`, `conventions.md`, `design-and-refactoring.md` |
 | REST / WebSocket 行为与错误语义 | `error-handling.md` |
 | MyBatis / MySQL / Redis / 路由缓存 | `database-guidelines.md` |
 | 日志 / MDC / 观测性 | `logging-guidelines.md` |
@@ -51,6 +52,7 @@
 |------|------|
 | [directory-structure.md](directory-structure.md) | `ai-gateway` 的真实包结构、资源目录、命名约束与新增文件落点 |
 | [conventions.md](conventions.md) | 构造器注入、配置注入、WebSocket 注册、服务编排、调度与接口约定 |
+| [design-and-refactoring.md](design-and-refactoring.md) | Java 软件设计、重构阈值、业务一致性八荣八耻、兜底边界、Review Checklist |
 | [error-handling.md](error-handling.md) | `ai-gateway` 的真实错误处理方式：Controller 直接返回、握手拒绝、服务级异常与降级 |
 | [database-guidelines.md](database-guidelines.md) | MyBatis Mapper、迁移脚本、事务边界、Redis key/channel 设计与 TTL 规则 |
 | [logging-guidelines.md](logging-guidelines.md) | `[ai-gateway]` 日志格式、MDC key、REST/WS 日志模式、计时与脱敏 |
