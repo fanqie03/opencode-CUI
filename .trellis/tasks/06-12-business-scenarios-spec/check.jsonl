@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/business/index.md", "reason": "检查业务 spec 索引是否能发现当前已沉淀文档。"}
+{"file": ".trellis/spec/business/external-im-direct-chat.md", "reason": "检查单聊业务流程是否覆盖已确认内容。"}
+{"file": ".trellis/spec/business/external-im-group-chat.md", "reason": "检查群聊业务流程是否覆盖已确认内容。"}
+{"file": ".trellis/spec/business/miniapp-chat.md", "reason": "检查 miniapp 业务流程是否覆盖会话、历史和助手类型边界。"}
+{"file": ".trellis/spec/business/assistant-type-matrix.md", "reason": "检查助手分类是否体现本地、云端、虚拟和云端协议子类型。"}
+{"file": ".trellis/spec/business/tool-session-lifecycle.md", "reason": "检查 toolSessionId 生命周期是否保留业务语义。"}

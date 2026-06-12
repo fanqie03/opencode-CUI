@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/business/index.md", "reason": "业务 spec 入口，集中索引 SS+GW 当前业务场景。"}
+{"file": ".trellis/spec/business/external-im-direct-chat.md", "reason": "external IM 单聊业务流程文档。"}
+{"file": ".trellis/spec/business/external-im-group-chat.md", "reason": "external IM 群聊业务流程文档。"}
+{"file": ".trellis/spec/business/miniapp-chat.md", "reason": "miniapp 对话业务流程文档。"}
+{"file": ".trellis/spec/business/assistant-type-matrix.md", "reason": "助手类型和云端协议子类型矩阵。"}
+{"file": ".trellis/spec/business/tool-session-lifecycle.md", "reason": "toolSessionId 生命周期和自动恢复业务语义。"}
