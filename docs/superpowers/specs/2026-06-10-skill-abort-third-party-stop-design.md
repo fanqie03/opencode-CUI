@@ -32,8 +32,11 @@ Gateway 本地连接取消后，**第三方助手平台（assistant-agent-b）�
 ```
 POST https://xxx/api/digital-assistant/assistant-agent-b/stream_chat_stop
 Headers: x-hw-id, x-hw-appkey, Content-Type: application/json
-Body: { topicId, assistantAccount, sendUserAccount, imGroupId?, messageId?, clientLang? }
+Body: { type, topicId, assistantAccount, sendUserAccount, imGroupId?, messageId?, clientLang?, clientType?, extParameters? }
 ```
+
+> **注意**：鉴权 header 和入参与原来的 question 接口一致（需求原文），仅接口地址不同。
+> 请求体与 `cloudRequest` 同构，`type` 字段值为 `"abort"`（区别于 `chat` 的 `"text"` 和 `question_reply` 的 `"question_reply"`）。
 
 **约束**：异步执行（fire-and-forget），不等待响应。
 
@@ -183,14 +186,14 @@ private void invokeRemoteAbortIfConfigured(GatewayMessage invokeMessage,
         return;
     }
 
-    // 构造请求体
-    AbortRequest request = buildAbortRequest(invokeMessage, toolSessionId);
+    // 构造请求体（与 question 接口同构）
+    ObjectNode body = buildAbortBody(invokeMessage, toolSessionId);
 
     // 异步发送（fire-and-forget）
     // 使用 CompletableFuture + 固定线程池，与 EventRelayService 中 requestAgentStatus() 的异步模式一致
     CompletableFuture.runAsync(() -> {
         try {
-            sendAbortRequest(route, request, invokeMessage.getTraceId());
+            sendAbortRequest(route, body, invokeMessage.getTraceId());
         } catch (Exception e) {
             log.warn("[CLOUD_AGENT] Async abort request failed: traceId={}, error={}",
                     invokeMessage.getTraceId(), e.getMessage());
@@ -202,61 +205,89 @@ private void invokeRemoteAbortIfConfigured(GatewayMessage invokeMessage,
 > 使用 `CompletableFuture.runAsync()` + 固定线程池异步执行，不阻塞主流程。  
 > 失败仅打 WARN 日志，不回传 tool_error。
 
-#### 3.2.6 `CloudAgentService` — 新增 AbortRequest DTO
+#### 3.2.6 `CloudAgentService` — 构造终止请求体（与 question 接口一致）
+
+> **设计依据**：需求明确"只是接口地址变了，鉴权header和入参和原来的question接口一致"。
+> 因此 abort 请求体不定义独立 DTO，而是构造与 question_reply 的 `cloudRequest` 同构的 JSON 对象
+> （不含 `replyContext`，因为终止操作无需回传答案）。
+
+请求体格式：
+
+```json
+{
+  "type": "abort",
+  "assistantAccount": "...",
+  "sendUserAccount": "...",
+  "imGroupId": null,
+  "clientLang": "zh",
+  "clientType": "asst-pc",
+  "topicId": "...",
+  "messageId": "...",
+  "extParameters": {
+    "businessExtParam": {},
+    "platformExtParam": {}
+  }
+}
+```
 
 ```java
-public record AbortRequest(
-    String topicId,
-    String assistantAccount,
-    String sendUserAccount,
-    String imGroupId,
-    String messageId,
-    String clientLang
-) {}
+private ObjectNode buildAbortBody(GatewayMessage invokeMessage, String toolSessionId) {
+    JsonNode payload = invokeMessage.getPayload();
+    ObjectNode body = objectMapper.createObjectNode();
+
+    body.put("type", "abort");
+    body.put("assistantAccount", firstNonBlank(
+            invokeMessage.getAssistantAccount(),
+            textAt(payload, "assistantAccount"),
+            textAt(payload, "partnerAccount")));
+    body.put("sendUserAccount", firstNonBlank(
+            invokeMessage.getUserId(), textAt(payload, "sendUserAccount")));
+    body.put("topicId", toolSessionId);
+
+    // 可选字段
+    putIfText(body, payload, "imGroupId");
+    putIfText(body, payload, "messageId");
+    String clientLang = textAt(payload, "clientLang");
+    body.put("clientLang", (clientLang != null && !clientLang.isBlank()) ? clientLang : "zh");
+    putIfText(body, payload, "clientType");
+
+    // extParameters：与 question 接口对齐
+    ObjectNode extParams = objectMapper.createObjectNode();
+    extParams.set("businessExtParam",
+            (payload != null && payload.has("businessExtParam") && payload.get("businessExtParam").isObject())
+                    ? payload.get("businessExtParam") : objectMapper.createObjectNode());
+    extParams.set("platformExtParam", objectMapper.createObjectNode());
+    body.set("extParameters", extParams);
+
+    return body;
+}
 ```
 
 #### 3.2.7 `CloudAgentService` — 参数来源映射
 
-| 终止接口字段 | Gateway 来源 | 优先级 |
+| 请求体字段 | Gateway 来源 | 说明 |
 |---|---|---|
+| `type` | 固定 `"abort"` | 与 question 接口的 `type` 字段对齐 |
 | `topicId` | `toolSessionId`（已提取） | 必填 |
-| `assistantAccount` | `invokeMessage.getAssistantAccount()` → payload.assistantAccount → payload.partnerAccount | 必填 |
-| `sendUserAccount` | `invokeMessage.getUserId()` | 必填 |
-| `imGroupId` | payload.imGroupId | 可选，缺省 null |
-| `messageId` | payload.messageId | 可选，缺省 null |
+| `assistantAccount` | `invokeMessage.getAssistantAccount()` → payload.assistantAccount → payload.partnerAccount | 必填，三级降级 |
+| `sendUserAccount` | `invokeMessage.getUserId()` → payload.sendUserAccount | 必填 |
+| `imGroupId` | payload.imGroupId | 可选，缺省不写 |
+| `messageId` | payload.messageId | 可选，缺省不写 |
 | `clientLang` | payload.clientLang | 可选，缺省 `"zh"` |
-
-```java
-private AbortRequest buildAbortRequest(GatewayMessage invokeMessage, String toolSessionId) {
-    JsonNode payload = invokeMessage.getPayload();
-    String clientLang = textAt(payload, "clientLang");
-    if (clientLang == null || clientLang.isBlank()) {
-        clientLang = "zh";
-    }
-    return new AbortRequest(
-        toolSessionId,
-        firstNonBlank(invokeMessage.getAssistantAccount(),
-                      textAt(payload, "assistantAccount"),
-                      textAt(payload, "partnerAccount")),
-        firstNonBlank(invokeMessage.getUserId(), textAt(payload, "sendUserAccount")),
-        textAt(payload, "imGroupId"),
-        textAt(payload, "messageId"),
-        clientLang
-    );
-}
-```
+| `clientType` | payload.clientType | 可选，缺省不写 |
+| `extParameters` | payload.businessExtParam（透传）+ platformExtParam（占位 `{}`） | 与 question 接口对齐 |
 
 #### 3.2.8 `CloudAgentService` — 发送终止请求
 
-复用 `WebHookExecutor` 的 HTTP 发送模式，但简化（不处理 response body）：
+复用 `WebHookExecutor` 的 HTTP 发送模式，但简化（不处理 response body 的业务语义，仅校验 HTTP 状态码）：
 
 ```java
-private void sendAbortRequest(RemoteRoute route, AbortRequest request, String traceId) {
-    String body = objectMapper.writeValueAsString(request);
+private void sendAbortRequest(RemoteRoute route, ObjectNode body, String traceId) {
+    String bodyStr = objectMapper.writeValueAsString(body);
     HttpRequest.Builder builder = HttpRequest.newBuilder()
         .uri(URI.create(route.channelAddress()))
         .header("Content-Type", "application/json")
-        .POST(HttpRequest.BodyPublishers.ofString(body))
+        .POST(HttpRequest.BodyPublishers.ofString(bodyStr))
         .timeout(Duration.ofSeconds(10));
     if (traceId != null) {
         builder.header("X-Trace-Id", traceId);
@@ -264,15 +295,21 @@ private void sendAbortRequest(RemoteRoute route, AbortRequest request, String tr
     cloudAuthService.applyAuth(builder, route.appId(), route.authType());
 
     HttpResponse<String> resp = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-    if (resp.statusCode() / 100 == 2) {
+    if (resp.statusCode() == 200) {
         log.info("[CLOUD_AGENT] Abort request sent successfully: url={}, status={}, traceId={}",
                 route.channelAddress(), resp.statusCode(), traceId);
     } else {
-        log.warn("[CLOUD_AGENT] Abort request returned non-2xx: url={}, status={}, traceId={}",
-                route.channelAddress(), resp.statusCode(), traceId);
+        log.warn("[CLOUD_AGENT] Abort request returned non-2xx: url={}, status={}, body={}, traceId={}",
+                route.channelAddress(), resp.statusCode(), resp.body(), traceId);
     }
 }
 ```
+
+> **响应处理**：需求明确第三方终止接口返回 `{"code":200, "msg":"success", "data":null}`（成功）或
+> `{"code":500, "msg":"pc is offline", "data":null}`（失败）。当前实现仅校验 HTTP 状态码（200 = 成功），
+> 不解析 response body 中的 `code` 字段。后续如有需要可扩展 body 解析逻辑。  
+> **为什么内联而非复用 WebHookExecutor**：abort 是 fire-and-forget 旁路通知，失败不回传 `tool_error`；
+> WebHookExecutor 失败会回调 `onRelay` 产生 `tool_error`，语义不匹配。
 
 ### 3.3 与现有 remote route 的复用关系
 
@@ -313,8 +350,9 @@ sequenceDiagram
 
 | 文件 | 变更 |
 |---|---|
-| `ai-gateway/.../CloudAgentService.java` | 1) `abilityType()` 新增 abort 分支；2) `handleInvoke()` abort 逻辑前置调用 `invokeRemoteAbortIfConfigured()`；3) 新增 `invokeRemoteAbortIfConfigured()`, `buildAbortRequest()`, `sendAbortRequest()`；4) 新增 `AbortRequest` record；5) 注入专用 `abortExecutor` 线程池 |
+| `ai-gateway/.../CloudAgentService.java` | 1) `abilityType()` 新增 abort 分支；2) `ACTION_TO_SCOPE` 新增 `abort_session → callback:weagent:abort`；3) `handleInvoke()` abort 逻辑前置调用 `invokeRemoteAbortIfConfigured()`；4) `invokeRemoteAbortIfConfigured()` 新增 SysConfig 兜底回退；5) 新增 `buildAbortBody()`, `sendAbortRequest()`；6) 注入专用 `abortExecutor` 线程池 |
 | `ai-gateway/.../config/CloudAgentConfig.java` | **新增**：声明 `cloudAbortExecutor` Bean，专用线程池配置 |
+| `ai-gateway/.../SysConfigFallbackProviderV2.java` | `SCOPE_TO_SHORT_NAME` 新增 `callback:weagent:abort → "abort"` 映射 |
 
 ### 不改动文件
 
@@ -331,9 +369,9 @@ sequenceDiagram
 ## 5. 错误处理与边界情况
 
 | 场景 | 行为 |
-|---|---|
-| 未配置 `type=abort` 的 remoteProperty | 跳过第三方调用，仅执行本地 cancel，与现有行为一致 |
-| 第三方接口返回非 2xx | 打 WARN 日志，不影响本地 abort 流程 |
+|---|---|---|
+| 未配置 `type=abort` 的 remoteProperty | 回退到 SysConfig 兜底（`cloud_route_fallback_v2:{businessTag}:abort`）；若也未配置则跳过第三方调用，仅执行本地 cancel |
+| 第三方接口返回非 200（含 500 `"pc is offline"`） | 打 WARN 日志（含 response body），不影响本地 abort 流程 |
 | 第三方接口超时/网络异常 | 打 WARN 日志，不影响本地 abort 流程 |
 | 缺少 assistantAccount | `resolveRemoteRoute()` 返回 null，跳过 |
 | `userId` 为空 | `sendUserAccount` 为 null，第三方接口可能返回错误（仅打日志） |
@@ -346,10 +384,11 @@ sequenceDiagram
 |---|---|---|
 | `abilityType("abort_session")` 返回 `"abort"` | 单元 | `CloudAgentServiceTest` |
 | `resolveRemoteRoute()` 匹配 `type=abort` | 单元 | `CloudAgentServiceTest` |
-| `buildAbortRequest()` 字段映射正确 | 单元 | `CloudAgentServiceTest` |
+| `buildAbortBody()` 字段映射正确（与 question 接口同构） | 单元 | `CloudAgentServiceTest` |
 | 无 abort 配置时跳过调用 | 单元 | `CloudAgentServiceTest` |
+| remoteProperty 未配置 abort → 回退 SysConfig 兜底 | 单元 | `CloudAgentServiceTest` |
 | 异步发送失败不抛异常 | 单元 | mock httpClient |
-| 端到端：配置 abort → 触发 abort → 验证 HTTP POST | 集成 | 使用 WireMock / Testcontainers |
+| 端到端：配置 abort → 触发 abort → 验证 HTTP POST body 与 question 接口一致 | 集成 | 使用 WireMock / Testcontainers |
 
 ---
 
@@ -406,13 +445,15 @@ sequenceDiagram
 
 | 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
 |----------|----------|----------|----------|----------|
-| PARAM-001 | 必填字段完整 | 标准 abort_session invoke | 检查构造的 `AbortRequest` | `topicId=toolSessionId`，`assistantAccount` 正确，`sendUserAccount=invokeMessage.userId` |
-| PARAM-002 | assistantAccount 降级 | `invokeMessage.assistantAccount` 为空，但 payload 含 `assistantAccount` | 触发 abort_session | `AbortRequest.assistantAccount` 取 payload.assistantAccount |
-| PARAM-003 | assistantAccount 二次降级 | `invokeMessage.assistantAccount` 和 payload.assistantAccount 均为空，payload 含 `partnerAccount` | 触发 abort_session | `AbortRequest.assistantAccount` 取 payload.partnerAccount |
-| PARAM-004 | 可选字段缺省 | payload 不含 `imGroupId`、`messageId`、`clientLang` | 触发 abort_session | `AbortRequest.imGroupId=null`，`messageId=null`，`clientLang="zh"` |
-| PARAM-005 | clientLang 非空 | payload `clientLang="en"` | 触发 abort_session | `AbortRequest.clientLang="en"` |
-| PARAM-006 | clientLang 为空字符串 | payload `clientLang=""` | 触发 abort_session | `AbortRequest.clientLang="zh"`（空字符串按缺省处理） |
+| PARAM-001 | 必填字段完整 | 标准 abort_session invoke | 检查构造的请求体 JSON | `type="abort"`，`topicId=toolSessionId`，`assistantAccount` 正确，`sendUserAccount=invokeMessage.userId` |
+| PARAM-002 | assistantAccount 降级 | `invokeMessage.assistantAccount` 为空，但 payload 含 `assistantAccount` | 触发 abort_session | 请求体 `assistantAccount` 取 payload.assistantAccount |
+| PARAM-003 | assistantAccount 二次降级 | `invokeMessage.assistantAccount` 和 payload.assistantAccount 均为空，payload 含 `partnerAccount` | 触发 abort_session | 请求体 `assistantAccount` 取 payload.partnerAccount |
+| PARAM-004 | 可选字段缺省 | payload 不含 `imGroupId`、`messageId`、`clientType` | 触发 abort_session | 请求体中不含这些字段（或为 null），`clientLang="zh"` |
+| PARAM-005 | clientLang 非空 | payload `clientLang="en"` | 触发 abort_session | 请求体 `clientLang="en"` |
+| PARAM-006 | clientLang 为空字符串 | payload `clientLang=""` | 触发 abort_session | 请求体 `clientLang="zh"`（空字符串按缺省处理） |
 | PARAM-007 | userId 为空 | `invokeMessage.userId` 为空 | 触发 abort_session | `sendUserAccount=null`，第三方接口可能返回错误，但本地 abort 流程不受影响 |
+| PARAM-008 | 请求体含 extParameters | payload 含 `businessExtParam` | 触发 abort_session | 请求体 `extParameters.businessExtParam` 透传，`platformExtParam={}` |
+| PARAM-009 | 请求体 type 字段 | 标准 abort_session invoke | 检查请求体 | `type="abort"`（与 question 接口对齐，但 type 值不同） |
 
 ### 9.3 异步与非阻塞测试
 
@@ -427,10 +468,10 @@ sequenceDiagram
 
 | 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 |
 |----------|----------|----------|----------|----------|
-| ERR-001 | 第三方返回非 2xx | 配置 abort，Mock 第三方返回 400/500 | 触发 abort_session | 本地 cancel 正常完成，日志输出 WARN：`Abort request returned non-2xx` |
+| ERR-001 | 第三方返回非 200 | 配置 abort，Mock 第三方返回 500 `{"code":500,"msg":"pc is offline","data":null}` | 触发 abort_session | 本地 cancel 正常完成，日志输出 WARN：`Abort request returned non-2xx` 含 response body |
 | ERR-002 | 第三方超时 | 配置 abort，Mock 第三方不响应 | 触发 abort_session | 10 秒超时后打 WARN 日志，本地 cancel 已完成，无阻塞 |
 | ERR-003 | 第三方网络不可达 | 配置 abort，URL 指向不存在地址 | 触发 abort_session | 打 WARN 日志，本地 cancel 正常完成 |
-| ERR-004 | 序列化异常 | `AbortRequest` 字段含非法值 | 触发 abort_session | `sendAbortRequest` 中 `writeValueAsString` 异常被捕获，打 WARN 日志，不影响本地 cancel |
+| ERR-004 | 序列化异常 | `buildAbortBody` 中 `objectMapper` 写 JSON 异常 | 触发 abort_session | 异常被 `CompletableFuture.runAsync` 的 try-catch 捕获，打 WARN 日志，不影响本地 cancel |
 | ERR-005 | 认证头构造异常 | `cloudAuthService.applyAuth()` 抛异常 | 触发 abort_session | 异常被捕获，打 WARN 日志，本地 cancel 正常完成 |
 
 ### 9.5 HTTP 请求细节测试
@@ -442,7 +483,8 @@ sequenceDiagram
 | HTTP-003 | X-Trace-Id 传递 | `invokeMessage.traceId="trace-123"` | 抓取第三方请求 | Header 包含 `X-Trace-Id: trace-123` |
 | HTTP-004 | 无 TraceId 时不传 | `invokeMessage.traceId=null` | 抓取第三方请求 | 请求中不包含 `X-Trace-Id` header |
 | HTTP-005 | 认证头应用 | 配置 abort，headers 含 `x-hw-id`、`x-hw-appkey` | 抓取第三方请求 | 请求包含对应认证 header，值与 remoteProperty 配置一致 |
-| HTTP-006 | 请求体结构 | 配置 abort | 解析第三方请求 body | JSON 包含 `topicId`、`assistantAccount`、`sendUserAccount`、`imGroupId`、`messageId`、`clientLang` 字段 |
+| HTTP-006 | 请求体结构 | 配置 abort | 解析第三方请求 body | JSON 包含 `type`、`topicId`、`assistantAccount`、`sendUserAccount`、`imGroupId`、`messageId`、`clientLang`、`clientType`、`extParameters` 字段（与 question 接口同构） |
+| HTTP-007 | 请求体 type 为 abort | 配置 abort | 解析第三方请求 body | `type="abort"`（区别于 question_reply 的 `type="question_reply"`） |
 
 ### 9.6 端到端流程测试
 
@@ -455,7 +497,7 @@ sequenceDiagram
 
 ### 9.7 回归测试 checklist
 
-- [ ] `mvn test` 全量通过，新增 `CloudAgentServiceTest` 覆盖 abilityType、resolveRemoteRoute、buildAbortRequest、sendAbortRequest。
+- [ ] `mvn test` 全量通过，新增 `CloudAgentServiceTest` 覆盖 abilityType、resolveRemoteRoute、buildAbortBody、sendAbortRequest。
 - [ ] 存量 `abort_session` 流程未变：skill-server 侧 payload 契约、Gateway 侧 `cancelStreamingConnection()` 行为均保持原样。
 - [ ] `SkillSessionFlowService`、`SkillSessionController`、`BusinessInvokeRouteStrategy` 未做任何改动。
 - [ ] 线程池配置参数可通过 `application.yml` 调整，默认值合理（core=2, max=10, queue=100）。

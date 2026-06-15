@@ -207,6 +207,21 @@ class SysConfigFallbackProviderV2Test {
     }
 
     @Test
+    void load_abortScope_jsonComplete_returnsConfig() {
+        SkillServerConfigClient ss = mock(SkillServerConfigClient.class);
+        when(ss.getConfigValue("cloud_route_fallback_v2", "assistant_square:abort"))
+                .thenReturn("{\"channelAddress\":\"http://x/stop\",\"channelType\":\"webhook\",\"authType\":\"soa\"}");
+        SysConfigFallbackProviderV2 p = new SysConfigFallbackProviderV2(ss, mapper, 300_000L);
+
+        CallbackConfig cfg = p.load("AK1", "callback:weagent:abort", "assistant_square");
+
+        assertThat(cfg).isNotNull();
+        assertThat(cfg.getChannelAddress()).isEqualTo("http://x/stop");
+        assertThat(cfg.getChannelType()).isEqualTo("webhook");
+        assertThat(cfg.getAuthType()).isEqualTo("soa");
+    }
+
+    @Test
     void load_doesNotFallthroughToOldFallbackKey() {
         // 关键 AC：V2 provider miss 时 **不** 回查 cloud_route_fallback:{scope}
         SkillServerConfigClient ss = mock(SkillServerConfigClient.class);

@@ -9,6 +9,7 @@ import com.opencode.cui.gateway.logging.MdcHelper;
 import com.opencode.cui.gateway.model.AssistantInstanceInfo;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.model.RelayMessage;
+import com.opencode.cui.gateway.service.cloud.CloudAuthService;
 import com.opencode.cui.gateway.service.cloud.CloudConnectionContext;
 import com.opencode.cui.gateway.service.cloud.CloudConnectionHandle;
 import com.opencode.cui.gateway.service.cloud.CloudConnectionLifecycle;
@@ -16,9 +17,14 @@ import com.opencode.cui.gateway.service.cloud.CloudProtocolClient;
 import com.opencode.cui.gateway.service.cloud.WebHookExecutor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -27,7 +33,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -59,7 +67,8 @@ public class CloudAgentService {
     private static final Map<String, String> ACTION_TO_SCOPE = Map.of(
             "chat",             "callback:weagent:chat",
             "question_reply",   "callback:weagent:question_reply",
-            "permission_reply", "callback:weagent:permission_reply"
+            "permission_reply", "callback:weagent:permission_reply",
+            "abort_session",    "callback:weagent:abort"
     );
 
     /** tool_error reason 枚举：让 SS 能精确区分失败类型，不再依赖 error 文案启发式。 */
@@ -77,6 +86,10 @@ public class CloudAgentService {
     private final ConcurrentHashMap<String, Set<ActiveCloudConnection>> activeStreamingConnections =
             new ConcurrentHashMap<>();
 
+    private final HttpClient httpClient;
+    private final Executor abortExecutor;
+    private final CloudAuthService cloudAuthService;
+
     @Autowired
     public CloudAgentService(SysConfigFallbackProviderV2 sysConfigRouteProvider,
                              CloudRouteSwitchService cloudRouteSwitchService,
@@ -86,6 +99,8 @@ public class CloudAgentService {
                              CloudTimeoutProperties timeoutProperties,
                              RedisMessageBroker redisMessageBroker,
                              ObjectMapper objectMapper,
+                             CloudAuthService cloudAuthService,
+                             @Qualifier("cloudAbortExecutor") Executor abortExecutor,
                              @Value("${gateway.instance-id:${HOSTNAME:gateway-local}}") String gatewayInstanceId) {
         this.sysConfigRouteProvider = sysConfigRouteProvider;
         this.cloudRouteSwitchService = cloudRouteSwitchService;
@@ -95,7 +110,12 @@ public class CloudAgentService {
         this.timeoutProperties = timeoutProperties;
         this.redisMessageBroker = redisMessageBroker;
         this.objectMapper = objectMapper;
+        this.cloudAuthService = cloudAuthService;
+        this.abortExecutor = abortExecutor;
         this.gatewayInstanceId = gatewayInstanceId;
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .build();
     }
 
     public CloudAgentService(SysConfigFallbackProviderV2 sysConfigRouteProvider,
@@ -105,7 +125,8 @@ public class CloudAgentService {
                              WebHookExecutor webHookExecutor,
                              CloudTimeoutProperties timeoutProperties) {
         this(sysConfigRouteProvider, cloudRouteSwitchService, assistantInstanceInfoService,
-                cloudProtocolClient, webHookExecutor, timeoutProperties, null, new ObjectMapper(), "gateway-local");
+                cloudProtocolClient, webHookExecutor, timeoutProperties, null, new ObjectMapper(),
+                null, null, "gateway-local");
     }
 
     public CloudAgentService(SysConfigFallbackProviderV2 sysConfigRouteProvider,
@@ -153,6 +174,9 @@ public class CloudAgentService {
                 ak, action, mask(assistantAccount), businessTag, toolSessionId, invokeMessage.getTraceId());
 
         if (ACTION_ABORT_SESSION.equals(action)) {
+            // 异步调用第三方终止接口（fire-and-forget）
+            invokeRemoteAbortIfConfigured(invokeMessage, toolSessionId, assistantAccount, businessTag);
+            // 取消本地活跃 SSE/WS 连接
             cancelStreamingConnection(invokeMessage, toolSessionId);
             return;
         }
@@ -296,7 +320,11 @@ public class CloudAgentService {
     }
 
     private static String abilityType(String action) {
-        return "chat".equals(action) ? "chat" : "question";
+        return switch (action) {
+            case "chat" -> "chat";
+            case "abort_session" -> "abort";
+            default -> "question"; // question_reply, permission_reply
+        };
     }
 
     private static String normalizeAction(String action) {
@@ -515,6 +543,116 @@ public class CloudAgentService {
                 invokeMessage.getWelinkSessionId(), invokeMessage.getTraceId());
     }
 
+    /**
+     * 如果配置了 type=abort 的 remoteProperty，异步调用第三方终止接口。
+     * 如果 remoteProperty 未命中，回退到 SysConfig 兜底配置（cloud_route_fallback_v2:{businessTag}:abort）。
+     *
+     * <p>fire-and-forget：使用 CompletableFuture + 专用线程池异步发送 HTTP POST，
+     * 不阻塞 cancelStreamingConnection()。失败仅打 WARN 日志，不回传 tool_error。</p>
+     */
+    private void invokeRemoteAbortIfConfigured(GatewayMessage invokeMessage,
+                                               String toolSessionId,
+                                               String assistantAccount,
+                                               String businessTag) {
+        RemoteRoute route = resolveRemoteRoute(assistantAccount, ACTION_ABORT_SESSION, businessTag);
+        if (route == null) {
+            // remoteProperty 未配置 abort → 回退到 SysConfig 兜底
+            String scope = ACTION_TO_SCOPE.get(ACTION_ABORT_SESSION);
+            CallbackConfig cfg = sysConfigRouteProvider.load(invokeMessage.getAk(), scope, businessTag);
+            if (cfg == null) {
+                log.debug("[CLOUD_AGENT] No remote abort route configured, skipping third-party stop call");
+                return;
+            }
+            route = new RemoteRoute(cfg.getChannelAddress(), cfg.getChannelType(),
+                    cfg.getAppId(), businessTag, cfg.getAuthType());
+        }
+        final RemoteRoute finalRoute = route;
+
+        // 构造请求体（与 question 接口同构）
+        ObjectNode body = buildAbortBody(invokeMessage, toolSessionId);
+
+        // 异步发送（fire-and-forget）
+        CompletableFuture.runAsync(() -> {
+            try {
+                sendAbortRequest(finalRoute, body, invokeMessage.getTraceId());
+            } catch (Exception e) {
+                log.warn("[CLOUD_AGENT] Async abort request failed: traceId={}, error={}",
+                        invokeMessage.getTraceId(), e.getMessage());
+            }
+        }, abortExecutor);
+    }
+
+    /**
+     * 构造终止请求体（与 question 接口同构）。
+     *
+     * <p>需求明确"只是接口地址变了，鉴权header和入参和原来的question接口一致"。
+     * 因此不定义独立 DTO，而是构造与 cloudRequest 同构的 JSON 对象。</p>
+     */
+    private ObjectNode buildAbortBody(GatewayMessage invokeMessage, String toolSessionId) {
+        JsonNode payload = invokeMessage.getPayload();
+        ObjectNode body = objectMapper.createObjectNode();
+
+        body.put("type", "abort");
+        body.put("assistantAccount", firstNonBlank(
+                invokeMessage.getAssistantAccount(),
+                textAt(payload, "assistantAccount"),
+                textAt(payload, "partnerAccount")));
+        body.put("sendUserAccount", firstNonBlank(
+                invokeMessage.getUserId(), textAt(payload, "sendUserAccount")));
+        body.put("topicId", toolSessionId);
+
+        // 可选字段
+        putIfText(body, payload, "imGroupId");
+        putIfText(body, payload, "messageId");
+        String clientLang = textAt(payload, "clientLang");
+        body.put("clientLang", (clientLang != null && !clientLang.isBlank()) ? clientLang : "zh");
+        putIfText(body, payload, "clientType");
+
+        // extParameters：与 question 接口对齐
+        ObjectNode extParams = objectMapper.createObjectNode();
+        extParams.set("businessExtParam",
+                (payload != null && payload.has("businessExtParam")
+                        && payload.get("businessExtParam").isObject())
+                        ? payload.get("businessExtParam") : objectMapper.createObjectNode());
+        extParams.set("platformExtParam", objectMapper.createObjectNode());
+        body.set("extParameters", extParams);
+
+        return body;
+    }
+
+    /**
+     * 发送终止 HTTP POST 请求到第三方助手。
+     *
+     * <p>内联发送而非复用 WebHookExecutor：abort 是 fire-and-forget 旁路通知，
+     * 失败不回传 tool_error；WebHookExecutor 失败会回调 onRelay 产生 tool_error，
+     * 语义不匹配。</p>
+     */
+    private void sendAbortRequest(RemoteRoute route, ObjectNode body, String traceId)
+            throws Exception {
+        String bodyStr = objectMapper.writeValueAsString(body);
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(route.channelAddress()))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(bodyStr))
+                .timeout(Duration.ofSeconds(10));
+        if (traceId != null) {
+            builder.header("X-Trace-Id", traceId);
+        }
+        cloudAuthService.applyAuth(builder, route.appId(), route.authType());
+
+        HttpRequest request = builder.build();
+        log.info("[CLOUD_AGENT] Abort request: url={}, traceId={}, body={}",
+                route.channelAddress(), traceId, bodyStr);
+        HttpResponse<String> resp = httpClient.send(request,
+                HttpResponse.BodyHandlers.ofString());
+        log.info("[CLOUD_AGENT] Abort response: url={}, status={}, body={}, traceId={}",
+                route.channelAddress(), resp.statusCode(), resp.body(), traceId);
+        if (resp.statusCode() != 200) {
+            log.warn("[CLOUD_AGENT] Abort request returned non-200: url={}, status={}, body={}, traceId={}",
+                    route.channelAddress(), resp.statusCode(), resp.body(), traceId);
+        }
+    }
+
     private void registerCloudStreamRoute(String toolSessionId) {
         if (!hasText(toolSessionId) || redisMessageBroker == null || !hasText(gatewayInstanceId)) {
             return;
@@ -723,6 +861,16 @@ public class CloudAgentService {
         }
         String text = value.asText(null);
         return (text == null || text.isBlank()) ? null : text;
+    }
+
+    /**
+     * 如果 payload 中指定字段存在且为非空文本，则写入目标 ObjectNode。
+     */
+    private static void putIfText(ObjectNode target, JsonNode source, String fieldName) {
+        String value = textAt(source, fieldName);
+        if (value != null) {
+            target.put(fieldName, value);
+        }
     }
 
     private static String firstNonBlank(String... values) {

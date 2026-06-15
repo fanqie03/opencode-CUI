@@ -4,20 +4,10 @@
 
 
 终止执行请求示例
-```
-curl --location --request POST 'https://xxx/api/digital-assistant/assistant-agent-b/stream_chat_stop' \
---header 'x-hw-id: xxx' \
---header 'x-hw-appkey: xxx' \
---header 'Content-Type: application/json' \
---data-raw '{
-    "topicId":"sse 请求中的topicId",
-    "assistantAccount":"助理的数字分身welinkid, partnerAccount",
-    "sendUserAccount":"消息发送方，用户w3账号",
-    "imGroupId":"群id，非必填",
-    "messageId":"回复的消息ID，非必填",
-    "clientLang":"枚举，zh 或 en ,没有默认zh"
-}'
-```
+只是接口地址变了，鉴权header和入参和原来的question接口一致
+
+通过remoteProperty中的配置项，新增type为abort类型的配置，如果配置，则在gateway终止时，调用第三方助手的终止执行接口
+
 
 成功响应
 http code: 200

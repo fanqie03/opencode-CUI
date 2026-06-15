@@ -10,6 +10,7 @@ import com.opencode.cui.gateway.service.cloud.CloudConnectionContext;
 import com.opencode.cui.gateway.service.cloud.CloudConnectionHandle;
 import com.opencode.cui.gateway.service.cloud.CloudConnectionLifecycle;
 import com.opencode.cui.gateway.service.cloud.CloudProtocolClient;
+import com.opencode.cui.gateway.service.cloud.CloudAuthService;
 import com.opencode.cui.gateway.service.cloud.WebHookExecutor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -21,11 +22,15 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -70,6 +75,12 @@ class CloudAgentServiceTest {
     private RedisMessageBroker redisMessageBroker;
     @Mock
     private Consumer<GatewayMessage> onRelay;
+    @Mock
+    private HttpClient httpClient;
+    @Mock
+    private CloudAuthService cloudAuthService;
+    @Mock
+    private Executor abortExecutor;
 
     @Captor
     private ArgumentCaptor<Consumer<GatewayMessage>> onEventCaptor;
@@ -89,11 +100,24 @@ class CloudAgentServiceTest {
         lenient().when(cloudTimeoutProperties.getEffectiveIdleTimeoutSeconds(anyString())).thenReturn(90);
         lenient().when(cloudTimeoutProperties.getMaxDurationSeconds()).thenReturn(600);
         lenient().when(cloudRouteSwitchService.remotePropertyEnabled()).thenReturn(true);
+        // 默认 SysConfig 兜底返回 null（各测试按需覆盖）
+        lenient().when(sysConfigRouteProvider.load(any(), any(), any())).thenReturn(null);
 
         cloudAgentService = new CloudAgentService(
                 sysConfigRouteProvider, cloudRouteSwitchService, assistantInstanceInfoService,
                 cloudProtocolClient, webHookExecutor, cloudTimeoutProperties,
-                redisMessageBroker, objectMapper, "gw-local");
+                redisMessageBroker, objectMapper, cloudAuthService, abortExecutor, "gw-local");
+
+        // 让 abortExecutor 同步执行提交的任务（便于测试验证）
+        lenient().doAnswer(invocation -> {
+            Runnable task = invocation.getArgument(0);
+            task.run();
+            return null;
+        }).when(abortExecutor).execute(any(Runnable.class));
+
+        // 注入 mock httpClient（构造函数中内联创建了真实实例）
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                cloudAgentService, "httpClient", httpClient);
     }
 
     // ---------------------------------------------------------------------
@@ -235,7 +259,7 @@ class CloudAgentServiceTest {
         void handleInvoke_abortSessionWithoutActiveStreamIsNoOp() {
             cloudAgentService.handleInvoke(buildInvoke("abort_session", TEST_AK), onRelay);
 
-            verifyNoInteractions(sysConfigRouteProvider, assistantInstanceInfoService,
+            verifyNoInteractions(assistantInstanceInfoService,
                     cloudProtocolClient, webHookExecutor, onRelay);
         }
 
@@ -244,7 +268,7 @@ class CloudAgentServiceTest {
         void handleInvoke_abortSessionActionIsNormalized() {
             cloudAgentService.handleInvoke(buildInvoke(" abort_session ", TEST_AK), onRelay);
 
-            verifyNoInteractions(sysConfigRouteProvider, assistantInstanceInfoService,
+            verifyNoInteractions(assistantInstanceInfoService,
                     cloudProtocolClient, webHookExecutor, onRelay);
         }
 
@@ -387,7 +411,7 @@ class CloudAgentServiceTest {
             assertEquals("abort_session", relayedMessage.getAction());
             assertEquals("tool-session-001", relayedMessage.getPayload().path("toolSessionId").asText());
             assertTrue(relayedMessage.getPayload().path("_cloudControlRelayed").asBoolean());
-            verifyNoInteractions(sysConfigRouteProvider, assistantInstanceInfoService,
+            verifyNoInteractions(assistantInstanceInfoService,
                     cloudProtocolClient, webHookExecutor, onRelay);
         }
 
@@ -400,7 +424,7 @@ class CloudAgentServiceTest {
             cloudAgentService.handleInvoke(abort, onRelay);
 
             verify(redisMessageBroker, never()).publishToGwRelay(anyString(), anyString());
-            verifyNoInteractions(sysConfigRouteProvider, assistantInstanceInfoService,
+            verifyNoInteractions(assistantInstanceInfoService,
                     cloudProtocolClient, webHookExecutor, onRelay);
         }
 
@@ -418,8 +442,238 @@ class CloudAgentServiceTest {
             GatewayMessage relayedMessage = objectMapper.readValue(relay.originalMessage(), GatewayMessage.class);
             assertEquals("abort_session", relayedMessage.getAction());
             assertEquals("tool-session-001", relayedMessage.getPayload().path("toolSessionId").asText());
-            verifyNoInteractions(sysConfigRouteProvider, assistantInstanceInfoService,
+            verifyNoInteractions(assistantInstanceInfoService,
                     cloudProtocolClient, webHookExecutor, onRelay);
+        }
+
+        @Test
+        @DisplayName("abilityType(abort_session) returns abort")
+        void abilityType_abortSession_returnsAbort() throws Exception {
+            // abilityType is package-private static, tested via resolveRemoteRoute behavior
+            when(assistantInstanceInfoService.getInstanceInfo("bot-001"))
+                    .thenReturn(buildInstance("abort", "http", "https://remote.example.com/stop"));
+
+            GatewayMessage invoke = buildRemoteInvoke("abort_session");
+            cloudAgentService.handleInvoke(invoke, onRelay);
+
+            // resolveRemoteRoute matched type=abort -> route found -> sendAbortRequest called
+            // (verify via httpClient.send was invoked)
+            verify(httpClient, atLeastOnce()).send(any(HttpRequest.class),
+                    eq(HttpResponse.BodyHandlers.ofString()));
+        }
+
+        @Test
+        @DisplayName("abort_session without abort remoteProperty skips third-party call")
+        void handleInvoke_abortSessionWithoutAbortRemoteProperty_skipsThirdPartyCall() {
+            // remoteProperty has chat but NOT abort
+            when(assistantInstanceInfoService.getInstanceInfo("bot-001"))
+                    .thenReturn(buildInstance("chat", "sse", "https://remote.example.com/chat"));
+
+            GatewayMessage invoke = buildRemoteInvoke("abort_session");
+            cloudAgentService.handleInvoke(invoke, onRelay);
+
+            // No HTTP call made
+            verifyNoInteractions(httpClient);
+            verifyNoInteractions(onRelay);
+        }
+
+        @Test
+        @DisplayName("abort_session builds correct request body matching question interface")
+        void handleInvoke_abortSession_buildsCorrectRequestBody() throws Exception {
+            when(assistantInstanceInfoService.getInstanceInfo("bot-001"))
+                    .thenReturn(buildInstance("abort", "http", "https://remote.example.com/stop"));
+
+            @SuppressWarnings("unchecked")
+            HttpResponse<String> mockResp = mock(HttpResponse.class);
+            when(mockResp.statusCode()).thenReturn(200);
+            when(httpClient.send(any(HttpRequest.class), eq(HttpResponse.BodyHandlers.ofString())))
+                    .thenReturn(mockResp);
+
+            GatewayMessage invoke = buildRemoteInvoke("abort_session");
+            cloudAgentService.handleInvoke(invoke, onRelay);
+
+            ArgumentCaptor<HttpRequest> reqCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+            verify(httpClient).send(reqCaptor.capture(), eq(HttpResponse.BodyHandlers.ofString()));
+
+            HttpRequest req = reqCaptor.getValue();
+            assertEquals("POST", req.method());
+            assertTrue(req.uri().toString().contains("https://remote.example.com/stop"));
+
+            // Parse body via bodyPublisher
+            String body = req.bodyPublisher()
+                    .map(p -> {
+                        try {
+                            var baos = new java.io.ByteArrayOutputStream();
+                            var channel = java.nio.channels.Channels.newChannel(baos);
+                            var subscriber = new java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer>() {
+                                private java.util.concurrent.Flow.Subscription subscription;
+                                @Override
+                                public void onSubscribe(java.util.concurrent.Flow.Subscription s) {
+                                    this.subscription = s;
+                                    s.request(Long.MAX_VALUE);
+                                }
+                                @Override
+                                public void onNext(java.nio.ByteBuffer buf) {
+                                    try { channel.write(buf); } catch (Exception e) { throw new RuntimeException(e); }
+                                }
+                                @Override
+                                public void onError(Throwable t) {}
+                                @Override
+                                public void onComplete() {
+                                    try { channel.close(); } catch (Exception e) { throw new RuntimeException(e); }
+                                }
+                            };
+                            p.subscribe(subscriber);
+                            return baos.toString();
+                        } catch (Exception e) { throw new RuntimeException(e); }
+                    })
+                    .orElse("{}");
+            ObjectNode bodyJson = (ObjectNode) objectMapper.readTree(body);
+
+            assertEquals("abort", bodyJson.path("type").asText());
+            assertEquals("tool-session-001", bodyJson.path("topicId").asText());
+            assertEquals("bot-001", bodyJson.path("assistantAccount").asText());
+            assertEquals("user-001", bodyJson.path("sendUserAccount").asText());
+            assertEquals("zh", bodyJson.path("clientLang").asText());
+            assertTrue(bodyJson.has("extParameters"));
+            assertTrue(bodyJson.path("extParameters").has("businessExtParam"));
+            assertTrue(bodyJson.path("extParameters").has("platformExtParam"));
+        }
+
+        @Test
+        @DisplayName("abort_session third-party returns 500 does not affect local cancel")
+        void handleInvoke_abortSession_thirdParty500_doesNotAffectLocalCancel() throws Exception {
+            when(assistantInstanceInfoService.getInstanceInfo("bot-001"))
+                    .thenReturn(buildInstance("abort", "http", "https://remote.example.com/stop"));
+
+            @SuppressWarnings("unchecked")
+            HttpResponse<String> mockResp = mock(HttpResponse.class);
+            when(mockResp.statusCode()).thenReturn(500);
+            when(httpClient.send(any(HttpRequest.class), eq(HttpResponse.BodyHandlers.ofString())))
+                    .thenReturn(mockResp);
+
+            // Also set up an active streaming connection to verify it gets cancelled
+            when(sysConfigRouteProvider.load(TEST_AK, CHAT_SCOPE, "biz-tag"))
+                    .thenReturn(buildCfg("sse", "https://cloud.example.com/chat", "soa", "app-1"));
+
+            doAnswer(invocation -> {
+                CloudConnectionContext context = invocation.getArgument(1);
+                CloudConnectionHandle handle = context.getConnectionHandle();
+
+                // Send abort_session (with assistantAccount so remoteProperty is checked)
+                GatewayMessage abort = buildRemoteInvoke("abort_session");
+                cloudAgentService.handleInvoke(abort, onRelay);
+
+                // Local stream should still be cancelled despite third-party 500
+                assertTrue(handle.isCancelled());
+                return null;
+            }).when(cloudProtocolClient).connect(eq("sse"), any(), any(), any(), any());
+
+            cloudAgentService.handleInvoke(buildInvoke("chat", TEST_AK), onRelay);
+
+            // Verify HTTP was attempted
+            verify(httpClient).send(any(HttpRequest.class), eq(HttpResponse.BodyHandlers.ofString()));
+            // No tool_error relayed
+            verifyNoInteractions(onRelay);
+        }
+
+        @Test
+        @DisplayName("abort_session third-party call is async and does not block local cancel")
+        void handleInvoke_abortSession_thirdPartyCallIsAsync() throws Exception {
+            when(assistantInstanceInfoService.getInstanceInfo("bot-001"))
+                    .thenReturn(buildInstance("abort", "http", "https://remote.example.com/stop"));
+
+            @SuppressWarnings("unchecked")
+            HttpResponse<String> mockResp = mock(HttpResponse.class);
+            when(mockResp.statusCode()).thenReturn(200);
+            when(httpClient.send(any(HttpRequest.class), eq(HttpResponse.BodyHandlers.ofString())))
+                    .thenReturn(mockResp);
+
+            when(sysConfigRouteProvider.load(TEST_AK, CHAT_SCOPE, "biz-tag"))
+                    .thenReturn(buildCfg("sse", "https://cloud.example.com/chat", "soa", "app-1"));
+
+            doAnswer(invocation -> {
+                CloudConnectionContext context = invocation.getArgument(1);
+                CloudConnectionHandle handle = context.getConnectionHandle();
+
+                GatewayMessage abort = buildRemoteInvoke("abort_session");
+                cloudAgentService.handleInvoke(abort, onRelay);
+
+                // After handleInvoke returns, both cancel AND HTTP should have happened
+                assertTrue(handle.isCancelled());
+                verify(httpClient).send(any(HttpRequest.class), eq(HttpResponse.BodyHandlers.ofString()));
+                return null;
+            }).when(cloudProtocolClient).connect(eq("sse"), any(), any(), any(), any());
+
+            cloudAgentService.handleInvoke(buildInvoke("chat", TEST_AK), onRelay);
+
+            verifyNoInteractions(onRelay);
+        }
+
+        @Test
+        @DisplayName("abort_session third-party HTTP exception does not affect local cancel")
+        void handleInvoke_abortSession_httpException_doesNotAffectLocalCancel() throws Exception {
+            when(assistantInstanceInfoService.getInstanceInfo("bot-001"))
+                    .thenReturn(buildInstance("abort", "http", "https://remote.example.com/stop"));
+
+            when(httpClient.send(any(HttpRequest.class), eq(HttpResponse.BodyHandlers.ofString())))
+                    .thenThrow(new java.io.IOException("Connection refused"));
+
+            when(sysConfigRouteProvider.load(TEST_AK, CHAT_SCOPE, "biz-tag"))
+                    .thenReturn(buildCfg("sse", "https://cloud.example.com/chat", "soa", "app-1"));
+
+            doAnswer(invocation -> {
+                CloudConnectionContext context = invocation.getArgument(1);
+                CloudConnectionHandle handle = context.getConnectionHandle();
+
+                GatewayMessage abort = buildRemoteInvoke("abort_session");
+                cloudAgentService.handleInvoke(abort, onRelay);
+
+                // Local stream still cancelled despite HTTP exception
+                assertTrue(handle.isCancelled());
+                return null;
+            }).when(cloudProtocolClient).connect(eq("sse"), any(), any(), any(), any());
+
+            cloudAgentService.handleInvoke(buildInvoke("chat", TEST_AK), onRelay);
+
+            verify(httpClient).send(any(HttpRequest.class), eq(HttpResponse.BodyHandlers.ofString()));
+            verifyNoInteractions(onRelay);
+        }
+
+        @Test
+        @DisplayName("abort_session without assistantAccount skips third-party call")
+        void handleInvoke_abortSession_withoutAssistantAccount_skipsThirdPartyCall() {
+            // buildInvoke (not buildRemoteInvoke) has no assistantAccount
+            cloudAgentService.handleInvoke(buildInvoke("abort_session", TEST_AK), onRelay);
+
+            verifyNoInteractions(httpClient, assistantInstanceInfoService);
+        }
+
+        @Test
+        @DisplayName("abort_session falls back to SysConfig when remoteProperty has no abort")
+        void handleInvoke_abortSession_fallsBackToSysConfig() throws Exception {
+            // remoteProperty has chat but NOT abort
+            when(assistantInstanceInfoService.getInstanceInfo("bot-001"))
+                    .thenReturn(buildInstance("chat", "sse", "https://remote.example.com/chat"));
+            // SysConfig has abort fallback
+            CallbackConfig abortCfg = buildCfg("webhook", "https://sysconfig.example.com/stop", "soa", null);
+            when(sysConfigRouteProvider.load(null, "callback:weagent:abort", "biz-tag"))
+                    .thenReturn(abortCfg);
+
+            @SuppressWarnings("unchecked")
+            HttpResponse<String> mockResp = mock(HttpResponse.class);
+            when(mockResp.statusCode()).thenReturn(200);
+            when(httpClient.send(any(HttpRequest.class), eq(HttpResponse.BodyHandlers.ofString())))
+                    .thenReturn(mockResp);
+
+            GatewayMessage invoke = buildRemoteInvoke("abort_session");
+            cloudAgentService.handleInvoke(invoke, onRelay);
+
+            // Verify HTTP was sent to SysConfig URL
+            ArgumentCaptor<HttpRequest> reqCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+            verify(httpClient).send(reqCaptor.capture(), eq(HttpResponse.BodyHandlers.ofString()));
+            assertTrue(reqCaptor.getValue().uri().toString().contains("https://sysconfig.example.com/stop"));
+            verifyNoInteractions(onRelay);
         }
     }
 

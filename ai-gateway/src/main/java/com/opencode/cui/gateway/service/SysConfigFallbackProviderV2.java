@@ -27,7 +27,8 @@ public class SysConfigFallbackProviderV2 {
     private static final Map<String, String> SCOPE_TO_SHORT_NAME = Map.of(
             "callback:weagent:chat", "chat",
             "callback:weagent:question_reply", "question",
-            "callback:weagent:permission_reply", "permission"
+            "callback:weagent:permission_reply", "permission",
+            "callback:weagent:abort", "abort"
     );
 
     private final SkillServerConfigClient skillServerConfigClient;
