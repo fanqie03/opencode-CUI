@@ -40,9 +40,10 @@ public class ImMessageService {
      * @param targetId      目标会话 ID（群 ID 或私聊对方账号）
      * @param senderAccount 发送人账号（与 cookie userId 一致）
      * @param content       文本内容
+     * @param msgExt        扩展字段 JSON 字符串（可为 null，非空时加入 body 的 msg_ext 字段）
      * @return 发送成功返回 true；任一参数为空 / 下游非 2xx / 抛异常返回 false
      */
-    public boolean sendMessage(String targetType, String targetId, String senderAccount, String content) {
+    public boolean sendMessage(String targetType, String targetId, String senderAccount, String content, String msgExt) {
         if (targetType == null || targetType.isBlank()) {
             log.warn("Cannot send IM message: targetType is empty");
             return false;
@@ -68,6 +69,10 @@ public class ImMessageService {
         body.put("senderAccount", senderAccount);
         body.put("content", content);
         body.put("msgType", "text");
+
+        if (msgExt != null && !msgExt.isBlank()) {
+            body.put("msg_ext", msgExt);
+        }
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
