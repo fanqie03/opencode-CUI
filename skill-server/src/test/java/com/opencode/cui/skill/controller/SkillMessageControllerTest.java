@@ -25,6 +25,7 @@ import com.opencode.cui.skill.service.ImMessageService;
 import com.opencode.cui.skill.service.GatewayMessageRouter;
 import com.opencode.cui.skill.service.SessionAccessControlService;
 import com.opencode.cui.skill.service.MessagePersistenceService;
+import com.opencode.cui.skill.service.SysConfigService;
 import com.opencode.cui.skill.service.SkillMessageService;
 import com.opencode.cui.skill.service.SkillSessionService;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
@@ -83,6 +84,8 @@ class SkillMessageControllerTest {
     private AllowedSlashCommandsResolver allowedSlashCommandsResolver;
     @Mock
     private MessagePersistenceService persistenceService;
+    @Mock
+    private SysConfigService sysConfigService;
 
     private AssistantIdProperties assistantIdProperties;
     private SkillMessageController controller;
@@ -93,6 +96,8 @@ class SkillMessageControllerTest {
         assistantIdProperties.setEnabled(true);
         assistantIdProperties.setTargetToolType("assistant");
         lenient().when(offlineMessageProvider.get()).thenReturn("MOCK_OFFLINE_MSG");
+        // 默认 msg_ext 开关关闭
+        lenient().when(sysConfigService.getValue("msg_ext", "enabled")).thenReturn("0");
         // 默认 resolver 行为：开关 ON（null 放行），非 null 默认 EXISTS
         lenient().when(assistantAccountResolverService.isSkipOnNullAssistantAccount()).thenReturn(true);
         lenient().when(assistantAccountResolverService.getDeletionMessage()).thenReturn("该助理已被删除");
@@ -108,7 +113,8 @@ class SkillMessageControllerTest {
                 accessControlService, messageRouter, assistantInfoService, scopeDispatcher,
                 offlineMessageProvider, availabilityService, assistantAccountResolverService, ruleService,
                 allowedSlashCommandsResolver, persistenceService,
-                org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class));
+                org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class),
+                sysConfigService);
         // 默认 scopeDispatcher 返回 personal 策略（requiresOnlineCheck=true）
         com.opencode.cui.skill.service.scope.AssistantScopeStrategy personalStrategy =
                 org.mockito.Mockito.mock(com.opencode.cui.skill.service.scope.AssistantScopeStrategy.class);
@@ -446,7 +452,7 @@ class SkillMessageControllerTest {
         session.setId(1L);
         session.setBusinessSessionId("group_g123_u456");
         when(accessControlService.requireSessionAccess(1L, "u456")).thenReturn(session);
-        when(imMessageService.sendMessage("group", "g123", "u456", "Hello IM")).thenReturn(true);
+        when(imMessageService.sendMessage("group", "g123", "u456", "Hello IM", null)).thenReturn(true);
 
         var request = new SkillMessageController.SendToImRequest();
         request.setContent("Hello IM");
@@ -455,7 +461,7 @@ class SkillMessageControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(0, response.getBody().getCode());
         assertEquals(true, response.getBody().getData().get("success"));
-        verify(imMessageService).sendMessage("group", "g123", "u456", "Hello IM");
+        verify(imMessageService).sendMessage("group", "g123", "u456", "Hello IM", null);
     }
 
     @Test
@@ -465,7 +471,7 @@ class SkillMessageControllerTest {
         session.setId(1L);
         session.setBusinessSessionId("direct_t789_u456");
         when(accessControlService.requireSessionAccess(1L, "u456")).thenReturn(session);
-        when(imMessageService.sendMessage("direct", "t789", "u456", "hi")).thenReturn(true);
+        when(imMessageService.sendMessage("direct", "t789", "u456", "hi", null)).thenReturn(true);
 
         var request = new SkillMessageController.SendToImRequest();
         request.setContent("hi");
@@ -473,7 +479,7 @@ class SkillMessageControllerTest {
         var response = controller.sendToIm("u456", "1", request);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(0, response.getBody().getCode());
-        verify(imMessageService).sendMessage("direct", "t789", "u456", "hi");
+        verify(imMessageService).sendMessage("direct", "t789", "u456", "hi", null);
     }
 
     @Test
@@ -491,7 +497,7 @@ class SkillMessageControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(400, response.getBody().getCode());
         assertEquals("Invalid businessSessionId format", response.getBody().getErrormsg());
-        verify(imMessageService, never()).sendMessage(anyString(), anyString(), anyString(), anyString());
+        verify(imMessageService, never()).sendMessage(anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -509,6 +515,7 @@ class SkillMessageControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(400, response.getBody().getCode());
         assertEquals("Invalid businessSessionId format", response.getBody().getErrormsg());
+        verify(imMessageService, never()).sendMessage(anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -527,7 +534,7 @@ class SkillMessageControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(403, response.getBody().getCode());
         assertEquals("Sender mismatch", response.getBody().getErrormsg());
-        verify(imMessageService, never()).sendMessage(anyString(), anyString(), anyString(), anyString());
+        verify(imMessageService, never()).sendMessage(anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -544,7 +551,7 @@ class SkillMessageControllerTest {
                 () -> controller.sendToIm(null, "1", request));
         assertEquals(400, ex.getCode());
         assertEquals("userId is required", ex.getMessage());
-        verify(imMessageService, never()).sendMessage(anyString(), anyString(), anyString(), anyString());
+        verify(imMessageService, never()).sendMessage(anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -581,7 +588,7 @@ class SkillMessageControllerTest {
         session.setId(1L);
         session.setBusinessSessionId("group_g123_u456");
         when(accessControlService.requireSessionAccess(1L, "u456")).thenReturn(session);
-        when(imMessageService.sendMessage("group", "g123", "u456", "hi")).thenReturn(false);
+        when(imMessageService.sendMessage("group", "g123", "u456", "hi", null)).thenReturn(false);
 
         var request = new SkillMessageController.SendToImRequest();
         request.setContent("hi");
@@ -590,6 +597,74 @@ class SkillMessageControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(500, response.getBody().getCode());
         assertEquals("Failed to send message to IM", response.getBody().getErrormsg());
+    }
+
+    @Test
+    @DisplayName("sendToIm: msg_ext 开关开启 → IM body 包含 msg_ext 字段")
+    void sendToImWithMsgExtEnabled() {
+        SkillSession session = new SkillSession();
+        session.setId(1L);
+        session.setBusinessSessionId("group_g123_u456");
+        when(accessControlService.requireSessionAccess(1L, "u456")).thenReturn(session);
+        when(sysConfigService.getValue("msg_ext", "enabled")).thenReturn("1");
+        when(sysConfigService.getValue("msg_ext", "content"))
+                .thenReturn("{\"skillProviderCnName\":\"员工助手\",\"skillProviderEnName\":\"My Agent\"}");
+        when(imMessageService.sendMessage(eq("group"), eq("g123"), eq("u456"), eq("Hello IM"),
+                eq("{\"skillProviderCnName\":\"员工助手\",\"skillProviderEnName\":\"My Agent\"}")))
+                .thenReturn(true);
+
+        var request = new SkillMessageController.SendToImRequest();
+        request.setContent("Hello IM");
+
+        var response = controller.sendToIm("u456", "1", request);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(0, response.getBody().getCode());
+        assertEquals(true, response.getBody().getData().get("success"));
+        verify(imMessageService).sendMessage("group", "g123", "u456", "Hello IM",
+                "{\"skillProviderCnName\":\"员工助手\",\"skillProviderEnName\":\"My Agent\"}");
+    }
+
+    @Test
+    @DisplayName("sendToIm: msg_ext 开关关闭 → IM body 不含 msg_ext 字段")
+    void sendToImWithMsgExtDisabled() {
+        SkillSession session = new SkillSession();
+        session.setId(1L);
+        session.setBusinessSessionId("group_g123_u456");
+        when(accessControlService.requireSessionAccess(1L, "u456")).thenReturn(session);
+        when(sysConfigService.getValue("msg_ext", "enabled")).thenReturn("0");
+        when(imMessageService.sendMessage("group", "g123", "u456", "Hello IM", null)).thenReturn(true);
+
+        var request = new SkillMessageController.SendToImRequest();
+        request.setContent("Hello IM");
+
+        var response = controller.sendToIm("u456", "1", request);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(0, response.getBody().getCode());
+        assertEquals(true, response.getBody().getData().get("success"));
+        verify(imMessageService).sendMessage("group", "g123", "u456", "Hello IM", null);
+        // 确认没有读取 content 配置
+        verify(sysConfigService, never()).getValue("msg_ext", "content");
+    }
+
+    @Test
+    @DisplayName("sendToIm: msg_ext 开关开启但内容为 null → IM body 不含 msg_ext 字段")
+    void sendToImWithMsgExtEnabledButContentNull() {
+        SkillSession session = new SkillSession();
+        session.setId(1L);
+        session.setBusinessSessionId("group_g123_u456");
+        when(accessControlService.requireSessionAccess(1L, "u456")).thenReturn(session);
+        when(sysConfigService.getValue("msg_ext", "enabled")).thenReturn("1");
+        when(sysConfigService.getValue("msg_ext", "content")).thenReturn(null);
+        when(imMessageService.sendMessage("group", "g123", "u456", "Hello IM", null)).thenReturn(true);
+
+        var request = new SkillMessageController.SendToImRequest();
+        request.setContent("Hello IM");
+
+        var response = controller.sendToIm("u456", "1", request);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(0, response.getBody().getCode());
+        assertEquals(true, response.getBody().getData().get("success"));
+        verify(imMessageService).sendMessage("group", "g123", "u456", "Hello IM", null);
     }
 
     // ==================== 助理删除校验 ====================
