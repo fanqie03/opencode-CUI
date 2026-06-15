@@ -962,9 +962,9 @@ public static class QuestionInfo {
 }
 ```
 
-**遵守这条约定时配套的 grep 习惯**：改动 `StreamMessage.*` 任何字段前先 `grep -rn "<oldFieldName>" skill-miniapp plugins documents/protocol` 看协议文档与下游消费者，决定是只改 Java 还是全链路改名。
+**遵守这条约定时配套的 grep 习惯**：改动 `StreamMessage.*` 任何字段前先 `grep -rn "<oldFieldName>" skill-miniapp plugins .trellis/spec` 看协议文档与下游消费者，决定是只改 Java 还是全链路改名。
 
-> **历史踩坑**：`StreamMessage.QuestionInfo.requestId` 原本无 `@JsonProperty`，依赖 Java 字段名 == wire name。重命名为 `questionId` 时必须同步改 miniapp / plugin contracts / v3 协议文档；任何一处遗漏都会让 question_reply 快路径静默退化为 D8 fallback。
+> **历史踩坑**：`StreamMessage.QuestionInfo.requestId` 原本无 `@JsonProperty`，依赖 Java 字段名 == wire name。重命名为 `questionId` 时必须同步改 miniapp / plugin contracts / `.trellis/spec/business/protocol/01-consumer-stream-protocol.md`；任何一处遗漏都会让 question_reply 快路径静默退化为 D8 fallback。
 
 ## 跨 vendor 的 toolSessionId 必须 Long-parseable
 

@@ -1,0 +1,17 @@
+{"file": ".trellis/spec/business/index.md", "reason": "Verify the protocol suite is reachable from the business index."}
+{"file": ".trellis/spec/business/protocol-contracts.md", "reason": "Verify the former abstract spec now points to the concrete suite."}
+{"file": ".trellis/spec/business/protocol/README.md", "reason": "Verify the new protocol suite entry follows the old README template and links all files."}
+{"file": ".trellis/spec/business/protocol/01-consumer-stream-protocol.md", "reason": "Verify consumer-facing StreamMessage protocol details."}
+{"file": ".trellis/spec/business/protocol/02-inbound-rest-protocol.md", "reason": "Verify miniapp and external inbound REST details."}
+{"file": ".trellis/spec/business/protocol/03-skillserver-gateway.md", "reason": "Verify GatewayMessage and SS/GW endpoint details."}
+{"file": ".trellis/spec/business/protocol/04-agent-return-protocols.md", "reason": "Verify the three agent/cloud return protocols."}
+{"file": ".trellis/spec/business/protocol/05-event-to-streammessage-mapping.md", "reason": "Verify mapping tables are concrete and complete enough for maintenance."}
+{"file": ".trellis/spec/business/protocol/06-end-to-end-flows.md", "reason": "Verify key end-to-end flows are concrete."}
+{"file": ".trellis/spec/business/protocol/07-message-type-lifecycle.md", "reason": "Verify message lifecycle and maintenance checklist."}
+{"file": ".trellis/spec/business/external-im-direct-chat.md", "reason": "Check direct external boundaries against the rewritten protocol docs."}
+{"file": ".trellis/spec/business/external-im-group-chat.md", "reason": "Check group sender/imGroupId/suppressReply boundaries against the rewritten protocol docs."}
+{"file": ".trellis/spec/business/miniapp-chat.md", "reason": "Check miniapp REST/history/WebSocket boundaries against the rewritten protocol docs."}
+{"file": ".trellis/spec/business/assistant-type-matrix.md", "reason": "Check assistant type and cloudProfile distinctions against the rewritten protocol docs."}
+{"file": ".trellis/spec/business/tool-session-lifecycle.md", "reason": "Check toolSessionId lifecycle and retry boundaries against the rewritten protocol docs."}
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "Check StreamMessage maintenance references point to the new suite."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer review of protocol source-of-truth and consumers."}

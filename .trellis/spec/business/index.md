@@ -14,6 +14,7 @@
 
 | 场景 | 文档 | 状态 |
 | --- | --- | --- |
+| 协议文档 | [protocol/README.md](protocol/README.md) | 已记录 |
 | 助手类型矩阵 | [assistant-type-matrix.md](assistant-type-matrix.md) | 已记录 |
 | toolSessionId 生命周期 | [tool-session-lifecycle.md](tool-session-lifecycle.md) | 已记录 |
 
