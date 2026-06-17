@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/business/protocol/README.md", "reason": "检查入口是否包含全事件示例文档并指向当前规范。"}
+{"file": ".trellis/spec/business/protocol/01-consumer-stream-protocol.md", "reason": "检查最终 StreamMessage 类型清单是否与全事件示例一致。"}
+{"file": ".trellis/spec/business/protocol/03-skillserver-gateway.md", "reason": "检查 GatewayMessage 类型清单是否被全事件示例覆盖。"}
+{"file": ".trellis/spec/business/protocol/04-agent-return-protocols.md", "reason": "检查三套返回协议边界与全事件示例是否一致。"}
+{"file": ".trellis/spec/business/protocol/05-event-to-streammessage-mapping.md", "reason": "检查每个上游事件是否有映射和示例，且 skill-provider/standard extension 边界没有混淆。"}
+{"file": ".trellis/spec/business/protocol/07-message-type-lifecycle.md", "reason": "检查最终事件示例是否覆盖 miniapp 消费状态机。"}
+{"file": ".trellis/spec/business/protocol/08-all-event-examples.md", "reason": "检查所有 GatewayMessage、OpenCode/local、cloud skill-provider、assistant_square、StreamMessage 事件是否都有 JSON 示例。"}
+{"file": ".trellis/spec/business/protocol-contracts.md", "reason": "检查历史兼容入口是否同步新增文档链接。"}

@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/business/protocol/README.md", "reason": "协议规范入口；实现/补文档时必须保持文档结构和 source-of-truth 说明一致。"}
+{"file": ".trellis/spec/business/protocol/01-consumer-stream-protocol.md", "reason": "miniapp/externalWs 最终 StreamMessage 消费协议；全事件示例需要与最终下行类型保持一致。"}
+{"file": ".trellis/spec/business/protocol/03-skillserver-gateway.md", "reason": "Skill Server 与 AI Gateway 的 GatewayMessage 中间协议；全事件示例需要覆盖中间消息类型。"}
+{"file": ".trellis/spec/business/protocol/04-agent-return-protocols.md", "reason": "OpenCode/local、cloud skill-provider、assistant_square 三套返回协议说明；全事件示例必须与这些边界一致。"}
+{"file": ".trellis/spec/business/protocol/05-event-to-streammessage-mapping.md", "reason": "上游事件到 StreamMessage 的映射表；全事件示例需要与映射规则互相校验。"}
+{"file": ".trellis/spec/business/protocol/07-message-type-lifecycle.md", "reason": "miniapp 对每个 StreamMessage.type 的消费生命周期；全事件示例需要覆盖最终消费行为。"}
+{"file": ".trellis/spec/business/protocol/08-all-event-examples.md", "reason": "全事件 JSON 示例索引；本任务的主要交付物。"}
+{"file": ".trellis/spec/business/protocol-contracts.md", "reason": "历史兼容协议入口；新增全事件示例文档后需要同步链接。"}

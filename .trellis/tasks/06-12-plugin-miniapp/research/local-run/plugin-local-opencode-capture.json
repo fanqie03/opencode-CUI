@@ -1,0 +1,243 @@
+{
+  "capturedAt": "2026-06-12T11:40:29.042Z",
+  "samples": [
+    {
+      "fixture": "message.part.updated.text.json",
+      "provider": "opencode(absent protocol)",
+      "raw": {
+        "type": "message.part.updated",
+        "properties": {
+          "part": {
+            "id": "prt_cd3603509001EkSaJkPGfvcJSC",
+            "sessionID": "ses_32c9fea15ffe2Rnv8tITmfmGmQ",
+            "messageID": "msg_cd3603508001ioF1UNVajFbFmX",
+            "type": "text",
+            "text": "hi"
+          }
+        }
+      },
+      "validation": {
+        "ok": true,
+        "canonical": {
+          "type": "message.part.updated",
+          "properties": {
+            "part": {
+              "id": "prt_cd3603509001EkSaJkPGfvcJSC",
+              "sessionID": "ses_32c9fea15ffe2Rnv8tITmfmGmQ",
+              "messageID": "msg_cd3603508001ioF1UNVajFbFmX",
+              "type": "text",
+              "text": "hi"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fixture": "message.part.delta.json",
+      "provider": "opencode(absent protocol)",
+      "raw": {
+        "type": "message.part.delta",
+        "properties": {
+          "sessionID": "ses_fixture_delta",
+          "messageID": "msg_fixture_delta",
+          "partID": "prt_fixture_delta",
+          "field": "text",
+          "delta": "hello"
+        }
+      },
+      "validation": {
+        "ok": true,
+        "canonical": {
+          "type": "message.part.delta",
+          "properties": {
+            "sessionID": "ses_fixture_delta",
+            "messageID": "msg_fixture_delta",
+            "partID": "prt_fixture_delta",
+            "field": "text",
+            "delta": "hello"
+          }
+        }
+      }
+    },
+    {
+      "fixture": "message.updated.user.json",
+      "provider": "opencode(absent protocol)",
+      "raw": {
+        "type": "message.updated",
+        "properties": {
+          "info": {
+            "id": "msg_cd3603508001ioF1UNVajFbFmX",
+            "sessionID": "ses_32c9fea15ffe2Rnv8tITmfmGmQ",
+            "role": "user",
+            "time": {
+              "created": 1773072823560
+            },
+            "agent": "Sisyphus (Ultraworker)",
+            "model": {
+              "providerID": "bailian-coding-plan",
+              "modelID": "kimi-k2.5"
+            }
+          }
+        }
+      },
+      "validation": {
+        "ok": true,
+        "canonical": {
+          "type": "message.updated",
+          "properties": {
+            "info": {
+              "id": "msg_cd3603508001ioF1UNVajFbFmX",
+              "sessionID": "ses_32c9fea15ffe2Rnv8tITmfmGmQ",
+              "role": "user",
+              "time": {
+                "created": 1773072823560
+              },
+              "model": {
+                "providerID": "bailian-coding-plan",
+                "modelID": "kimi-k2.5"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "fixture": "question.asked.json",
+      "provider": "opencode(absent protocol)",
+      "raw": {
+        "type": "question.asked",
+        "properties": {
+          "id": "question_fixture_1",
+          "sessionID": "ses_question_1",
+          "questions": [
+            {
+              "question": "Choose a framework",
+              "header": "Framework",
+              "options": [
+                {
+                  "label": "Vite"
+                },
+                {
+                  "label": "CRA"
+                }
+              ]
+            }
+          ],
+          "tool": {
+            "messageID": "msg_question_1",
+            "callID": "call_question_1"
+          }
+        }
+      },
+      "validation": {
+        "ok": true,
+        "canonical": {
+          "type": "question.asked",
+          "properties": {
+            "sessionID": "ses_question_1",
+            "id": "question_fixture_1",
+            "questions": [
+              {
+                "question": "Choose a framework",
+                "header": "Framework",
+                "options": [
+                  {
+                    "label": "Vite"
+                  },
+                  {
+                    "label": "CRA"
+                  }
+                ]
+              }
+            ],
+            "tool": {
+              "messageID": "msg_question_1",
+              "callID": "call_question_1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fixture": "permission.asked.json",
+      "provider": "opencode(absent protocol)",
+      "raw": {
+        "type": "permission.asked",
+        "properties": {
+          "id": "perm_fixture_1",
+          "sessionID": "ses_permission_1",
+          "messageID": "msg_permission_1",
+          "type": "exec",
+          "title": "Run command",
+          "metadata": {
+            "command": "ls"
+          }
+        }
+      },
+      "validation": {
+        "ok": true,
+        "canonical": {
+          "type": "permission.asked",
+          "properties": {
+            "sessionID": "ses_permission_1",
+            "id": "perm_fixture_1",
+            "messageID": "msg_permission_1",
+            "type": "exec",
+            "title": "Run command",
+            "metadata": {
+              "command": "ls"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fixture": "permission.replied.json",
+      "provider": "opencode(absent protocol)",
+      "raw": {
+        "type": "permission.replied",
+        "properties": {
+          "sessionID": "ses_permission_1",
+          "requestID": "perm_fixture_1",
+          "reply": "always"
+        }
+      },
+      "validation": {
+        "ok": true,
+        "canonical": {
+          "type": "permission.replied",
+          "properties": {
+            "sessionID": "ses_permission_1",
+            "requestID": "perm_fixture_1",
+            "reply": "always"
+          }
+        }
+      }
+    },
+    {
+      "fixture": "session.status.busy.json",
+      "provider": "opencode(absent protocol)",
+      "raw": {
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_32c9fea15ffe2Rnv8tITmfmGmQ",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      "validation": {
+        "ok": true,
+        "canonical": {
+          "type": "session.status",
+          "properties": {
+            "sessionID": "ses_32c9fea15ffe2Rnv8tITmfmGmQ",
+            "status": {
+              "type": "busy"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

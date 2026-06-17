@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/business/index.md", "reason": "Verify the new protocol contract spec is reachable from the business spec index."}
+{"file": ".trellis/spec/business/protocol-contracts.md", "reason": "Verify the canonical protocol contract spec covers shared StreamMessage, inbound REST, SS/GW, three agent return protocols, and maintenance gates."}
+{"file": ".trellis/spec/business/external-im-direct-chat.md", "reason": "Check that the canonical protocol spec remains consistent with external direct-chat scenario boundaries."}
+{"file": ".trellis/spec/business/external-im-group-chat.md", "reason": "Check that the canonical protocol spec does not omit group sender/imGroupId/retry constraints."}
+{"file": ".trellis/spec/business/miniapp-chat.md", "reason": "Check that miniapp REST/history/WebSocket distinctions are represented accurately."}
+{"file": ".trellis/spec/business/assistant-type-matrix.md", "reason": "Check that all assistant categories and cloud profile distinctions are represented."}
+{"file": ".trellis/spec/business/tool-session-lifecycle.md", "reason": "Check that toolSessionId creation, use, rebuild, and reply boundaries remain consistent."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Use cross-layer checklist to review protocol source-of-truth and consumer/transport boundaries."}
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "Check that StreamMessage field-change guidance no longer points to retired protocol docs."}

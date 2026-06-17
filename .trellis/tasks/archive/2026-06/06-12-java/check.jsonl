@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/ai-gateway/backend/index.md", "reason": "Verify ai-gateway backend index links the new design/refactoring spec"}
+{"file": ".trellis/spec/ai-gateway/backend/design-and-refactoring.md", "reason": "Verify ai-gateway Java design/refactoring and business consistency rules are actionable"}
+{"file": ".trellis/spec/skill-server/backend/index.md", "reason": "Verify skill-server backend index links the new design/refactoring spec"}
+{"file": ".trellis/spec/skill-server/backend/design-and-refactoring.md", "reason": "Verify skill-server Java design/refactoring and business consistency rules are actionable"}

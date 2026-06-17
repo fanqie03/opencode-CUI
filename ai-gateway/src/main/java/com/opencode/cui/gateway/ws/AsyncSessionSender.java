@@ -15,6 +15,7 @@ public class AsyncSessionSender {
     private static final int DEFAULT_QUEUE_CAPACITY = 10000;
 
     private final WebSocketSession session;
+    private final AsyncSenderIdentity identity;
     private final BlockingQueue<TextMessage> queue;
     private final Runnable failureCallback;
     private final Thread senderThread;
@@ -35,10 +36,17 @@ public class AsyncSessionSender {
     }
 
     AsyncSessionSender(WebSocketSession session, int queueCapacity, Runnable failureCallback) {
+        this(session, queueCapacity, failureCallback, AsyncSenderIdentity.unknown());
+    }
+
+    AsyncSessionSender(WebSocketSession session, int queueCapacity, Runnable failureCallback,
+            AsyncSenderIdentity identity) {
         this.session = session;
+        this.identity = AsyncSenderIdentity.orUnknown(identity);
         this.queue = new LinkedBlockingQueue<>(Math.max(1, queueCapacity));
         this.failureCallback = failureCallback;
-        this.senderThread = new Thread(this::sendLoop, "ws-sender-" + session.getId());
+        this.senderThread = new Thread(this::sendLoop,
+                "ws-sender-" + this.identity.channel() + "-" + session.getId());
         this.senderThread.setDaemon(true);
     }
 
@@ -50,17 +58,18 @@ public class AsyncSessionSender {
 
     public boolean enqueue(TextMessage message) {
         if (!running.get()) {
-            log.error("[AsyncSender] Sender not running, rejecting message: linkId={}, pending={}",
-                    session.getId(), queue.size());
+            log.error("[AsyncSender] Sender not running, rejecting message: channel={}, peerType={}, peerId={}, linkId={}, pending={}",
+                    identity.channel(), identity.peerType(), identity.peerId(), session.getId(), queue.size());
             return false;
         }
         boolean offered = queue.offer(message);
         if (!offered) {
-            log.error("[AsyncSender] Queue full, dropping message: linkId={}, pending={}",
-                    session.getId(), queue.size());
+            log.error("[AsyncSender] Queue full, dropping message: channel={}, peerType={}, peerId={}, linkId={}, pending={}",
+                    identity.channel(), identity.peerType(), identity.peerId(), session.getId(), queue.size());
             return false;
         }
-        log.debug("[AsyncSender] Message queued: linkId={}, pending={}", session.getId(), queue.size());
+        log.debug("[AsyncSender] Message queued: channel={}, peerType={}, peerId={}, linkId={}, pending={}",
+                identity.channel(), identity.peerType(), identity.peerId(), session.getId(), queue.size());
         return true;
     }
 
@@ -73,11 +82,16 @@ public class AsyncSessionSender {
         int dropped = queue.size();
         queue.clear();
         senderThread.interrupt();
-        log.info("[AsyncSender] Sender stopped: linkId={}, droppedMessages={}", session.getId(), dropped);
+        log.info("[AsyncSender] Sender stopped: channel={}, peerType={}, peerId={}, linkId={}, droppedMessages={}",
+                identity.channel(), identity.peerType(), identity.peerId(), session.getId(), dropped);
     }
 
     public int pendingCount() {
         return queue.size();
+    }
+
+    public AsyncSenderIdentity identity() {
+        return identity;
     }
 
     private void sendLoop() {
@@ -86,8 +100,9 @@ public class AsyncSessionSender {
                 TextMessage msg = queue.take();
                 if (!session.isOpen()) {
                     running.set(false);
-                    log.error("[AsyncSender] Session closed before send: linkId={}, remaining={}",
-                            session.getId(), queue.size() + 1);
+                    log.error("[AsyncSender] Session closed before send: channel={}, peerType={}, peerId={}, linkId={}, remaining={}",
+                            identity.channel(), identity.peerType(), identity.peerId(), session.getId(),
+                            queue.size() + 1);
                     notifyFailure();
                     break;
                 }
@@ -96,8 +111,8 @@ public class AsyncSessionSender {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
-            log.error("[AsyncSender] Send failed: linkId={}, remaining={}",
-                    session.getId(), queue.size(), e);
+            log.error("[AsyncSender] Send failed: channel={}, peerType={}, peerId={}, linkId={}, remaining={}",
+                    identity.channel(), identity.peerType(), identity.peerId(), session.getId(), queue.size(), e);
             running.set(false);
             notifyFailure();
         } finally {
@@ -110,8 +125,9 @@ public class AsyncSessionSender {
             try {
                 failureCallback.run();
             } catch (Exception e) {
-                log.warn("[AsyncSender] Failure callback failed: linkId={}, error={}",
-                        session.getId(), e.getMessage(), e);
+                log.warn("[AsyncSender] Failure callback failed: channel={}, peerType={}, peerId={}, linkId={}, error={}",
+                        identity.channel(), identity.peerType(), identity.peerId(), session.getId(), e.getMessage(),
+                        e);
             }
         }
     }

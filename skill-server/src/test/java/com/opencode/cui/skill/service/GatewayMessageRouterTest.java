@@ -1085,8 +1085,8 @@ class GatewayMessageRouterTest {
     }
 
     @Test
-    @DisplayName("PR2: 单聊 session -> payload 含 'imGroupId':null（保留与 dispatchChatToGateway 一致的写 null 行为）")
-    void retryPendingMessages_directSession_imGroupIdIsExplicitNull() throws Exception {
+    @DisplayName("单聊 retry session -> payload 含 'imGroupId':\"\"")
+    void retryPendingMessages_directSession_imGroupIdIsEmptyString() throws Exception {
         GatewayMessageRouter r = buildRouter(true);
         GatewayMessageRouter.DownstreamSender sender =
                 org.mockito.Mockito.mock(GatewayMessageRouter.DownstreamSender.class);
@@ -1113,9 +1113,9 @@ class GatewayMessageRouterTest {
         verify(sender, times(1)).sendInvokeToGateway(captor.capture());
         com.fasterxml.jackson.databind.JsonNode payload = objectMapper.readTree(captor.getValue().payload());
 
-        // 与 dispatchChatToGateway 行为一致：单聊 imGroupId 字段存在但 value 为 null
+        // 与 dispatchChatToGateway 行为一致：发给 plugin 的空 imGroupId 统一为空字符串。
         assertTrue(payload.has("imGroupId"), "imGroupId field must be present even for direct session");
-        assertTrue(payload.path("imGroupId").isNull(), "imGroupId value should be JSON null for direct session");
+        assertEquals("", payload.path("imGroupId").asText(), "imGroupId value should be empty string for direct session");
     }
 
     @Test

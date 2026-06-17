@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/business/index.md", "reason": "Business spec entry point; must link the new canonical protocol contract spec."}
+{"file": ".trellis/spec/business/protocol-contracts.md", "reason": "Canonical protocol contract spec being created for final consumer protocol, inbound REST, SS/GW, agent return protocols, and cloud profiles."}
+{"file": ".trellis/spec/business/external-im-direct-chat.md", "reason": "Existing external direct-chat scenario evidence for request/reply boundaries and externalWs delivery."}
+{"file": ".trellis/spec/business/external-im-group-chat.md", "reason": "Existing external group-chat scenario evidence for sender, imGroupId, suppressReply, and retry context boundaries."}
+{"file": ".trellis/spec/business/miniapp-chat.md", "reason": "Existing miniapp scenario evidence for REST, history, permission reply, and miniapp WebSocket delivery."}
+{"file": ".trellis/spec/business/assistant-type-matrix.md", "reason": "Assistant type and cloud profile matrix needed to distinguish local agent, standard cloud, assistant_square cloud, and virtual assistant."}
+{"file": ".trellis/spec/business/tool-session-lifecycle.md", "reason": "toolSessionId lifecycle contract shared by external, miniapp, SS, GW, local agent, and cloud agent paths."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer checklist for protocol work spanning miniapp, skill-server, ai-gateway, and agent/cloud boundaries."}
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "Contains StreamMessage wire-field maintenance convention that must point to the new spec source of truth."}

@@ -1,0 +1,8 @@
+{"type":"text.delta","seq":9,"messageId":"msg-local-1","role":"assistant","sourceMessageId":"msg-local-1","partId":"text-1","partSeq":1,"content":"hello ","welinkSessionId":"9000000001"}
+{"type":"text.done","seq":10,"messageId":"msg-local-1","role":"assistant","sourceMessageId":"msg-local-1","partId":"text-1","partSeq":1,"content":"hello world","welinkSessionId":"9000000001"}
+{"type":"question","seq":11,"messageId":"msg-local-1","role":"assistant","sourceMessageId":"msg-local-1","partId":"question-1","partSeq":2,"status":"running","toolCallId":"call-q-1","header":"Choose","question":"Pick one?","options":["A","B"],"questionId":"question-1","welinkSessionId":"9000000001"}
+{"type":"permission.ask","seq":12,"messageId":"msg-local-1","role":"assistant","sourceMessageId":"msg-local-1","partId":"perm-1","partSeq":3,"status":"pending","title":"Run command","permissionId":"perm-1","permType":"command","metadata":{"command":"pwd"},"welinkSessionId":"9000000001"}
+{"type":"permission.reply","seq":13,"messageId":"msg-local-1","role":"assistant","sourceMessageId":"msg-local-1","partId":"perm-1","partSeq":3,"status":"completed","permissionId":"perm-1","permType":"command","response":"once","welinkSessionId":"9000000001"}
+{"type":"planning.delta","seq":14,"messageId":"msg-local-2","role":"assistant","sourceMessageId":"msg-local-2","partId":"planning-1","partSeq":1,"content":"plan","welinkSessionId":"9000000001"}
+{"type":"searching","seq":15,"messageId":"msg-local-2","role":"assistant","sourceMessageId":"msg-local-2","partId":"searching-1","partSeq":2,"keywords":["JDK8"],"welinkSessionId":"9000000001"}
+{"type":"session.status","seq":16,"sessionStatus":"idle","welinkSessionId":"9000000001"}

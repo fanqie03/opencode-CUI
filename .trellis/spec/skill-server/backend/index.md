@@ -14,6 +14,7 @@
 - 2026-05-20：`error-handling.md` 新增 "Inbound chat senderUserAccount 必填且不再 fallback"（7 段 code-spec：两入口 × 4 action 强制 blank 校验、`dispatchChatToGateway` 移除 `ownerWelinkId` 兜底、`createSessionAsync` 真实 sender 入队、Pending Redis 兼容、Wrong vs Correct 防回归）；`type-safety.md` 同步把 senderUserAccount 段的 `effectiveSender` 示例从老的 group/direct fallback 切到无兜底版本，"常见错误"新增第 6 条禁止 ownerWelinkId 默认值。来源：任务 05-20-single-chat-sender-fallback-removal。
 - 2026-05-20（晚）：`conventions.md` 新增 "外部 fire-and-forget 上报 / 埋码模式"（5 条不变量：独立 executor + `@ConditionalOnProperty` 总开关 + 必填缺失 soft-disable + 每个异步边界顶层 try-catch + 日志禁 secret/栈），并在 "测试 mock 不能跨过抽象层" 下增子节 "Spring AOP 切面 + Mockito mock target bean = 静默失活"（advice 直调 vs 半 mock 容器陷阱）；"禁止事项" 表新增 4 条（复用业务 Executor / 配置缺失 fail-fast / 日志带栈或 secret / `@MockBean` mock 切面 target）。来源：任务 05-20-chat-telemetry-welink-reporter，canonical 实现 `skill-server/src/main/java/com/opencode/cui/skill/telemetry/`。
 - 2026-05-23：`conventions.md` 将 Redis pub/sub 自愈从 `PUBSUB NUMSUB` 硬判活更新为 loopback probe（`verifySubscriptionDelivery`），避免 Redis 6 Cluster / 云 Redis 代理下节点局部订阅统计误判；单通道恢复失败后不再整容器 `stop/start`，避免打断 `user-stream:*` 跨实例流式投递。来源：任务 05-23-diagnose-redis-relay-self-check-and-multi-instance-streaming-gaps。
+- 2026-06-12：新增 `design-and-refactoring.md`，沉淀 Java 软件设计、重构阈值、业务一致性八荣八耻、兜底边界、Wrong vs Correct 与测试要求。来源：任务 06-12-java。
 - 本次校准依据的近期代码变更：`9454a8c`（personal-scope cloud protocol + `StreamMessageEmitter`）与 `d10d64a`（`senderUserAccount` 信封层迁移）。
 
 ## 技术栈概览
@@ -55,7 +56,7 @@
 
 | 任务类型 | 必读文件 |
 |---------|----------|
-| 所有 skill-server 后端任务 | `directory-structure.md`, `conventions.md` |
+| 所有 skill-server 后端任务 | `directory-structure.md`, `conventions.md`, `design-and-refactoring.md` |
 | Controller / 入站协议 / 错误返回 | `error-handling.md` |
 | MyBatis / Redis / 事务 / 迁移 | `database-guidelines.md` |
 | 日志 / MDC / 外部调用可观测性 | `logging-guidelines.md` |
@@ -63,12 +64,13 @@
 
 ### 文件列表
 
-本目录当前共 **7** 个 Markdown 文件：本页 `index.md` + 下列 6 个专题文档。
+本目录当前共 **8** 个 Markdown 文件：本页 `index.md` + 下列 7 个专题文档。
 
 | 文件 | 当前覆盖重点 |
 |------|--------------|
 | [directory-structure.md](directory-structure.md) | 最新包结构、子包职责、资源目录、命名放置规则 |
 | [conventions.md](conventions.md) | 构造注入、异步执行器、WebSocket 生命周期、Redis 订阅、`StreamMessageEmitter` 约束 |
+| [design-and-refactoring.md](design-and-refactoring.md) | Java 软件设计、重构阈值、业务一致性八荣八耻、兜底边界、Review Checklist |
 | [error-handling.md](error-handling.md) | `ApiResponse` / `InboundResult` / `ProtocolException`、WebSocket 与 IM / external 入站错误语义 |
 | [database-guidelines.md](database-guidelines.md) | MyBatis 接口 + XML、迁移脚本清单、Redis key / TTL / pub-sub 约定、事务边界 |
 | [logging-guidelines.md](logging-guidelines.md) | Log4j2 pattern、MDC key、`[ENTRY]/[EXIT]/[SKIP]/[EXT_CALL]` 约定 |

@@ -5,7 +5,7 @@ import java.util.Optional;
 /**
  * 业务会话 ID 解析结果。
  *
- * <p>格式契约（参考 {@code documents/protocol/v3/01-miniapp-skillserver.md}）：
+ * <p>格式契约（参考 {@code .trellis/spec/business/protocol-contracts.md}）：
  * <ul>
  *   <li>{@code group_<targetId>_<senderAccount>}</li>
  *   <li>{@code direct_<targetId>_<senderAccount>}</li>

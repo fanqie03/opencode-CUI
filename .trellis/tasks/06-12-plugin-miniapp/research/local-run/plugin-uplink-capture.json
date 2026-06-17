@@ -1,0 +1,175 @@
+[
+  {
+    "type": "session_created",
+    "welinkSessionId": "9000000001",
+    "toolSessionId": "tool-local-1",
+    "session": {
+      "sessionId": "tool-local-1"
+    }
+  },
+  {
+    "type": "tool_event",
+    "toolSessionId": "tool-local-1",
+    "event": {
+      "protocol": "cloud",
+      "type": "step.start",
+      "properties": {
+        "messageId": "msg-cloud-1"
+      }
+    }
+  },
+  {
+    "type": "tool_event",
+    "toolSessionId": "tool-local-1",
+    "event": {
+      "protocol": "cloud",
+      "type": "text.delta",
+      "properties": {
+        "messageId": "msg-cloud-1",
+        "partId": "text-1",
+        "content": "he"
+      }
+    }
+  },
+  {
+    "type": "tool_event",
+    "toolSessionId": "tool-local-1",
+    "event": {
+      "protocol": "cloud",
+      "type": "text.done",
+      "properties": {
+        "messageId": "msg-cloud-1",
+        "partId": "text-1",
+        "content": "hello"
+      }
+    }
+  },
+  {
+    "type": "tool_event",
+    "toolSessionId": "tool-local-1",
+    "event": {
+      "protocol": "cloud",
+      "type": "tool.update",
+      "properties": {
+        "messageId": "msg-cloud-1",
+        "partId": "tool-1",
+        "toolName": "bash",
+        "status": "running",
+        "toolCallId": "call-1",
+        "title": "Run command",
+        "input": "pwd"
+      }
+    }
+  },
+  {
+    "type": "tool_event",
+    "toolSessionId": "tool-local-1",
+    "event": {
+      "protocol": "cloud",
+      "type": "tool.update",
+      "properties": {
+        "messageId": "msg-cloud-1",
+        "partId": "tool-1",
+        "toolName": "bash",
+        "status": "completed",
+        "toolCallId": "call-1",
+        "title": "Run command",
+        "output": "/tmp"
+      }
+    }
+  },
+  {
+    "type": "tool_event",
+    "toolSessionId": "tool-local-1",
+    "event": {
+      "protocol": "cloud",
+      "type": "question",
+      "properties": {
+        "messageId": "msg-cloud-1",
+        "partId": "question-display-1",
+        "questionId": "question-target-1",
+        "toolCallId": "question-target-1",
+        "questions": [
+          {
+            "question": "Pick one?",
+            "header": "Choose",
+            "options": [
+              {
+                "label": "A"
+              },
+              {
+                "label": "B",
+                "description": "Beta"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "tool_event",
+    "toolSessionId": "tool-local-1",
+    "event": {
+      "protocol": "cloud",
+      "type": "permission.ask",
+      "properties": {
+        "messageId": "msg-cloud-1",
+        "partId": "permission-display-1",
+        "permissionId": "permission-target-1",
+        "permType": "command",
+        "title": "Run command",
+        "metadata": {
+          "command": "pwd"
+        }
+      }
+    }
+  },
+  {
+    "type": "tool_event",
+    "toolSessionId": "tool-local-1",
+    "event": {
+      "protocol": "cloud",
+      "type": "permission.reply",
+      "properties": {
+        "permissionId": "permission-target-1",
+        "response": "once",
+        "permType": "command",
+        "messageId": "msg-cloud-1",
+        "partId": "permission-display-1"
+      }
+    }
+  },
+  {
+    "type": "tool_event",
+    "toolSessionId": "tool-local-1",
+    "event": {
+      "protocol": "cloud",
+      "type": "step.done",
+      "properties": {
+        "messageId": "msg-cloud-1",
+        "tokens": {
+          "input": 1,
+          "output": 2
+        },
+        "cost": 0.01,
+        "reason": "stop"
+      }
+    }
+  },
+  {
+    "type": "tool_event",
+    "toolSessionId": "tool-local-1",
+    "event": {
+      "protocol": "cloud",
+      "type": "session.title",
+      "properties": {
+        "title": "New title"
+      }
+    }
+  },
+  {
+    "type": "tool_done",
+    "toolSessionId": "tool-local-1"
+  }
+]
