@@ -26,6 +26,7 @@ import com.opencode.cui.skill.service.GatewayMessageRouter;
 import com.opencode.cui.skill.service.SkillMessageFlowService;
 import com.opencode.cui.skill.service.SkillSessionService;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -93,12 +94,13 @@ public class SkillMessageController {
             DefaultAssistantRuleService ruleService,
             AllowedSlashCommandsResolver allowedSlashCommandsResolver,
             MessagePersistenceService persistenceService,
-            ApplicationEventPublisher eventPublisher) {
+            ApplicationEventPublisher eventPublisher,
+            MessageTurnLifecycle messageTurnLifecycle) {
         this(messageService, imMessageService, objectMapper, accessControlService,
                 new SkillMessageFlowService(
                         messageService, gatewayRelayService, objectMapper, messageRouter, assistantIdProperties,
                         assistantInfoService, scopeDispatcher, availabilityService, assistantAccountResolverService,
-                        ruleService, allowedSlashCommandsResolver, eventPublisher, persistenceService));
+                        ruleService, allowedSlashCommandsResolver, eventPublisher, persistenceService, messageTurnLifecycle));
     }
 
     /**
