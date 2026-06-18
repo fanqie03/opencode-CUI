@@ -1,3 +1,16 @@
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+      base-path: /actuator
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: skill-server
+
 server:
   port: 8082
 
@@ -125,6 +138,10 @@ skill:
     invoke-source-ttl-seconds: ${SKILL_DELIVERY_INVOKE_SOURCE_TTL_SECONDS:300}
     registry-ttl-seconds: ${SKILL_DELIVERY_REGISTRY_TTL_SECONDS:30}
     registry-heartbeat-interval-ms: ${SKILL_DELIVERY_REGISTRY_HEARTBEAT_INTERVAL_MS:10000}
+  metrics:
+    stream:
+      max-sessions: ${SKILL_METRICS_STREAM_MAX_SESSIONS:10000}
+      session-ttl: ${SKILL_METRICS_STREAM_SESSION_TTL:30m}
 
 opencode:
   logging:
