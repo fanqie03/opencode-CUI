@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.telemetry.client.WelinkTelemetryClient;
 import com.opencode.cui.skill.telemetry.core.TelemetryExecutor;
 import com.opencode.cui.skill.telemetry.core.WelinkTelemetryReporter;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -29,12 +30,13 @@ public class WelinkTelemetryAutoConfiguration {
         return new TelemetryExecutor(properties.getExecutor());
     }
 
-    @Bean
-    public WelinkTelemetryClient welinkTelemetryClient(RestTemplate restTemplate,
-                                                       ObjectMapper objectMapper,
-                                                       WelinkTelemetryProperties properties) {
-        return new WelinkTelemetryClient(restTemplate, objectMapper, properties);
-    }
+     @Bean
+     public WelinkTelemetryClient welinkTelemetryClient(RestTemplate restTemplate,
+                                                        ObjectMapper objectMapper,
+                                                        WelinkTelemetryProperties properties,
+                                                        ApiCallMetricsService apiCallMetricsService) {
+         return new WelinkTelemetryClient(restTemplate, objectMapper, properties, apiCallMetricsService);
+     }
 
     @Bean
     public WelinkTelemetryReporter welinkTelemetryReporter(WelinkTelemetryProperties properties,

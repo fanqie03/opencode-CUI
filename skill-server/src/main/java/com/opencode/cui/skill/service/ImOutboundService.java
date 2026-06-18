@@ -1,7 +1,10 @@
 package com.opencode.cui.skill.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.opencode.cui.skill.logging.MdcHelper;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
+import com.opencode.cui.skill.telemetry.metrics.MetricServiceEnum;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -35,14 +38,17 @@ public class ImOutboundService {
     private final String imApiUrl;
     /** IM 平台认证令牌 */
     private final String imToken;
+    private final ApiCallMetricsService apiCallMetricsService;
 
     public ImOutboundService(
             RestTemplate restTemplate,
             @org.springframework.beans.factory.annotation.Value("${skill.im.api-url}") String imApiUrl,
-            @org.springframework.beans.factory.annotation.Value("${skill.im.token:}") String imToken) {
+            @org.springframework.beans.factory.annotation.Value("${skill.im.token:}") String imToken,
+            ApiCallMetricsService apiCallMetricsService) {
         this.restTemplate = restTemplate;
         this.imApiUrl = imApiUrl;
         this.imToken = imToken;
+        this.apiCallMetricsService = apiCallMetricsService;
     }
 
     /**
@@ -71,6 +77,16 @@ public class ImOutboundService {
             return false;
         }
 
+        // Determine the service enum based on session type
+        MetricServiceEnum metricService;
+        if (SkillSession.SESSION_TYPE_GROUP.equalsIgnoreCase(sessionType)) {
+            metricService = MetricServiceEnum.IM_GROUP_CHAT;
+        } else if (SkillSession.SESSION_TYPE_DIRECT.equalsIgnoreCase(sessionType)) {
+            metricService = MetricServiceEnum.IM_DIRECT_CHAT;
+        } else {
+            metricService = null;
+        }
+
         // 构建请求体
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("appMsgId", UUID.randomUUID().toString());
@@ -86,13 +102,17 @@ public class ImOutboundService {
             headers.setBearerAuth(imToken);
         }
 
-        long start = System.nanoTime();
+        boolean success = false;
+        long start = System.currentTimeMillis();
         try {
+            if (metricService != null) {
+                MdcHelper.putBusinessDomain(metricService.getId());
+            }
             ResponseEntity<JsonNode> response = restTemplate.postForEntity(
                     joinUrl(imApiUrl, path),
                     new HttpEntity<>(body, headers),
                     JsonNode.class);
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
             JsonNode respBody = response.getBody();
             if (!response.getStatusCode().is2xxSuccessful() || respBody == null) {
                 log.warn("[EXT_CALL] ImOutbound.send HTTP error: sessionId={}, status={}, durationMs={}",
@@ -112,12 +132,18 @@ public class ImOutboundService {
             }
             log.info("[EXT_CALL] ImOutbound.send success: sessionType={}, sessionId={}, msgId={}, durationMs={}",
                     sessionType, sessionId, respBody.path("msgId").asText(null), elapsedMs);
+            success = true;
             return true;
         } catch (Exception e) {
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
             log.error("[EXT_CALL] ImOutbound.send failed: sessionId={}, durationMs={}, error={}",
                     sessionId, elapsedMs, e.getMessage());
             return false;
+        } finally {
+            if (metricService != null) {
+                apiCallMetricsService.recordApiCall(metricService, path, success, System.currentTimeMillis() - start);
+                MdcHelper.putBusinessDomain(null);
+            }
         }
     }
 

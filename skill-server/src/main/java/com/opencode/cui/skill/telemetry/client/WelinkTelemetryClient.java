@@ -1,10 +1,13 @@
 package com.opencode.cui.skill.telemetry.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.logging.MdcHelper;
 import com.opencode.cui.skill.telemetry.client.dto.EncryptedEnvelope;
 import com.opencode.cui.skill.telemetry.client.dto.TelemetryPayload;
 import com.opencode.cui.skill.telemetry.config.WelinkTelemetryProperties;
 import com.opencode.cui.skill.telemetry.crypto.WelinkCipherUtil;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
+import com.opencode.cui.skill.telemetry.metrics.MetricServiceEnum;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -31,13 +34,16 @@ public class WelinkTelemetryClient {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final WelinkTelemetryProperties properties;
+    private final ApiCallMetricsService apiCallMetricsService;
 
     public WelinkTelemetryClient(RestTemplate restTemplate,
                                  ObjectMapper objectMapper,
-                                 WelinkTelemetryProperties properties) {
+                                 WelinkTelemetryProperties properties,
+                                 ApiCallMetricsService apiCallMetricsService) {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
         this.properties = properties;
+        this.apiCallMetricsService = apiCallMetricsService;
     }
 
     /**
@@ -48,8 +54,12 @@ public class WelinkTelemetryClient {
      * @param payload   明文 {@link TelemetryPayload}
      */
     public void send(String eventId, String sessionId, TelemetryPayload payload) {
-        long start = System.nanoTime();
+        String urlTemplate = "{telemetry.welink.url}";
+        MetricServiceEnum metricService = MetricServiceEnum.TELEMETRY_WELINK_UPLOAD;
+        boolean success = false;
+        long start = System.currentTimeMillis();
         try {
+            MdcHelper.putBusinessDomain(metricService.getId());
             String plaintext = objectMapper.writeValueAsString(payload);
             WelinkCipherUtil.Envelope envelope = WelinkCipherUtil.encrypt(properties.getPublicKey(), plaintext);
             EncryptedEnvelope body = new EncryptedEnvelope(envelope.key(), envelope.content());
@@ -63,7 +73,8 @@ public class WelinkTelemetryClient {
             ResponseEntity<String> response = restTemplate.exchange(
                     properties.getUrl(), HttpMethod.POST, entity, String.class);
 
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            success = true; // Any response (even non-2xx) counts as success for our metrics - only exceptions count as failure
+            long elapsedMs = (System.currentTimeMillis() - start);
             int code = response.getStatusCode().value();
             if (code >= 200 && code < 300) {
                 log.debug("[EXT_CALL] WelinkTelemetry.send completed: eventId={}, sessionId={}, httpCode={}, durationMs={}",
@@ -73,11 +84,11 @@ public class WelinkTelemetryClient {
                         eventId, sessionId, code, elapsedMs);
             }
         } catch (WelinkCipherUtil.CipherException e) {
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
             log.warn("[EXT_CALL] WelinkTelemetry.send cipher_failed: eventId={}, sessionId={}, durationMs={}, error={}",
                     eventId, sessionId, elapsedMs, e.getMessage());
         } catch (Exception e) {
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
             // 业务核心不变量：上报链路任何异常都不得抛回业务线程
             Integer httpCode = null;
             if (e instanceof org.springframework.web.client.HttpStatusCodeException sc) {
@@ -85,6 +96,9 @@ public class WelinkTelemetryClient {
             }
             log.warn("[EXT_CALL] WelinkTelemetry.send http_failed: eventId={}, sessionId={}, httpCode={}, durationMs={}, error={}",
                     eventId, sessionId, httpCode, elapsedMs, e.getMessage());
+        } finally {
+            apiCallMetricsService.recordApiCall(metricService, urlTemplate, success, System.currentTimeMillis() - start);
+            MdcHelper.putBusinessDomain(null);
         }
     }
 }

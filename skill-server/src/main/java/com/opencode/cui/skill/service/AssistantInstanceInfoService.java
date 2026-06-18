@@ -3,9 +3,12 @@ package com.opencode.cui.skill.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.logging.MdcHelper;
 import com.opencode.cui.skill.logging.SensitiveDataMasker;
 import com.opencode.cui.skill.model.AssistantInstanceInfo;
 import com.opencode.cui.skill.model.ExistenceStatus;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
+import com.opencode.cui.skill.telemetry.metrics.MetricServiceEnum;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -39,19 +42,22 @@ public class AssistantInstanceInfoService {
     private final String queryUrl;
     private final String queryToken;
     private final int cacheTtlSeconds;
+    private final ApiCallMetricsService apiCallMetricsService;
 
     public AssistantInstanceInfoService(RestTemplate restTemplate,
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
             @Value("${skill.assistant.resolve-url:}") String queryUrl,
             @Value("${skill.assistant.resolve-token:}") String queryToken,
-            @Value("${skill.assistant.instance-cache-ttl-seconds:${skill.assistant.status-cache-ttl-exists-seconds:300}}") int cacheTtlSeconds) {
+            @Value("${skill.assistant.instance-cache-ttl-seconds:${skill.assistant.status-cache-ttl-exists-seconds:300}}") int cacheTtlSeconds,
+            ApiCallMetricsService apiCallMetricsService) {
         this.restTemplate = restTemplate;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.queryUrl = queryUrl;
         this.queryToken = queryToken;
         this.cacheTtlSeconds = cacheTtlSeconds;
+        this.apiCallMetricsService = apiCallMetricsService;
     }
 
     public AssistantInstanceInfo getInstanceInfo(String partnerAccount) {
@@ -65,6 +71,12 @@ public class AssistantInstanceInfoService {
             return LookupResult.unknown();
         }
 
+        String urlTemplate = "/assistant-api/integration/v4-1/we-crew/instance/query";
+        MetricServiceEnum metricService = MetricServiceEnum.BUSINESS_CENTER_INSTANCE_QUERY;
+        boolean success = false;
+        long start = System.currentTimeMillis();
+        String masked = SensitiveDataMasker.maskToken(partnerAccount);
+
         String cacheKey = cacheKey(partnerAccount);
         AssistantInstanceInfo cached = readFromCache(cacheKey);
         if (cached != null) {
@@ -73,9 +85,8 @@ public class AssistantInstanceInfoService {
             return new LookupResult(ExistenceStatus.EXISTS, cached);
         }
 
-        long start = System.nanoTime();
-        String masked = SensitiveDataMasker.maskToken(partnerAccount);
         try {
+            MdcHelper.putBusinessDomain(metricService.getId());
             String requestUrl = UriComponentsBuilder.fromUriString(queryUrl)
                     .queryParam("partnerAccount", partnerAccount)
                     .build(true)
@@ -85,18 +96,23 @@ public class AssistantInstanceInfoService {
             applyAuthorization(headers);
             ResponseEntity<JsonNode> response = restTemplate.exchange(
                     requestUrl, HttpMethod.GET, new HttpEntity<>(headers), JsonNode.class);
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
 
             LookupResult result = parseResponse(response, partnerAccount, masked, elapsedMs);
             if (result.status() == ExistenceStatus.EXISTS && result.info() != null) {
                 writeCache(cacheKey, result.info());
             }
+            // Success = response received without exception (even if it's not exists)
+            success = true;
             return result;
         } catch (Exception e) {
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
             log.warn("[EXT_CALL] AssistantInstance.query failed: partnerAccount={}, durationMs={}, error={}",
                     masked, elapsedMs, e.getMessage());
             return LookupResult.unknown();
+        } finally {
+            apiCallMetricsService.recordApiCall(metricService, urlTemplate, success, System.currentTimeMillis() - start);
+            MdcHelper.putBusinessDomain(null);
         }
     }
 

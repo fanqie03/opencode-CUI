@@ -1,5 +1,8 @@
 package com.opencode.cui.skill.service;
 
+import com.opencode.cui.skill.logging.MdcHelper;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
+import com.opencode.cui.skill.telemetry.metrics.MetricServiceEnum;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -24,11 +27,14 @@ public class ImMessageService {
     private final RestTemplate restTemplate;
     /** IM 平台 API 根地址 */
     private final String imApiUrl;
+    private final ApiCallMetricsService apiCallMetricsService;
 
     public ImMessageService(RestTemplate restTemplate,
-            @Value("${skill.im.api-url}") String imApiUrl) {
+            @Value("${skill.im.api-url}") String imApiUrl,
+            ApiCallMetricsService apiCallMetricsService) {
         this.restTemplate = restTemplate;
         this.imApiUrl = imApiUrl;
+        this.apiCallMetricsService = apiCallMetricsService;
     }
 
     /**
@@ -60,7 +66,8 @@ public class ImMessageService {
             return false;
         }
 
-        String sendUrl = imApiUrl + "/messages/send";
+        String urlTemplate = "/messages/send";
+        String sendUrl = imApiUrl + urlTemplate;
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("targetType", targetType);
@@ -74,7 +81,11 @@ public class ImMessageService {
 
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
 
+        MetricServiceEnum metricService = MetricServiceEnum.IM_MESSAGE_SEND;
+        boolean success = false;
+        long start = System.currentTimeMillis();
         try {
+            MdcHelper.putBusinessDomain(metricService.getId());
             ResponseEntity<String> response = com.opencode.cui.skill.logging.LogTimer.timed(
                     log,
                     "ImMessage.send(targetType=" + targetType + ",targetId=" + targetId + ")",
@@ -82,6 +93,7 @@ public class ImMessageService {
             if (response.getStatusCode().is2xxSuccessful()) {
                 log.info("IM message sent successfully: targetType={}, targetId={}, senderAccount={}, contentLength={}",
                         targetType, targetId, senderAccount, content.length());
+                success = true;
                 return true;
             } else {
                 log.error("IM message send failed: targetType={}, targetId={}, status={}",
@@ -92,6 +104,9 @@ public class ImMessageService {
             log.error("IM message send error: targetType={}, targetId={}, error={}",
                     targetType, targetId, e.getMessage());
             return false;
+        } finally {
+            apiCallMetricsService.recordApiCall(metricService, urlTemplate, success, System.currentTimeMillis() - start);
+            MdcHelper.putBusinessDomain(null);
         }
     }
 }

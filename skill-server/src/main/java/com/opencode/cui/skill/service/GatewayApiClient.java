@@ -3,8 +3,11 @@ package com.opencode.cui.skill.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.config.InternalAuthProperties;
+import com.opencode.cui.skill.logging.MdcHelper;
 import com.opencode.cui.skill.model.AgentSummary;
 import com.opencode.cui.skill.model.GatewayAvailabilityResponse;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
+import com.opencode.cui.skill.telemetry.metrics.MetricServiceEnum;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -30,16 +33,19 @@ public class GatewayApiClient {
     private final ObjectMapper objectMapper;
     private final String gatewayBaseUrl;
     private final String internalToken;
+    private final ApiCallMetricsService apiCallMetricsService;
 
     public GatewayApiClient(
             RestTemplate restTemplate,
             ObjectMapper objectMapper,
             @org.springframework.beans.factory.annotation.Value("${skill.gateway.api-base-url:http://localhost:8081}") String gatewayBaseUrl,
-            InternalAuthProperties internalAuthProperties) {
+            InternalAuthProperties internalAuthProperties,
+            ApiCallMetricsService apiCallMetricsService) {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
         this.gatewayBaseUrl = gatewayBaseUrl;
         this.internalToken = internalAuthProperties.getInternalToken();
+        this.apiCallMetricsService = apiCallMetricsService;
     }
 
     /**
@@ -49,15 +55,19 @@ public class GatewayApiClient {
      * @return list of online agent summaries
      */
     public List<AgentSummary> getOnlineAgentsByUserId(String userId) {
-        long start = System.nanoTime();
+        String urlTemplate = "/api/gateway/agents";
+        MetricServiceEnum metricService = MetricServiceEnum.GATEWAY_AGENTS_LIST;
+        boolean success = false;
+        long start = System.currentTimeMillis();
         try {
-            String url = buildGatewayUrl("/api/gateway/agents", "userId", userId);
+            MdcHelper.putBusinessDomain(metricService.getId());
+            String url = buildGatewayUrl(urlTemplate, "userId", userId);
             ResponseEntity<String> response = restTemplate.exchange(
                     url,
                     HttpMethod.GET,
                     new HttpEntity<>(buildHeaders()),
                     String.class);
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 var root = objectMapper.readTree(response.getBody());
@@ -71,6 +81,7 @@ public class GatewayApiClient {
                         });
                 log.info("[EXT_CALL] GatewayAPI.getAgents success: userId={}, count={}, durationMs={}",
                         userId, agents.size(), elapsedMs);
+                success = true;
                 return agents;
             }
 
@@ -78,10 +89,13 @@ public class GatewayApiClient {
                     userId, response.getStatusCode(), elapsedMs);
             return Collections.emptyList();
         } catch (Exception e) {
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
             log.error("[EXT_CALL] GatewayAPI.getAgents failed: userId={}, durationMs={}, error={}",
                     userId, elapsedMs, e.getMessage());
             return Collections.emptyList();
+        } finally {
+            apiCallMetricsService.recordApiCall(metricService, urlTemplate, success, System.currentTimeMillis() - start);
+            MdcHelper.putBusinessDomain(null);
         }
     }
 
@@ -108,15 +122,19 @@ public class GatewayApiClient {
             return null;
         }
 
-        long start = System.nanoTime();
+        String urlTemplate = "/api/gateway/agents";
+        MetricServiceEnum metricService = MetricServiceEnum.GATEWAY_AGENTS_BY_AK;
+        boolean success = false;
+        long start = System.currentTimeMillis();
         try {
-            String url = buildGatewayUrl("/api/gateway/agents", "ak", ak);
+            MdcHelper.putBusinessDomain(metricService.getId());
+            String url = buildGatewayUrl(urlTemplate, "ak", ak);
             ResponseEntity<String> response = restTemplate.exchange(
                     url,
                     HttpMethod.GET,
                     new HttpEntity<>(buildHeaders()),
                     String.class);
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 var root = objectMapper.readTree(response.getBody());
@@ -129,6 +147,7 @@ public class GatewayApiClient {
                 AgentSummary agent = objectMapper.convertValue(dataNode.get(0), AgentSummary.class);
                 log.info("[EXT_CALL] GatewayAPI.getAgentByAk success: ak={}, toolType={}, durationMs={}",
                         ak, agent.getToolType(), elapsedMs);
+                success = true;
                 return agent;
             }
 
@@ -136,10 +155,13 @@ public class GatewayApiClient {
                     ak, response.getStatusCode(), elapsedMs);
             return null;
         } catch (Exception e) {
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
             log.error("[EXT_CALL] GatewayAPI.getAgentByAk failed: ak={}, durationMs={}, error={}",
                     ak, elapsedMs, e.getMessage());
             return null;
+        } finally {
+            apiCallMetricsService.recordApiCall(metricService, urlTemplate, success, System.currentTimeMillis() - start);
+            MdcHelper.putBusinessDomain(null);
         }
     }
 
@@ -153,9 +175,13 @@ public class GatewayApiClient {
         if (ak == null || ak.isBlank()) {
             return null;
         }
-        long start = System.nanoTime();
+        String urlTemplate = "/api/gateway/internal/agent/availability";
+        MetricServiceEnum metricService = MetricServiceEnum.GATEWAY_AGENT_AVAILABILITY;
+        boolean success = false;
+        long start = System.currentTimeMillis();
         try {
-            String url = gatewayBaseUrl + "/api/gateway/internal/agent/availability";
+            MdcHelper.putBusinessDomain(metricService.getId());
+            String url = gatewayBaseUrl + urlTemplate;
             HttpHeaders headers = buildHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             String body = objectMapper.writeValueAsString(Map.of("ak", ak));
@@ -164,7 +190,7 @@ public class GatewayApiClient {
                     HttpMethod.POST,
                     new HttpEntity<>(body, headers),
                     String.class);
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 var root = objectMapper.readTree(response.getBody());
@@ -178,6 +204,7 @@ public class GatewayApiClient {
                         dataNode, GatewayAvailabilityResponse.class);
                 log.info("[EXT_CALL] GatewayAPI.getAvailability success: ak={}, exists={}, online={}, toolType={}, durationMs={}",
                         ak, result.exists(), result.online(), result.latestToolType(), elapsedMs);
+                success = true;
                 return result;
             }
 
@@ -185,10 +212,13 @@ public class GatewayApiClient {
                     ak, response.getStatusCode(), elapsedMs);
             return null;
         } catch (Exception e) {
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
             log.error("[EXT_CALL] GatewayAPI.getAvailability failed: ak={}, durationMs={}, error={}",
                     ak, elapsedMs, e.getMessage());
             return null;
+        } finally {
+            apiCallMetricsService.recordApiCall(metricService, urlTemplate, success, System.currentTimeMillis() - start);
+            MdcHelper.putBusinessDomain(null);
         }
     }
 

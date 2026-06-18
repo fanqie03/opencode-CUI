@@ -11,6 +11,8 @@ import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
+import com.opencode.cui.skill.telemetry.metrics.MetricServiceEnum;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -45,6 +47,7 @@ public class GatewayRelayService {
     private final AssistantInfoService assistantInfoService;
     private final AssistantScopeDispatcher scopeDispatcher;
     private final com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter;
+    private final ApiCallMetricsService apiCallMetricsService;
     private volatile GatewayRelayTarget gatewayRelayTarget;
 
     public GatewayRelayService(ObjectMapper objectMapper,
@@ -54,7 +57,8 @@ public class GatewayRelayService {
             AssistantIdResolverService assistantIdResolverService,
             AssistantInfoService assistantInfoService,
             AssistantScopeDispatcher scopeDispatcher,
-            com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter) {
+            com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter,
+            ApiCallMetricsService apiCallMetricsService) {
         this.objectMapper = objectMapper;
         this.messageRouter = messageRouter;
         this.rebuildService = rebuildService;
@@ -63,6 +67,7 @@ public class GatewayRelayService {
         this.assistantInfoService = assistantInfoService;
         this.scopeDispatcher = scopeDispatcher;
         this.emitter = emitter;
+        this.apiCallMetricsService = apiCallMetricsService;
 
         // 向 MessageRouter 注入下行发送能力，避免循环依赖
         messageRouter.setDownstreamSender(this::sendInvokeToGateway);
@@ -93,57 +98,69 @@ public class GatewayRelayService {
      */
     public void sendInvokeToGateway(InvokeCommand command) {
         String action = command.action();
+        String urlTemplate = "ws://gateway/ws/skill";
+        MetricServiceEnum metricService = MetricServiceEnum.GATEWAY_WS_INVOKE;
+        boolean success = false;
+        long start = System.currentTimeMillis();
 
         log.info("[ENTRY] GatewayRelayService.sendInvokeToGateway: ak={}, userId={}, sessionId={}, action={}",
                 command.ak(), command.userId(), command.sessionId(), action);
 
-        // 发送新消息时清除已完成标记，防止新一轮对话的 tool_event 被误拦截
-        if (GatewayActions.CHAT.equals(action)) {
-            messageRouter.clearCompletionMark(command.sessionId());
-        }
+        try {
+            MdcHelper.putBusinessDomain(metricService.getId());
 
-        // 根据助手类型（scope）选择构建策略
-        // PR3 收口（方案 B）：调 dispatcher 新 API getStrategy(domain, domainType, info)
-        // strategy 选择全部收口到 dispatcher 一处；caller 不再自己 findByAk 反查。
-        // 老 caller 不传 domain/domainType（命令字段为 null），dispatcher 内部 lookup(null, null)
-        // 返 empty → 委托老 API getStrategy(info)，行为完全不变。
-        String messageText;
-        AssistantInfo info = getAssistantInfo(command);
-        AssistantScopeStrategy strategy = scopeDispatcher.getStrategy(
-                command.domain(), command.domainType(), info);
-        String scope = strategy.getScope();
-        if ("business".equals(scope) || "default_assistant".equals(scope)) {
-            messageText = strategy.buildInvoke(command, info);
-            if (messageText == null) {
-                log.warn("[SKIP] GatewayRelayService.sendInvokeToGateway: reason=strategy_build_null, ak={}, scope={}",
-                        command.ak(), scope);
+            // 发送新消息时清除已完成标记，防止新一轮对话的 tool_event 被误拦截
+            if (GatewayActions.CHAT.equals(action)) {
+                messageRouter.clearCompletionMark(command.sessionId());
+            }
+
+            // 根据助手类型（scope）选择构建策略
+            // PR3 收口（方案 B）：调 dispatcher 新 API getStrategy(domain, domainType, info)
+            // strategy 选择全部收口到 dispatcher 一处；caller 不再自己 findByAk 反查。
+            // 老 caller 不传 domain/domainType（命令字段为 null），dispatcher 内部 lookup(null, null)
+            // 返 empty → 委托老 API getStrategy(info)，行为完全不变。
+            String messageText;
+            AssistantInfo info = getAssistantInfo(command);
+            AssistantScopeStrategy strategy = scopeDispatcher.getStrategy(
+                    command.domain(), command.domainType(), info);
+            String scope = strategy.getScope();
+            if ("business".equals(scope) || "default_assistant".equals(scope)) {
+                messageText = strategy.buildInvoke(command, info);
+                if (messageText == null) {
+                    log.warn("[SKIP] GatewayRelayService.sendInvokeToGateway: reason=strategy_build_null, ak={}, scope={}",
+                            command.ak(), scope);
+                    return;
+                }
+            } else {
+                // personal 策略（含白名单未命中降级 / 上游故障兜底）：保留本地 buildInvokeMessage
+                messageText = buildInvokeMessage(command, info);
+                if (messageText == null) {
+                    return;
+                }
+            }
+
+            GatewayRelayTarget relayTarget = gatewayRelayTarget;
+            if (relayTarget == null || !relayTarget.hasActiveConnection()) {
+                log.warn("[SKIP] GatewayRelayService.sendInvokeToGateway: reason=no_connection, ak={}, action={}",
+                        command.ak(), action);
                 return;
             }
-        } else {
-            // personal 策略（含白名单未命中降级 / 上游故障兜底）：保留本地 buildInvokeMessage
-            messageText = buildInvokeMessage(command, info);
-            if (messageText == null) {
+
+            boolean sent = relayTarget.sendToGateway(messageText);
+            success = sent;
+
+            if (!sent) {
+                log.warn("[ERROR] GatewayRelayService.sendInvokeToGateway: reason=send_failed, ak={}, action={}",
+                        command.ak(), action);
                 return;
             }
+
+            log.info("[EXIT->GW] GatewayRelayService.sendInvokeToGateway: action={}, ak={}",
+                    action, command.ak());
+        } finally {
+            apiCallMetricsService.recordApiCall(metricService, urlTemplate, success, System.currentTimeMillis() - start);
+            MdcHelper.putBusinessDomain(null);
         }
-
-        GatewayRelayTarget relayTarget = gatewayRelayTarget;
-        if (relayTarget == null || !relayTarget.hasActiveConnection()) {
-            log.warn("[SKIP] GatewayRelayService.sendInvokeToGateway: reason=no_connection, ak={}, action={}",
-                    command.ak(), action);
-            return;
-        }
-
-        boolean sent = relayTarget.sendToGateway(messageText);
-
-        if (!sent) {
-            log.warn("[ERROR] GatewayRelayService.sendInvokeToGateway: reason=send_failed, ak={}, action={}",
-                    command.ak(), action);
-            return;
-        }
-
-        log.info("[EXIT->GW] GatewayRelayService.sendInvokeToGateway: action={}, ak={}",
-                action, command.ak());
     }
 
     private AssistantInfo getAssistantInfo(InvokeCommand command) {
@@ -395,37 +412,50 @@ public class GatewayRelayService {
      *         调用方（{@link GatewayMessageRouter#maybeSendRouteConfirm}）依赖该返回值实现 cache-after-success。
      */
     public boolean sendRouteConfirm(String toolSessionId, String welinkSessionId) {
+        String urlTemplate = "ws://gateway/ws/skill";
+        MetricServiceEnum metricService = MetricServiceEnum.GATEWAY_WS_ROUTE_CONFIRM;
+        boolean success = false;
+        long start = System.currentTimeMillis();
+
         log.info("[ENTRY] GatewayRelayService.sendRouteConfirm: toolSessionId={}, welinkSessionId={}",
                 toolSessionId, welinkSessionId);
 
-        ObjectNode message = objectMapper.createObjectNode();
-        message.put("type", "route_confirm");
-        message.put("toolSessionId", toolSessionId);
-        message.put("source", SOURCE);
-        if (welinkSessionId != null && !welinkSessionId.isBlank()) {
-            message.put("welinkSessionId", welinkSessionId);
-        }
-
-        String traceId = MdcHelper.ensureTraceId();
-        message.put("traceId", traceId);
-
-        String messageText;
         try {
-            messageText = objectMapper.writeValueAsString(message);
-        } catch (JsonProcessingException e) {
-            log.error("[ERROR] GatewayRelayService.sendRouteConfirm: serialize_failed, toolSessionId={}", toolSessionId, e);
-            return false;
-        }
+            MdcHelper.putBusinessDomain(metricService.getId());
 
-        GatewayRelayTarget relayTarget = gatewayRelayTarget;
-        if (relayTarget == null || !relayTarget.hasActiveConnection()) {
-            log.warn("[SKIP] GatewayRelayService.sendRouteConfirm: reason=no_connection, toolSessionId={}", toolSessionId);
-            return false;
-        }
+            ObjectNode message = objectMapper.createObjectNode();
+            message.put("type", "route_confirm");
+            message.put("toolSessionId", toolSessionId);
+            message.put("source", SOURCE);
+            if (welinkSessionId != null && !welinkSessionId.isBlank()) {
+                message.put("welinkSessionId", welinkSessionId);
+            }
 
-        boolean sent = relayTarget.sendToGateway(messageText);
-        log.info("[EXIT] GatewayRelayService.sendRouteConfirm: toolSessionId={}, sent={}", toolSessionId, sent);
-        return sent;
+            String traceId = MdcHelper.ensureTraceId();
+            message.put("traceId", traceId);
+
+            String messageText;
+            try {
+                messageText = objectMapper.writeValueAsString(message);
+            } catch (JsonProcessingException e) {
+                log.error("[ERROR] GatewayRelayService.sendRouteConfirm: serialize_failed, toolSessionId={}", toolSessionId, e);
+                return false;
+            }
+
+            GatewayRelayTarget relayTarget = gatewayRelayTarget;
+            if (relayTarget == null || !relayTarget.hasActiveConnection()) {
+                log.warn("[SKIP] GatewayRelayService.sendRouteConfirm: reason=no_connection, toolSessionId={}", toolSessionId);
+                return false;
+            }
+
+            boolean sent = relayTarget.sendToGateway(messageText);
+            success = sent;
+            log.info("[EXIT] GatewayRelayService.sendRouteConfirm: toolSessionId={}, sent={}", toolSessionId, sent);
+            return sent;
+        } finally {
+            apiCallMetricsService.recordApiCall(metricService, urlTemplate, success, System.currentTimeMillis() - start);
+            MdcHelper.putBusinessDomain(null);
+        }
     }
 
     /**
@@ -434,32 +464,45 @@ public class GatewayRelayService {
      * @param toolSessionId OpenCode 侧会话 ID
      */
     public void sendRouteReject(String toolSessionId) {
+        String urlTemplate = "ws://gateway/ws/skill";
+        MetricServiceEnum metricService = MetricServiceEnum.GATEWAY_WS_ROUTE_REJECT;
+        boolean success = false;
+        long start = System.currentTimeMillis();
+
         log.info("[ENTRY] GatewayRelayService.sendRouteReject: toolSessionId={}", toolSessionId);
 
-        ObjectNode message = objectMapper.createObjectNode();
-        message.put("type", "route_reject");
-        message.put("toolSessionId", toolSessionId);
-        message.put("source", SOURCE);
-
-        String traceId = MdcHelper.ensureTraceId();
-        message.put("traceId", traceId);
-
-        String messageText;
         try {
-            messageText = objectMapper.writeValueAsString(message);
-        } catch (JsonProcessingException e) {
-            log.error("[ERROR] GatewayRelayService.sendRouteReject: serialize_failed, toolSessionId={}", toolSessionId, e);
-            return;
-        }
+            MdcHelper.putBusinessDomain(metricService.getId());
 
-        GatewayRelayTarget relayTarget = gatewayRelayTarget;
-        if (relayTarget == null || !relayTarget.hasActiveConnection()) {
-            log.warn("[SKIP] GatewayRelayService.sendRouteReject: reason=no_connection, toolSessionId={}", toolSessionId);
-            return;
-        }
+            ObjectNode message = objectMapper.createObjectNode();
+            message.put("type", "route_reject");
+            message.put("toolSessionId", toolSessionId);
+            message.put("source", SOURCE);
 
-        boolean sent = relayTarget.sendToGateway(messageText);
-        log.info("[EXIT] GatewayRelayService.sendRouteReject: toolSessionId={}, sent={}", toolSessionId, sent);
+            String traceId = MdcHelper.ensureTraceId();
+            message.put("traceId", traceId);
+
+            String messageText;
+            try {
+                messageText = objectMapper.writeValueAsString(message);
+            } catch (JsonProcessingException e) {
+                log.error("[ERROR] GatewayRelayService.sendRouteReject: serialize_failed, toolSessionId={}", toolSessionId, e);
+                return;
+            }
+
+            GatewayRelayTarget relayTarget = gatewayRelayTarget;
+            if (relayTarget == null || !relayTarget.hasActiveConnection()) {
+                log.warn("[SKIP] GatewayRelayService.sendRouteReject: reason=no_connection, toolSessionId={}", toolSessionId);
+                return;
+            }
+
+            boolean sent = relayTarget.sendToGateway(messageText);
+            success = sent;
+            log.info("[EXIT] GatewayRelayService.sendRouteReject: toolSessionId={}, sent={}", toolSessionId, sent);
+        } finally {
+            apiCallMetricsService.recordApiCall(metricService, urlTemplate, success, System.currentTimeMillis() - start);
+            MdcHelper.putBusinessDomain(null);
+        }
     }
 
     // ==================== 公共委派方法 ====================
