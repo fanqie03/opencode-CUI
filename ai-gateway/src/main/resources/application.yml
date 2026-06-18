@@ -160,3 +160,16 @@ logging:
     com.opencode.cui.gateway: INFO
     org.springframework.web.socket: INFO
   # pattern 和 rollingpolicy 已迁移到 log4j2-spring.xml
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+      base-path: /actuator
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ai-gateway
