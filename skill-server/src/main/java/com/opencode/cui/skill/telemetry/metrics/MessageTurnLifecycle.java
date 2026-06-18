@@ -2,6 +2,7 @@ package com.opencode.cui.skill.telemetry.metrics;
 
 import com.opencode.cui.skill.telemetry.chat.ChatFirstTokenTelemetryEvent;
 import com.opencode.cui.skill.telemetry.core.WelinkTelemetryReporter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -16,9 +17,9 @@ public class MessageTurnLifecycle {
     private final WelinkTelemetryReporter welinkReporter;
     private final boolean welinkEnabled;
 
-    public MessageTurnLifecycle(ChatStreamMetricsService streamMetrics,
-                                WelinkTelemetryReporter welinkReporter,
-                                boolean welinkEnabled) {
+     public MessageTurnLifecycle(ChatStreamMetricsService streamMetrics,
+                                 WelinkTelemetryReporter welinkReporter,
+                                 @Value("${telemetry.welink.enabled:false}") boolean welinkEnabled) {
         this.streamMetrics = streamMetrics;
         this.welinkReporter = welinkReporter;
         this.welinkEnabled = welinkEnabled;

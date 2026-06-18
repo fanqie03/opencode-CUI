@@ -29,6 +29,7 @@ import com.opencode.cui.skill.service.SkillMessageService;
 import com.opencode.cui.skill.service.SkillSessionService;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.model.DefaultAssistantRule;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -79,13 +80,15 @@ class SkillMessageControllerTest {
     private AssistantAccountResolverService assistantAccountResolverService;
     @Mock
     private DefaultAssistantRuleService ruleService;
-    @Mock
-    private AllowedSlashCommandsResolver allowedSlashCommandsResolver;
-    @Mock
-    private MessagePersistenceService persistenceService;
+     @Mock
+     private AllowedSlashCommandsResolver allowedSlashCommandsResolver;
+     @Mock
+     private MessagePersistenceService persistenceService;
+     @Mock
+     private MessageTurnLifecycle messageTurnLifecycle;
 
-    private AssistantIdProperties assistantIdProperties;
-    private SkillMessageController controller;
+     private AssistantIdProperties assistantIdProperties;
+     private SkillMessageController controller;
 
     @BeforeEach
     void setUp() {
@@ -102,13 +105,14 @@ class SkillMessageControllerTest {
         // 默认 slash resolver 返 null（未配置）
         lenient().when(allowedSlashCommandsResolver.resolve(any(), any())).thenReturn(null);
 
-        controller = new SkillMessageController(
-                messageService, sessionService, gatewayRelayService,
-                gatewayApiClient, assistantIdProperties, imMessageService, new ObjectMapper(),
-                accessControlService, messageRouter, assistantInfoService, scopeDispatcher,
-                offlineMessageProvider, availabilityService, assistantAccountResolverService, ruleService,
-                allowedSlashCommandsResolver, persistenceService,
-                org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class));
+         controller = new SkillMessageController(
+                 messageService, sessionService, gatewayRelayService,
+                 gatewayApiClient, assistantIdProperties, imMessageService, new ObjectMapper(),
+                 accessControlService, messageRouter, assistantInfoService, scopeDispatcher,
+                 offlineMessageProvider, availabilityService, assistantAccountResolverService, ruleService,
+                 allowedSlashCommandsResolver, persistenceService,
+                 org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class),
+                 messageTurnLifecycle);
         // 默认 scopeDispatcher 返回 personal 策略（requiresOnlineCheck=true）
         com.opencode.cui.skill.service.scope.AssistantScopeStrategy personalStrategy =
                 org.mockito.Mockito.mock(com.opencode.cui.skill.service.scope.AssistantScopeStrategy.class);

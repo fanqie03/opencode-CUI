@@ -20,6 +20,7 @@ import com.opencode.cui.skill.service.SysConfigService;
 import com.opencode.cui.skill.service.cloud.DefaultCloudRequestStrategy;
 import com.opencode.cui.skill.service.cloud.profile.CloudRequestProfileRegistry;
 import com.opencode.cui.skill.service.delivery.StreamMessageEmitter;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -183,9 +184,9 @@ class ExtParametersIntegrationTest {
             org.mockito.Mockito.lenient().when(relayTarget.hasActiveConnection()).thenReturn(true);
             org.mockito.Mockito.lenient().when(relayTarget.sendToGateway(anyString())).thenReturn(true);
 
-            relayService = new GatewayRelayService(personalMapper, messageRouter, rebuildService,
-                    redisMessageBroker, assistantIdResolverService, assistantInfoService,
-                    dispatcher, emitter);
+             relayService = new GatewayRelayService(personalMapper, messageRouter, rebuildService,
+                     redisMessageBroker, assistantIdResolverService, assistantInfoService,
+                     dispatcher, emitter, mock(ApiCallMetricsService.class));
             relayService.setGatewayRelayTarget(relayTarget);
         }
 

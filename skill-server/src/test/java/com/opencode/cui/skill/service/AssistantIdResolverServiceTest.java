@@ -5,6 +5,7 @@ import com.opencode.cui.skill.config.AssistantIdProperties;
 import com.opencode.cui.skill.model.AgentSummary;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.repository.SkillSessionRepository;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,9 @@ class AssistantIdResolverServiceTest {
     @Mock
     private ValueOperations<String, String> valueOperations;
 
+    @Mock
+    private ApiCallMetricsService apiCallMetricsService;
+
     private AssistantIdProperties properties;
     private AssistantIdResolverService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -58,7 +62,7 @@ class AssistantIdResolverServiceTest {
 
         service = new AssistantIdResolverService(
                 properties, sessionRepository, gatewayApiClient,
-                restTemplate, redisTemplate, objectMapper);
+                restTemplate, redisTemplate, objectMapper, apiCallMetricsService);
     }
 
     // --- 前置检查 ---

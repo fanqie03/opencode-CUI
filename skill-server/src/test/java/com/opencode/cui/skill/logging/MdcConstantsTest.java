@@ -28,6 +28,7 @@ class MdcConstantsTest {
         assertTrue(keys.contains(MdcConstants.AK));
         assertTrue(keys.contains(MdcConstants.USER_ID));
         assertTrue(keys.contains(MdcConstants.SCENARIO));
-        assertEquals(5, keys.size());
+        assertTrue(keys.contains(MdcConstants.BUSINESS_DOMAIN));
+        assertEquals(6, keys.size());
     }
 }

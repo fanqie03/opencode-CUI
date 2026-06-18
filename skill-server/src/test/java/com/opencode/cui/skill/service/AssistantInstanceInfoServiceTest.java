@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.opencode.cui.skill.model.AssistantInstanceInfo;
 import com.opencode.cui.skill.model.ExistenceStatus;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,15 +34,17 @@ class AssistantInstanceInfoServiceTest {
     private StringRedisTemplate redisTemplate;
     @Mock
     private ValueOperations<String, String> valueOps;
+    @Mock
+    private ApiCallMetricsService apiCallMetricsService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private AssistantInstanceInfoService service;
 
     @BeforeEach
     void setUp() {
-        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        service = new AssistantInstanceInfoService(restTemplate, redisTemplate, objectMapper,
-                "https://example.com/instance/query", "token-1", 300);
+         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
+         service = new AssistantInstanceInfoService(restTemplate, redisTemplate, objectMapper,
+                 "https://example.com/instance/query", "token-1", 300, apiCallMetricsService);
     }
 
     @Test

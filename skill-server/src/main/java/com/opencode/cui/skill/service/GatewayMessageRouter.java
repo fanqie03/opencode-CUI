@@ -380,7 +380,7 @@ public class GatewayMessageRouter {
      * 默认 25 分钟（必须 < GW UpstreamRoutingTable 30min 才能保证 GW 失忆前自愈）。</p>
      */
     @PostConstruct
-    void initConfirmDedupCache() {
+    public void initConfirmDedupCache() {
         this.confirmedToolSessions = Caffeine.newBuilder()
                 .expireAfterWrite(Duration.ofMinutes(confirmCacheExpireMinutes))
                 .maximumSize(DEDUP_CACHE_MAX_SIZE)

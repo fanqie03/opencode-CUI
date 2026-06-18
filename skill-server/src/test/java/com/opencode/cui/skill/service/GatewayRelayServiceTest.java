@@ -8,6 +8,8 @@ import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -76,11 +78,20 @@ class GatewayRelayServiceTest {
         private AssistantScopeStrategy scopeStrategy;
         @Mock
         private com.opencode.cui.skill.service.delivery.OutboundDeliveryDispatcher outboundDeliveryDispatcher;
-        @Mock
-        com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter;
+         @Mock
+         com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter;
 
-        private GatewayMessageRouter messageRouter;
-        private GatewayRelayService service;
+         @Mock
+         private DefaultAssistantRuleService defaultAssistantRuleService;
+
+         @Mock
+         private MessageTurnLifecycle messageTurnLifecycle;
+
+         @Mock
+         private ApiCallMetricsService apiCallMetricsService;
+
+         private GatewayMessageRouter messageRouter;
+         private GatewayRelayService service;
 
         private static final String LOCAL_INSTANCE = "ss-test-local";
 
@@ -107,35 +118,44 @@ class GatewayRelayServiceTest {
                 // scopeStrategy.requiresOnlineCheck 默认返回 true（personal 策略行为）
                 org.mockito.Mockito.lenient().when(scopeStrategy.requiresOnlineCheck()).thenReturn(true);
 
-                messageRouter = new GatewayMessageRouter(
-                                new ObjectMapper(),
-                                messageService,
-                                sessionService,
-                                redisMessageBroker,
-                                translator,
-                                persistenceService,
-                                bufferService,
-                                rebuildService,
-                                interactionStateService,
-                                imOutboundService,
-                                sessionRouteService,
-                                skillInstanceRegistry,
-                                assistantInfoService,
-                                channelLookupService,
-                                channelSuppressReplyWhitelistService,
-                                scopeDispatcher,
-                                outboundDeliveryDispatcher,
-                                emitter,
-                                120);
-                service = new GatewayRelayService(
-                                new ObjectMapper(),
-                                messageRouter,
-                                rebuildService,
-                                redisMessageBroker,
-                                assistantIdResolverService,
-                                assistantInfoService,
-                                scopeDispatcher,
-                                emitter);
+         messageRouter = new GatewayMessageRouter(
+                                  new ObjectMapper(),
+                                  messageService,
+                                  sessionService,
+                                  redisMessageBroker,
+                                  translator,
+                                  persistenceService,
+                                  bufferService,
+                                  rebuildService,
+                                  interactionStateService,
+                                  imOutboundService,
+                                  sessionRouteService,
+                                  skillInstanceRegistry,
+                                  assistantInfoService,
+                                  channelLookupService,
+                                  channelSuppressReplyWhitelistService,
+                                  scopeDispatcher,
+                                  outboundDeliveryDispatcher,
+                                  emitter,
+                                  null,
+                                  defaultAssistantRuleService,
+                                  messageTurnLifecycle,
+                                  120,
+                                  true,
+                                  25,
+                                  java.time.Clock.systemDefaultZone(),
+                                  com.github.benmanes.caffeine.cache.Ticker.disabledTicker());
+                 messageRouter.initConfirmDedupCache();
+                  service = new GatewayRelayService(
+                                  new ObjectMapper(),
+                                  messageRouter,
+                                  rebuildService,
+                                  redisMessageBroker,
+                                  assistantIdResolverService,
+                                  assistantInfoService,
+                                  scopeDispatcher,
+                                  emitter,
+                                  apiCallMetricsService);
                 service.setGatewayRelayTarget(gatewayRelayTarget);
         }
 

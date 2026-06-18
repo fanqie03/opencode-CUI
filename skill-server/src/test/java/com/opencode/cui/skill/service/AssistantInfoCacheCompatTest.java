@@ -2,6 +2,7 @@ package com.opencode.cui.skill.service;
 
 import com.opencode.cui.skill.config.AssistantInfoProperties;
 import com.opencode.cui.skill.model.AssistantInfo;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,7 @@ class AssistantInfoCacheCompatTest {
 
     @Mock StringRedisTemplate redisTemplate;
     @Mock ValueOperations<String, String> valueOperations;
+    @Mock ApiCallMetricsService apiCallMetricsService;
 
     private AssistantInfoProperties properties;
     private AssistantInfoService service;
@@ -34,7 +36,7 @@ class AssistantInfoCacheCompatTest {
     void setUp() {
         properties = new AssistantInfoProperties();
         // override fetchFromUpstream 以避免真实 HTTP 调用
-        service = new AssistantInfoService(properties, redisTemplate) {
+        service = new AssistantInfoService(properties, redisTemplate, apiCallMetricsService) {
             @Override
             protected AssistantInfo fetchFromUpstream(String ak) {
                 AssistantInfo info = new AssistantInfo();

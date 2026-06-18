@@ -9,6 +9,7 @@ import com.opencode.cui.skill.service.delivery.StreamMessageEmitter;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
 import com.opencode.cui.skill.service.scope.PersonalScopeStrategy;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -75,9 +76,9 @@ class GatewayRelayServiceBuildInvokeMessageTest {
         when(relayTarget.hasActiveConnection()).thenReturn(true);
         when(relayTarget.sendToGateway(anyString())).thenReturn(true);
 
-        service = new GatewayRelayService(objectMapper, messageRouter, rebuildService,
-                redisMessageBroker, assistantIdResolverService, assistantInfoService,
-                scopeDispatcher, emitter);
+         service = new GatewayRelayService(objectMapper, messageRouter, rebuildService,
+                 redisMessageBroker, assistantIdResolverService, assistantInfoService,
+                 scopeDispatcher, emitter, mock(ApiCallMetricsService.class));
         service.setGatewayRelayTarget(relayTarget);
     }
 

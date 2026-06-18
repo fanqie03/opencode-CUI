@@ -8,6 +8,7 @@ import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -103,12 +104,18 @@ class GatewayMessageRouterTest {
     com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter;
     @Mock
     GatewayMessageRouter.RouteResponseSender routeResponseSender;
-    @Mock
-    private AssistantAvailabilityService availabilityService;
+     @Mock
+     private AssistantAvailabilityService availabilityService;
 
-    private MutableClock clock;
-    private FakeTicker ticker;
-    private GatewayMessageRouter router;
+     @Mock
+     private DefaultAssistantRuleService defaultAssistantRuleService;
+
+     @Mock
+     private MessageTurnLifecycle messageTurnLifecycle;
+
+     private MutableClock clock;
+     private FakeTicker ticker;
+     private GatewayMessageRouter router;
 
     @BeforeEach
     void setUp() {
@@ -153,6 +160,8 @@ class GatewayMessageRouterTest {
                 outboundDeliveryDispatcher,
                 emitter,
                 null, // availabilityService not needed for routing tests
+                defaultAssistantRuleService,
+                messageTurnLifecycle,
                 120,
                 dedupEnabled,
                 CONFIRM_CACHE_EXPIRE_MINUTES,
@@ -700,31 +709,33 @@ class GatewayMessageRouterTest {
     private GatewayMessageRouter buildRouterWithAvailability(boolean dedupEnabled) {
         lenient().when(sessionService.findActiveByAk(any())).thenReturn(java.util.Collections.emptyList());
         lenient().doNothing().when(emitter).emitToClient(any(), any(), any());
-        GatewayMessageRouter r = new GatewayMessageRouter(
-                objectMapper,
-                messageService,
-                sessionService,
-                redisMessageBroker,
-                translator,
-                persistenceService,
-                bufferService,
-                rebuildService,
-                interactionStateService,
-                imOutboundService,
-                sessionRouteService,
-                skillInstanceRegistry,
-                assistantInfoService,
-                channelLookupService,
-                channelSuppressReplyWhitelistService,
-                scopeDispatcher,
-                outboundDeliveryDispatcher,
-                emitter,
-                availabilityService, // non-null to test evict
-                120,              // ownerDeadThresholdSeconds
-                dedupEnabled,
-                CONFIRM_CACHE_EXPIRE_MINUTES,
-                clock,
-                ticker);
+         GatewayMessageRouter r = new GatewayMessageRouter(
+                 objectMapper,
+                 messageService,
+                 sessionService,
+                 redisMessageBroker,
+                 translator,
+                 persistenceService,
+                 bufferService,
+                 rebuildService,
+                 interactionStateService,
+                 imOutboundService,
+                 sessionRouteService,
+                 skillInstanceRegistry,
+                 assistantInfoService,
+                 channelLookupService,
+                 channelSuppressReplyWhitelistService,
+                 scopeDispatcher,
+                 outboundDeliveryDispatcher,
+                 emitter,
+                 availabilityService, // non-null to test evict
+                 defaultAssistantRuleService,
+                 messageTurnLifecycle,
+                 120,              // ownerDeadThresholdSeconds
+                 dedupEnabled,
+                 CONFIRM_CACHE_EXPIRE_MINUTES,
+                 clock,
+                 ticker);
         r.initConfirmDedupCache();
         r.setRouteResponseSender(routeResponseSender);
         return r;

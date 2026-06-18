@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -27,7 +28,9 @@ public class ChatStreamMetricsService {
     private final Cache<String, Long> firstTokenTimestamps;
     private final Cache<String, AtomicInteger> tokenCounts;
 
-    public ChatStreamMetricsService(MeterRegistry meterRegistry, long maxSessions, Duration sessionTtl) {
+    public ChatStreamMetricsService(MeterRegistry meterRegistry,
+                                   @Value("${telemetry.chatstream.max-sessions:10000}") long maxSessions,
+                                   @Value("${telemetry.chatstream.session-ttl-minutes:60}") Duration sessionTtl) {
         this.meterRegistry = meterRegistry;
         this.sessionStartTimes = Caffeine.newBuilder()
                 .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();

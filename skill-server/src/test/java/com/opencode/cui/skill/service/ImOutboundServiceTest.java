@@ -1,6 +1,7 @@
 package com.opencode.cui.skill.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,12 +29,15 @@ class ImOutboundServiceTest {
     @Mock
     private RestTemplate restTemplate;
 
+    @Mock
+    private ApiCallMetricsService apiCallMetricsService;
+
     private ImOutboundService service;
 
-    @BeforeEach
-    void setUp() {
-        service = new ImOutboundService(restTemplate, "http://localhost:8080", "token-123");
-    }
+     @BeforeEach
+     void setUp() {
+         service = new ImOutboundService(restTemplate, "http://localhost:8080", "token-123", apiCallMetricsService);
+     }
 
     @Test
     @DisplayName("group chat uses group endpoint")

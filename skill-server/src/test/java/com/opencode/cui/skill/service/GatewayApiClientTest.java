@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.config.InternalAuthProperties;
 import com.opencode.cui.skill.model.AgentSummary;
 import com.opencode.cui.skill.model.GatewayAvailabilityResponse;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -35,16 +36,20 @@ class GatewayApiClientTest {
     @Mock
     private RestTemplate restTemplate;
 
+    @Mock
+    private ApiCallMetricsService apiCallMetricsService;
+
     private GatewayApiClient client;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
-        client = new GatewayApiClient(
-                restTemplate,
-                objectMapper,
-                "http://localhost:8081",
-                AUTH);
+         client = new GatewayApiClient(
+                 restTemplate,
+                 objectMapper,
+                 "http://localhost:8081",
+                 AUTH,
+                 apiCallMetricsService);
     }
 
     @Test

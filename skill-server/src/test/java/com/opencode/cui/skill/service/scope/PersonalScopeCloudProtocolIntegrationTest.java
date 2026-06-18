@@ -8,6 +8,7 @@ import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.service.AssistantInfoService;
 import com.opencode.cui.skill.service.BusinessWhitelistService;
 import com.opencode.cui.skill.service.CloudEventTranslator;
+import com.opencode.cui.skill.service.DefaultAssistantRuleService;
 import com.opencode.cui.skill.service.GatewayMessageRouter;
 import com.opencode.cui.skill.service.ImInteractionStateService;
 import com.opencode.cui.skill.service.ImOutboundService;
@@ -23,6 +24,7 @@ import com.opencode.cui.skill.service.StreamBufferService;
 import com.opencode.cui.skill.service.TranslatorSessionCache;
 import com.opencode.cui.skill.service.delivery.OutboundDeliveryDispatcher;
 import com.opencode.cui.skill.service.delivery.StreamMessageEmitter;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -67,11 +69,12 @@ class PersonalScopeCloudProtocolIntegrationTest {
     @Mock private AssistantInfoService assistantInfoService;
     @Mock private com.opencode.cui.skill.service.ChannelLookupService channelLookupService;
     @Mock private com.opencode.cui.skill.service.ChannelSuppressReplyWhitelistService channelSuppressReplyWhitelistService;
-    @Mock private OutboundDeliveryDispatcher outboundDeliveryDispatcher;
-    @Mock private StreamMessageEmitter emitter;
-    @Mock private BusinessWhitelistService whitelistService;
+     @Mock private OutboundDeliveryDispatcher outboundDeliveryDispatcher;
+     @Mock private StreamMessageEmitter emitter;
+     @Mock private BusinessWhitelistService whitelistService;
+     @Mock private MessageTurnLifecycle messageTurnLifecycle;
 
-    private AssistantScopeDispatcher scopeDispatcher;
+     private AssistantScopeDispatcher scopeDispatcher;
     private PersonalScopeStrategy personalStrategy;
     private CloudEventTranslator cloudEventTranslator;
     private OpenCodeEventTranslator openCodeEventTranslator;
@@ -102,15 +105,24 @@ class PersonalScopeCloudProtocolIntegrationTest {
         fakeSession.setId(Long.valueOf(SESSION_ID));
         lenient().when(sessionService.findByIdSafe(anyLong())).thenReturn(fakeSession);
 
-        router = new GatewayMessageRouter(
-                objectMapper, messageService, sessionService, redisMessageBroker,
-                legacyTranslatorArg, persistenceService, bufferService, rebuildService,
-                interactionStateService, imOutboundService, sessionRouteService,
-                skillInstanceRegistry, assistantInfoService,
-                channelLookupService, channelSuppressReplyWhitelistService,
-                scopeDispatcher,
-                outboundDeliveryDispatcher, emitter, 120);
-    }
+          router = new GatewayMessageRouter(
+                  objectMapper, messageService, sessionService, redisMessageBroker,
+                  legacyTranslatorArg, persistenceService, bufferService, rebuildService,
+                  interactionStateService, imOutboundService, sessionRouteService,
+                  skillInstanceRegistry, assistantInfoService,
+                  channelLookupService, channelSuppressReplyWhitelistService,
+                  scopeDispatcher,
+                  outboundDeliveryDispatcher, emitter,
+                  null,
+                  org.mockito.Mockito.mock(DefaultAssistantRuleService.class),
+                  messageTurnLifecycle,
+                  120,
+                  true,
+                  25,
+                  java.time.Clock.systemDefaultZone(),
+                  com.github.benmanes.caffeine.cache.Ticker.disabledTicker());
+          router.initConfirmDedupCache();
+     }
 
     @Test
     @DisplayName("cloud text.delta through router: same partId keeps partSeq, new partId increments")
