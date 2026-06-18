@@ -53,6 +53,10 @@ public final class MdcHelper {
         safePut(MdcConstants.SCENARIO, value);
     }
 
+    public static void putBusinessDomain(String value) {
+        safePut(MdcConstants.BUSINESS_DOMAIN, value);
+    }
+
     // --- 批量操作 ---
 
     /**

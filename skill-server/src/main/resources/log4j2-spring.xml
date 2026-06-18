@@ -5,7 +5,7 @@
         <Property name="INSTANCE_ID">${env:HOSTNAME:-skill-server-local}</Property>
         <Property name="LOG_FILE">${sys:opencode.logging.file:-./logs/skill-server/skill-server.log}</Property>
         <Property name="ARCHIVE_DIR">${sys:opencode.logging.archive-dir:-./logs/skill-server/archive}</Property>
-        <Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [${SERVICE_NAME}] [${INSTANCE_ID}] [%X{traceId}] [%X{sessionId}] [%X{ak}] [%X{userId}] [%X{scenario}] %-5level %logger{36}.%method - %msg%n</Property>
+        <Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [${SERVICE_NAME}] [${INSTANCE_ID}] [%X{traceId}] [%X{sessionId}] [%X{ak}] [%X{userId}] [%X{scenario}] [%X{businessDomain}] %-5level %logger{36}.%method - %msg%n</Property>
     </Properties>
 
     <Appenders>
