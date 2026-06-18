@@ -176,8 +176,12 @@ public class CloudAgentService {
         if (ACTION_ABORT_SESSION.equals(action)) {
             // 主路径：优先取消本地活跃 SSE/WS 连接，保证用户侧即时终止不被第三方调用拖慢
             cancelStreamingConnection(invokeMessage, toolSessionId);
-            // 旁路：异步通知第三方终止接口（fire-and-forget），不得阻塞或影响本地 cancel
-            invokeRemoteAbortIfConfigured(invokeMessage, toolSessionId, assistantAccount, businessTag);
+            // 旁路：异步通知第三方终止接口（fire-and-forget），不得阻塞或影响本地 cancel。
+            // 仅入口 GW 执行第三方 stop：relayed abort（_cloudControlRelayed=true）来自其它 GW 的转发，
+            // 若再次调用第三方 stop 会导致一次用户 abort 触发多次第三方终止请求。
+            if (!isCloudControlRelayed(invokeMessage)) {
+                invokeRemoteAbortIfConfigured(invokeMessage, toolSessionId, assistantAccount, businessTag);
+            }
             return;
         }
 

@@ -429,6 +429,25 @@ class CloudAgentServiceTest {
         }
 
         @Test
+        @DisplayName("relayed abort_session 带 assistantAccount 仍跳过第三方 stop，避免重复调用")
+        void handleInvoke_relayedAbortSessionWithAssistantAccount_skipsThirdPartyStop() throws Exception {
+            // 第三方 abort route 已配置（remoteProperty type=abort），但 relayed abort 应跳过
+            lenient().when(assistantInstanceInfoService.getInstanceInfo("bot-001"))
+                    .thenReturn(buildInstance("abort", "http", "https://remote.example.com/stop"));
+            // relayed abort：带 assistantAccount 且 _cloudControlRelayed=true
+            GatewayMessage abort = buildRemoteInvoke("abort_session");
+            ((ObjectNode) abort.getPayload()).put("_cloudControlRelayed", true);
+
+            cloudAgentService.handleInvoke(abort, onRelay);
+
+            // 即使配置了 abort route，relayed abort 也不应发起第三方 HTTP stop
+            verifyNoInteractions(httpClient);
+            // 不应二次 relay
+            verify(redisMessageBroker, never()).publishToGwRelay(anyString(), anyString());
+            verifyNoInteractions(onRelay);
+        }
+
+        @Test
         @DisplayName("abort_session without local active stream relays to the owning GW")
         void handleInvoke_abortSessionNoLocalActiveStreamRelaysToOwnerGateway() throws Exception {
             when(redisMessageBroker.getCloudStreamRoute("tool-session-001")).thenReturn("gw-owner");
