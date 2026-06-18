@@ -675,6 +675,64 @@ class CloudAgentServiceTest {
             assertTrue(reqCaptor.getValue().uri().toString().contains("https://sysconfig.example.com/stop"));
             verifyNoInteractions(onRelay);
         }
+
+        @Test
+        @DisplayName("abort_session route channelType=sse 跳过第三方 POST，仅本地 cancel")
+        void handleInvoke_abortSession_nonWebhookChannel_skipsThirdPartyPost() throws Exception {
+            // remoteProperty type=abort 但 commProtocol=sse → channelType=sse，不是 webhook/http
+            when(assistantInstanceInfoService.getInstanceInfo("bot-001"))
+                    .thenReturn(buildInstance("abort", "sse", "https://remote.example.com/stop"));
+            when(sysConfigRouteProvider.load(TEST_AK, CHAT_SCOPE, "biz-tag"))
+                    .thenReturn(buildCfg("sse", "https://cloud.example.com/chat", "soa", "app-1"));
+
+            doAnswer(invocation -> {
+                CloudConnectionContext context = invocation.getArgument(1);
+                CloudConnectionHandle handle = context.getConnectionHandle();
+
+                GatewayMessage abort = buildRemoteInvoke("abort_session");
+                cloudAgentService.handleInvoke(abort, onRelay);
+
+                // 本地 cancel 仍执行
+                assertTrue(handle.isCancelled());
+                return null;
+            }).when(cloudProtocolClient).connect(eq("sse"), any(), any(), any(), any());
+
+            cloudAgentService.handleInvoke(buildInvoke("chat", TEST_AK), onRelay);
+
+            // 第三方 HTTP POST 未发起（避免向 SSE 地址发 POST）
+            verifyNoInteractions(httpClient);
+            verifyNoInteractions(onRelay);
+        }
+
+        @Test
+        @DisplayName("abort_session executor 拒绝任务时本地 cancel 仍执行，不抛异常")
+        void handleInvoke_abortSession_executorRejected_localCancelStillRuns() throws Exception {
+            // 模拟线程池队列满，execute 同步抛 RejectedExecutionException
+            // （abort route 配置无关紧要：任务被拒绝后 lambda 体不会执行）
+            doThrow(new java.util.concurrent.RejectedExecutionException("queue full"))
+                    .when(abortExecutor).execute(any(Runnable.class));
+            when(sysConfigRouteProvider.load(TEST_AK, CHAT_SCOPE, "biz-tag"))
+                    .thenReturn(buildCfg("sse", "https://cloud.example.com/chat", "soa", "app-1"));
+
+            doAnswer(invocation -> {
+                CloudConnectionContext context = invocation.getArgument(1);
+                CloudConnectionHandle handle = context.getConnectionHandle();
+
+                GatewayMessage abort = buildRemoteInvoke("abort_session");
+                // 不应抛异常
+                cloudAgentService.handleInvoke(abort, onRelay);
+
+                // 本地 cancel 仍执行
+                assertTrue(handle.isCancelled());
+                return null;
+            }).when(cloudProtocolClient).connect(eq("sse"), any(), any(), any(), any());
+
+            cloudAgentService.handleInvoke(buildInvoke("chat", TEST_AK), onRelay);
+
+            // 任务被拒绝，HTTP 未发起
+            verifyNoInteractions(httpClient);
+            verifyNoInteractions(onRelay);
+        }
     }
 
     // ---------------------------------------------------------------------

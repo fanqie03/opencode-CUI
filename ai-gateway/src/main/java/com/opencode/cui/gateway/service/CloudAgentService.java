@@ -33,9 +33,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -174,10 +174,10 @@ public class CloudAgentService {
                 ak, action, mask(assistantAccount), businessTag, toolSessionId, invokeMessage.getTraceId());
 
         if (ACTION_ABORT_SESSION.equals(action)) {
-            // 异步调用第三方终止接口（fire-and-forget）
-            invokeRemoteAbortIfConfigured(invokeMessage, toolSessionId, assistantAccount, businessTag);
-            // 取消本地活跃 SSE/WS 连接
+            // 主路径：优先取消本地活跃 SSE/WS 连接，保证用户侧即时终止不被第三方调用拖慢
             cancelStreamingConnection(invokeMessage, toolSessionId);
+            // 旁路：异步通知第三方终止接口（fire-and-forget），不得阻塞或影响本地 cancel
+            invokeRemoteAbortIfConfigured(invokeMessage, toolSessionId, assistantAccount, businessTag);
             return;
         }
 
@@ -342,6 +342,16 @@ public class CloudAgentService {
             case "http", "webhook" -> "webhook";
             default -> null;
         };
+    }
+
+    /**
+     * 判断 channelType 是否为 webhook/http（POST 语义）。
+     *
+     * <p>abort 第三方通知始终按 HTTP POST 发送，route 误配成 sse/websocket 时
+     * 会向流式地址发 POST，必须显式拒绝。</p>
+     */
+    private static boolean isWebhookChannel(String channelType) {
+        return "webhook".equalsIgnoreCase(channelType) || "http".equalsIgnoreCase(channelType);
     }
 
     private static String resolveAuthType(List<AssistantInstanceInfo.RemoteHeader> headers) {
@@ -547,39 +557,52 @@ public class CloudAgentService {
      * 如果配置了 type=abort 的 remoteProperty，异步调用第三方终止接口。
      * 如果 remoteProperty 未命中，回退到 SysConfig 兜底配置（cloud_route_fallback_v2:{businessTag}:abort）。
      *
-     * <p>fire-and-forget：使用 CompletableFuture + 专用线程池异步发送 HTTP POST，
-     * 不阻塞 cancelStreamingConnection()。失败仅打 WARN 日志，不回传 tool_error。</p>
+     * <p>fire-and-forget：路由解析、SysConfig 读取、HTTP 调用整体包进专用线程池的异步分支，
+     * 不阻塞 cancelStreamingConnection()。失败（含线程池拒绝）仅打 WARN 日志，不回传 tool_error。</p>
+     *
+     * <p>安全约束：abort route 的 channelType 必须是 webhook/http（POST 语义），
+     * 误配成 sse/websocket 时记 WARN 跳过，避免向流式地址发 POST。</p>
      */
     private void invokeRemoteAbortIfConfigured(GatewayMessage invokeMessage,
                                                String toolSessionId,
                                                String assistantAccount,
                                                String businessTag) {
-        RemoteRoute route = resolveRemoteRoute(assistantAccount, ACTION_ABORT_SESSION, businessTag);
-        if (route == null) {
-            // remoteProperty 未配置 abort → 回退到 SysConfig 兜底
-            String scope = ACTION_TO_SCOPE.get(ACTION_ABORT_SESSION);
-            CallbackConfig cfg = sysConfigRouteProvider.load(invokeMessage.getAk(), scope, businessTag);
-            if (cfg == null) {
-                log.debug("[CLOUD_AGENT] No remote abort route configured, skipping third-party stop call");
-                return;
-            }
-            route = new RemoteRoute(cfg.getChannelAddress(), cfg.getChannelType(),
-                    cfg.getAppId(), businessTag, cfg.getAuthType());
+        final String ak = invokeMessage.getAk();
+        final String traceId = invokeMessage.getTraceId();
+        try {
+            abortExecutor.execute(() -> {
+                try {
+                    RemoteRoute route = resolveRemoteRoute(assistantAccount, ACTION_ABORT_SESSION, businessTag);
+                    if (route == null) {
+                        // remoteProperty 未配置 abort → 回退到 SysConfig 兜底
+                        String scope = ACTION_TO_SCOPE.get(ACTION_ABORT_SESSION);
+                        CallbackConfig cfg = sysConfigRouteProvider.load(ak, scope, businessTag);
+                        if (cfg == null) {
+                            log.debug("[CLOUD_AGENT] No remote abort route configured, skipping third-party stop call: traceId={}", traceId);
+                            return;
+                        }
+                        route = new RemoteRoute(cfg.getChannelAddress(), cfg.getChannelType(),
+                                cfg.getAppId(), businessTag, cfg.getAuthType());
+                    }
+                    // 校验 channelType 必须是 webhook/http：sendAbortRequest 始终按 HTTP POST 发送，
+                    // 误配成 sse/websocket 会向流式地址发 POST，显式拒绝并继续本地 cancel。
+                    if (!isWebhookChannel(route.channelType())) {
+                        log.warn("[CLOUD_AGENT] Abort route channelType is not webhook/http, skip third-party abort: channelType={}, url={}, traceId={}",
+                                route.channelType(), route.channelAddress(), traceId);
+                        return;
+                    }
+                    // 构造请求体（与 question 接口同构）
+                    ObjectNode body = buildAbortBody(invokeMessage, toolSessionId);
+                    sendAbortRequest(route, body, traceId);
+                } catch (Exception e) {
+                    log.warn("[CLOUD_AGENT] Async abort request failed: traceId={}, error={}",
+                            traceId, e.getMessage());
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            // 线程池队列满时 execute 同步抛出，必须吞掉以免影响本地 cancel 主路径
+            log.warn("[CLOUD_AGENT] Abort executor rejected task, skip third-party abort: traceId={}", traceId);
         }
-        final RemoteRoute finalRoute = route;
-
-        // 构造请求体（与 question 接口同构）
-        ObjectNode body = buildAbortBody(invokeMessage, toolSessionId);
-
-        // 异步发送（fire-and-forget）
-        CompletableFuture.runAsync(() -> {
-            try {
-                sendAbortRequest(finalRoute, body, invokeMessage.getTraceId());
-            } catch (Exception e) {
-                log.warn("[CLOUD_AGENT] Async abort request failed: traceId={}, error={}",
-                        invokeMessage.getTraceId(), e.getMessage());
-            }
-        }, abortExecutor);
     }
 
     /**
