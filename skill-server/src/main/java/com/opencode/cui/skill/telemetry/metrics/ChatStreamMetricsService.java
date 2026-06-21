@@ -41,14 +41,23 @@ public class ChatStreamMetricsService {
     }
 
     public void onStreamStart(String messageId, String brainTag) {
-        if (messageId == null) return;
+        if (messageId == null) {
+            log.warn("onStreamStart: messageId is null, skipping");
+            return;
+        }
         sessionStartTimes.put(messageId, System.currentTimeMillis());
     }
 
     public void onFirstToken(String messageId, String brainTag) {
-        if (messageId == null) return;
+        if (messageId == null) {
+            log.warn("onFirstToken: messageId is null, skipping");
+            return;
+        }
         Long startTime = sessionStartTimes.getIfPresent(messageId);
-        if (startTime == null) return;
+        if (startTime == null) {
+            log.warn("onFirstToken: startTime not found for messageId={}, skipping", messageId);
+            return;
+        }
         long now = System.currentTimeMillis();
         firstTokenTimestamps.put(messageId, now);
         long ttft = now - startTime;
@@ -64,9 +73,15 @@ public class ChatStreamMetricsService {
     }
 
     public void onStreamEnd(String messageId, String brainTag) {
-        if (messageId == null) return;
+        if (messageId == null) {
+            log.warn("onStreamEnd: messageId is null, skipping");
+            return;
+        }
         Long startTime = sessionStartTimes.getIfPresent(messageId);
-        if (startTime == null) return;
+        if (startTime == null) {
+            log.warn("onStreamEnd: startTime not found for messageId={}, skipping", messageId);
+            return;
+        }
         long now = System.currentTimeMillis();
         long latency = now - startTime;
         String tag = resolveBrainTag(brainTag);
@@ -80,6 +95,8 @@ public class ChatStreamMetricsService {
             double tps = (tokens * 1000.0) / latency;
             meterRegistry.summary("chat_stream_tokens_per_second", Tags.of("brain_tag", tag))
                     .record(tps);
+        } else {
+            log.warn("onStreamEnd: skipped TPS calculation for messageId={}, latency={}, tokens={}", messageId, latency, tokens);
         }
 
         sessionStartTimes.invalidate(messageId);
