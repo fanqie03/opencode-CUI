@@ -84,9 +84,6 @@ public class GatewayMessageRouter {
     private final ChannelSuppressReplyWhitelistService channelSuppressReplyWhitelistService;
     private final DefaultAssistantRuleService ruleService;
     private final MessageTurnLifecycle messageTurnLifecycle;
-    /** Track which messageIds have already reported their first token */
-    private final java.util.concurrent.ConcurrentHashMap.KeySetView<String, Boolean> processedFirstToken =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** 已完成轮次的短期缓存，用于抑制同一 trace 在 tool_done 后的残余事件 */
     private final Cache<String, Instant> completedSessions = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofSeconds(5))
@@ -842,11 +839,8 @@ public class GatewayMessageRouter {
                         }
                     }
                 }
-                // First token vs subsequent token
-                if (processedFirstToken.add(messageId)) {
-                    messageTurnLifecycle.onFirstToken(messageId, brainTag, sessionId, assistantAccount);
-                }
-                messageTurnLifecycle.onToken(messageId, brainTag);
+                // Delegate first-token tracking + token counting to MessageTurnLifecycle
+                messageTurnLifecycle.onToken(messageId, brainTag, sessionId, assistantAccount);
             }
         }
 
@@ -1049,8 +1043,6 @@ public class GatewayMessageRouter {
                 }
             }
             messageTurnLifecycle.onTurnEnd(messageId, brainTag, sessionId, assistantAccount);
-            // Remove from first token tracking to allow GC
-            processedFirstToken.remove(messageId);
         }
 
         StreamMessage msg = StreamMessage.sessionStatus("idle");

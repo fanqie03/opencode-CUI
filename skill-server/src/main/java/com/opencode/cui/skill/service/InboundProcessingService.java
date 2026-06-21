@@ -17,6 +17,7 @@ import com.opencode.cui.skill.model.AssistantInfo;
 import com.opencode.cui.skill.model.AssistantSessionIdentity;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -75,6 +76,7 @@ public class InboundProcessingService {
     private final ChannelSuppressReplyWhitelistService channelSuppressReplyWhitelistService;
     private final DefaultAssistantRuleService ruleService;
     private final AllowedSlashCommandsResolver allowedSlashCommandsResolver;
+    private final MessageTurnLifecycle messageTurnLifecycle;
 
     public InboundProcessingService(
             AssistantAccountResolverService resolverService,
@@ -99,7 +101,8 @@ public class InboundProcessingService {
             ChannelLookupService channelLookupService,
             ChannelSuppressReplyWhitelistService channelSuppressReplyWhitelistService,
             DefaultAssistantRuleService ruleService,
-            AllowedSlashCommandsResolver allowedSlashCommandsResolver) {
+            AllowedSlashCommandsResolver allowedSlashCommandsResolver,
+            MessageTurnLifecycle messageTurnLifecycle) {
         this.resolverService = resolverService;
         this.assistantIdProperties = assistantIdProperties;
         this.gatewayApiClient = gatewayApiClient;
@@ -123,6 +126,7 @@ public class InboundProcessingService {
         this.channelSuppressReplyWhitelistService = channelSuppressReplyWhitelistService;
         this.ruleService = ruleService;
         this.allowedSlashCommandsResolver = allowedSlashCommandsResolver;
+        this.messageTurnLifecycle = messageTurnLifecycle;
     }
 
     /**
@@ -402,6 +406,9 @@ public class InboundProcessingService {
         // 单聊 / 群聊都用真实发送者；blank/null 在控制器层已 4xx 拒绝（契约保证非空）。
         String effectiveSender = senderUserAccount;
         String messageId = String.valueOf(System.currentTimeMillis());
+
+        // Record turn start for metrics (covers IM + External inbound paths that don't go through SkillMessageFlowService)
+        messageTurnLifecycle.onTurnStart(messageId, bizRobotTag, String.valueOf(session.getId()), effectiveSender, bizRobotTag);
 
         // A7 + B2: allowed-slash-commands personal scope gating
         //   appendToPending == true ≡ personal scope（business 路径 strategy.generateToolSessionId() != null,

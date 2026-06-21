@@ -25,20 +25,22 @@ class MessageTurnLifecycleTest {
         streamMetrics = new ChatStreamMetricsService(registry, 10000, Duration.ofMinutes(30));
         welinkReporter = mock(WelinkTelemetryReporter.class);
         when(welinkReporter.isEffectiveEnabled()).thenReturn(true);
-        lifecycle = new MessageTurnLifecycle(streamMetrics, welinkReporter, true);
+        lifecycle = new MessageTurnLifecycle(streamMetrics, welinkReporter, true, 10000, Duration.ofMinutes(30));
     }
 
     @Test
     void onTurnStart_delegatesToStreamMetrics() {
         lifecycle.onTurnStart("msg-1", "brain-A", "sess-1", "user-1", "brain-A");
-        lifecycle.onFirstToken("msg-1", "brain-A", "sess-1", "assistant-1");
+        // First onToken call triggers first-token logic internally
+        lifecycle.onToken("msg-1", "brain-A", "sess-1", "assistant-1");
         assertNotNull(registry.find("chat_stream_ttft_seconds").tag("brain_tag", "brain-A").timer());
     }
 
     @Test
     void onFirstToken_reportsToWelinkWhenEnabled() {
         lifecycle.onTurnStart("msg-2", "brain-A", "sess-2", "user-2", "brain-A");
-        lifecycle.onFirstToken("msg-2", "brain-A", "sess-2", "assistant-2");
+        // First onToken triggers first-token reporting internally
+        lifecycle.onToken("msg-2", "brain-A", "sess-2", "assistant-2");
 
         verify(welinkReporter).report(argThat(event ->
             event instanceof ChatFirstTokenTelemetryEvent
@@ -46,10 +48,21 @@ class MessageTurnLifecycleTest {
     }
 
     @Test
+    void onFirstToken_onlyFiresOncePerMessageId() {
+        lifecycle.onTurnStart("msg-2b", "brain-A", "sess-2b", "user-2b", "brain-A");
+        lifecycle.onToken("msg-2b", "brain-A", "sess-2b", "assistant-2b");
+        lifecycle.onToken("msg-2b", "brain-A", "sess-2b", "assistant-2b");
+        lifecycle.onToken("msg-2b", "brain-A", "sess-2b", "assistant-2b");
+
+        // Welink should only be called once (first token only)
+        verify(welinkReporter, times(1)).report(any(ChatFirstTokenTelemetryEvent.class));
+    }
+
+    @Test
     void onFirstToken_skipsWelinkWhenDisabled() {
-        MessageTurnLifecycle disabledLifecycle = new MessageTurnLifecycle(streamMetrics, welinkReporter, false);
+        MessageTurnLifecycle disabledLifecycle = new MessageTurnLifecycle(streamMetrics, welinkReporter, false, 10000, Duration.ofMinutes(30));
         disabledLifecycle.onTurnStart("msg-3", "brain-A", "sess-3", "user-3", "brain-A");
-        disabledLifecycle.onFirstToken("msg-3", "brain-A", "sess-3", "assistant-3");
+        disabledLifecycle.onToken("msg-3", "brain-A", "sess-3", "assistant-3");
 
         verify(welinkReporter, never()).report(any());
     }
@@ -57,8 +70,8 @@ class MessageTurnLifecycleTest {
     @Test
     void onTurnEnd_delegatesToStreamMetrics() {
         lifecycle.onTurnStart("msg-4", "brain-B", "sess-4", "user-4", "brain-B");
-        lifecycle.onFirstToken("msg-4", "brain-B", "sess-4", "assistant-4");
-        lifecycle.onToken("msg-4", "brain-B");
+        lifecycle.onToken("msg-4", "brain-B", "sess-4", "assistant-4");
+        lifecycle.onToken("msg-4", "brain-B", "sess-4", "assistant-4");
         lifecycle.onTurnEnd("msg-4", "brain-B", "sess-4", "assistant-4");
 
         assertNotNull(registry.find("chat_stream_latency_seconds").tag("brain_tag", "brain-B").timer());
