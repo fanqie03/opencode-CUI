@@ -15,6 +15,7 @@ import com.opencode.cui.skill.logging.MdcHelper;
 import com.opencode.cui.skill.service.delivery.OutboundDeliveryDispatcher;
 import com.opencode.cui.skill.model.AssistantInfo;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnContext;
 import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
 import com.opencode.cui.skill.service.scope.DefaultAssistantScopeStrategy;
@@ -841,7 +842,7 @@ public class GatewayMessageRouter {
                 }
                 int contentLength = msg.getContent() != null ? msg.getContent().length() : 0;
                 // Delegate first-token tracking + token counting to MessageTurnLifecycle
-                messageTurnLifecycle.onToken(messageId, brainTag, sessionId, assistantAccount, contentLength);
+                messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null), contentLength);
             }
         }
 
@@ -1052,7 +1053,7 @@ public class GatewayMessageRouter {
                 log.warn("[SKIP] onTurnEnd brainTag: session is null, sessionId={}, messageId={}, using UNKNOWN",
                     sessionId, messageId);
             }
-            messageTurnLifecycle.onTurnEnd(messageId, brainTag, sessionId, assistantAccount);
+            messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null));
         } else {
             log.warn("[SKIP] onTurnEnd: messageId is null or blank, sessionId={}, skipping lifecycle cleanup", sessionId);
         }

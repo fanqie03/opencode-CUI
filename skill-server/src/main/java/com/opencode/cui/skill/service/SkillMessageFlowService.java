@@ -15,6 +15,7 @@ import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
 import com.opencode.cui.skill.telemetry.chat.ChatRequestTelemetryEvent;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnContext;
 import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -114,11 +115,7 @@ public class SkillMessageFlowService {
         }
         String effectiveUserId = effectiveUserId(userIdCookie, session);
         messageTurnLifecycle.onTurnStart(
-                message.getMessageId(),
-                brainTag,
-                sessionId,
-                effectiveUserId,
-                brainTag
+                new MessageTurnContext(message.getMessageId(), brainTag, sessionId, null, effectiveUserId, brainTag)
         );
 
         routeToGateway(session, sessionId, numericSessionId, request, userIdCookie);

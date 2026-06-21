@@ -47,7 +47,8 @@ public class ChatStreamMetricsService {
         CaffeineCacheMetrics.monitor(meterRegistry, tokenCounts, "tokenCounts");
     }
 
-    public void onStreamStart(String messageId, String brainTag) {
+    public void onStreamStart(MessageTurnContext ctx) {
+        String messageId = ctx.messageId();
         if (messageId == null) {
             log.warn("onStreamStart: messageId is null, skipping");
             return;
@@ -55,7 +56,8 @@ public class ChatStreamMetricsService {
         sessionStartTimes.put(messageId, System.currentTimeMillis());
     }
 
-    public void onFirstToken(String messageId, String brainTag) {
+    public void onFirstToken(MessageTurnContext ctx) {
+        String messageId = ctx.messageId();
         if (messageId == null) {
             log.warn("onFirstToken: messageId is null, skipping");
             return;
@@ -68,18 +70,20 @@ public class ChatStreamMetricsService {
         long now = System.currentTimeMillis();
         firstTokenTimestamps.put(messageId, now);
         long ttft = now - startTime;
-        String tag = resolveBrainTag(brainTag);
+        String tag = resolveBrainTag(ctx.brainTag());
         meterRegistry.timer("chat_stream_ttft_seconds", Tags.of("brain_tag", tag))
                 .record(ttft, TimeUnit.MILLISECONDS);
     }
 
-    public void onToken(String messageId, String brainTag, int contentLength) {
+    public void onToken(MessageTurnContext ctx, int contentLength) {
+        String messageId = ctx.messageId();
         if (messageId == null) return;
         AtomicInteger count = tokenCounts.get(messageId, k -> new AtomicInteger(0));
         count.addAndGet(contentLength);
     }
 
-    public void onStreamEnd(String messageId, String brainTag) {
+    public void onStreamEnd(MessageTurnContext ctx) {
+        String messageId = ctx.messageId();
         if (messageId == null) {
             log.warn("onStreamEnd: messageId is null, skipping");
             return;
@@ -91,7 +95,7 @@ public class ChatStreamMetricsService {
         }
         long now = System.currentTimeMillis();
         long latency = now - startTime;
-        String tag = resolveBrainTag(brainTag);
+        String tag = resolveBrainTag(ctx.brainTag());
 
         meterRegistry.timer("chat_stream_latency_seconds", Tags.of("brain_tag", tag))
                 .record(latency, TimeUnit.MILLISECONDS);

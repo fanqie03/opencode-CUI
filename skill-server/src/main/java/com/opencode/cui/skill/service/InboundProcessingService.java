@@ -17,6 +17,7 @@ import com.opencode.cui.skill.model.AssistantInfo;
 import com.opencode.cui.skill.model.AssistantSessionIdentity;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnContext;
 import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -408,7 +409,7 @@ public class InboundProcessingService {
         String messageId = String.valueOf(System.currentTimeMillis());
 
         // Record turn start for metrics (covers IM + External inbound paths that don't go through SkillMessageFlowService)
-        messageTurnLifecycle.onTurnStart(messageId, bizRobotTag, String.valueOf(session.getId()), effectiveSender, bizRobotTag);
+        messageTurnLifecycle.onTurnStart(new MessageTurnContext(messageId, bizRobotTag, String.valueOf(session.getId()), null, effectiveSender, bizRobotTag));
 
         // A7 + B2: allowed-slash-commands personal scope gating
         //   appendToPending == true ≡ personal scope（business 路径 strategy.generateToolSessionId() != null,

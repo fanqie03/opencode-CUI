@@ -42,32 +42,29 @@ public class MessageTurnLifecycle {
         CaffeineCacheMetrics.monitor(meterRegistry, processedFirstToken, "processedFirstToken");
     }
 
-    public void onTurnStart(String messageId, String brainTag, String sessionId,
-                            String senderUserAccount, String businessTag) {
-        streamMetrics.onStreamStart(messageId, brainTag);
+    public void onTurnStart(MessageTurnContext ctx) {
+        streamMetrics.onStreamStart(ctx);
     }
 
-    private void onFirstToken(String messageId, String brainTag, String sessionId,
-                              String assistantAccount) {
-        streamMetrics.onFirstToken(messageId, brainTag);
+    private void onFirstToken(MessageTurnContext ctx) {
+        streamMetrics.onFirstToken(ctx);
         if (welinkEnabled) {
             welinkReporter.report(new ChatFirstTokenTelemetryEvent(
-                sessionId, assistantAccount, brainTag, messageId));
+                ctx.sessionId(), ctx.assistantAccount(), ctx.brainTag(), ctx.messageId()));
         }
     }
 
-    public void onToken(String messageId, String brainTag, String sessionId, String assistantAccount, int contentLength) {
-        Boolean wasFirst = processedFirstToken.asMap().putIfAbsent(messageId, Boolean.TRUE);
+    public void onToken(MessageTurnContext ctx, int contentLength) {
+        Boolean wasFirst = processedFirstToken.asMap().putIfAbsent(ctx.messageId(), Boolean.TRUE);
         if (wasFirst == null) {
             // This thread won the race — it's the first token
-            onFirstToken(messageId, brainTag, sessionId, assistantAccount);
+            onFirstToken(ctx);
         }
-        streamMetrics.onToken(messageId, brainTag, contentLength);
+        streamMetrics.onToken(ctx, contentLength);
     }
 
-    public void onTurnEnd(String messageId, String brainTag, String sessionId,
-                          String assistantAccount) {
-        streamMetrics.onStreamEnd(messageId, brainTag);
-        processedFirstToken.invalidate(messageId);
+    public void onTurnEnd(MessageTurnContext ctx) {
+        streamMetrics.onStreamEnd(ctx);
+        processedFirstToken.invalidate(ctx.messageId());
     }
 }
