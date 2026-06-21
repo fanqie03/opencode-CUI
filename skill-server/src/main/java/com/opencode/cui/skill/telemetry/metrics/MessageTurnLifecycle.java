@@ -56,13 +56,13 @@ public class MessageTurnLifecycle {
         }
     }
 
-    public void onToken(String messageId, String brainTag, String sessionId, String assistantAccount) {
+    public void onToken(String messageId, String brainTag, String sessionId, String assistantAccount, int contentLength) {
         Boolean wasFirst = processedFirstToken.asMap().putIfAbsent(messageId, Boolean.TRUE);
         if (wasFirst == null) {
             // This thread won the race — it's the first token
             onFirstToken(messageId, brainTag, sessionId, assistantAccount);
         }
-        streamMetrics.onToken(messageId, brainTag);
+        streamMetrics.onToken(messageId, brainTag, contentLength);
     }
 
     public void onTurnEnd(String messageId, String brainTag, String sessionId,

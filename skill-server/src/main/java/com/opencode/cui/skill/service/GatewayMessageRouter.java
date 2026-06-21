@@ -839,8 +839,9 @@ public class GatewayMessageRouter {
                         }
                     }
                 }
+                int contentLength = msg.getContent() != null ? msg.getContent().length() : 0;
                 // Delegate first-token tracking + token counting to MessageTurnLifecycle
-                messageTurnLifecycle.onToken(messageId, brainTag, sessionId, assistantAccount);
+                messageTurnLifecycle.onToken(messageId, brainTag, sessionId, assistantAccount, contentLength);
             }
         }
 
@@ -1039,8 +1040,17 @@ public class GatewayMessageRouter {
                     AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
                     if (info != null) {
                         brainTag = info.getBusinessTag();
+                    } else {
+                        log.warn("[SKIP] onTurnEnd brainTag: assistant info not found, ak={}, sessionId={}, messageId={}, using UNKNOWN",
+                            session.getAk(), sessionId, messageId);
                     }
+                } else {
+                    log.warn("[SKIP] onTurnEnd brainTag: default assistant, sessionId={}, messageId={}, using UNKNOWN",
+                        sessionId, messageId);
                 }
+            } else {
+                log.warn("[SKIP] onTurnEnd brainTag: session is null, sessionId={}, messageId={}, using UNKNOWN",
+                    sessionId, messageId);
             }
             messageTurnLifecycle.onTurnEnd(messageId, brainTag, sessionId, assistantAccount);
         } else {

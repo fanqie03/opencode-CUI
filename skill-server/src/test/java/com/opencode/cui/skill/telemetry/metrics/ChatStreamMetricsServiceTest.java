@@ -38,8 +38,8 @@ class ChatStreamMetricsServiceTest {
         service.onStreamStart("msg-2", "brain-B");
         sleep(5);
         service.onFirstToken("msg-2", "brain-B");
-        service.onToken("msg-2", "brain-B");
-        service.onToken("msg-2", "brain-B");
+        service.onToken("msg-2", "brain-B", 5);
+        service.onToken("msg-2", "brain-B", 3);
         sleep(5);
         service.onStreamEnd("msg-2", "brain-B");
 
@@ -56,7 +56,7 @@ class ChatStreamMetricsServiceTest {
     void nullMessageId_skipsAllRecording() {
         service.onStreamStart(null, "brain-A");
         service.onFirstToken(null, "brain-A");
-        service.onToken(null, "brain-A");
+        service.onToken(null, "brain-A", 10);
         service.onStreamEnd(null, "brain-A");
 
         // Cache metrics are registered at construction time; null messageId should produce no chat_stream business metrics

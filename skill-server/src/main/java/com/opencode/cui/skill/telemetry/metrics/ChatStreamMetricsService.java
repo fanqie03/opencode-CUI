@@ -73,10 +73,10 @@ public class ChatStreamMetricsService {
                 .record(ttft, TimeUnit.MILLISECONDS);
     }
 
-    public void onToken(String messageId, String brainTag) {
+    public void onToken(String messageId, String brainTag, int contentLength) {
         if (messageId == null) return;
         AtomicInteger count = tokenCounts.get(messageId, k -> new AtomicInteger(0));
-        count.incrementAndGet();
+        count.addAndGet(contentLength);
     }
 
     public void onStreamEnd(String messageId, String brainTag) {
