@@ -4,6 +4,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -16,6 +17,7 @@ import java.util.List;
  * firstToken 事件由本类基于 {@code processedFirstToken} 缓存做幂等去重（每 messageId 仅触发一次）。
  * turnEnd 时清理缓存，允许同一 messageId 的后续轮次重新触发 firstToken。
  */
+@Slf4j
 @Component
 public class MessageTurnLifecycle {
 
@@ -32,6 +34,7 @@ public class MessageTurnLifecycle {
                 .recordStats()
                 .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
         CaffeineCacheMetrics.monitor(meterRegistry, processedFirstToken, "processedFirstToken");
+        log.info("MessageTurnLifecycle init handlers: {}", handlers);
     }
 
     public void onTurnStart(MessageTurnContext ctx) {
