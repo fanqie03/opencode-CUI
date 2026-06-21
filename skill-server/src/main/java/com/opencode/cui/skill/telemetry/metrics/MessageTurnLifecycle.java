@@ -32,6 +32,7 @@ public class MessageTurnLifecycle {
                 .recordStats()
                 .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
         CaffeineCacheMetrics.monitor(meterRegistry, processedFirstToken, "processedFirstToken");
+        log.info("MessageTurnLifecycle init handlers: {}", handlers);
     }
 
     public void onTurnStart(MessageTurnContext ctx) {
