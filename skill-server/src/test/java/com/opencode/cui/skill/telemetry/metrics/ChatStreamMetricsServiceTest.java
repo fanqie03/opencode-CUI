@@ -23,10 +23,10 @@ class ChatStreamMetricsServiceTest {
     }
 
     @Test
-    void onFirstToken_recordsTtftTimer() {
-        service.onStreamStart(MessageTurnContext.of("msg-1", "brain-A"));
+    void firstToken_recordsTtftTimer() {
+        service.turnStart(MessageTurnContext.of("msg-1", "brain-A"));
         sleep(10);
-        service.onFirstToken(MessageTurnContext.of("msg-1", "brain-A"));
+        service.firstToken(MessageTurnContext.of("msg-1", "brain-A"));
 
         Timer ttft = registry.find("chat_stream_ttft_seconds").tag("brain_tag", "brain-A").timer();
         assertNotNull(ttft);
@@ -34,14 +34,14 @@ class ChatStreamMetricsServiceTest {
     }
 
     @Test
-    void onStreamEnd_recordsLatencyAndTps() {
-        service.onStreamStart(MessageTurnContext.of("msg-2", "brain-B"));
+    void turnEnd_recordsLatencyAndTps() {
+        service.turnStart(MessageTurnContext.of("msg-2", "brain-B"));
         sleep(5);
-        service.onFirstToken(MessageTurnContext.of("msg-2", "brain-B"));
-        service.onToken(MessageTurnContext.of("msg-2", "brain-B"), 5);
-        service.onToken(MessageTurnContext.of("msg-2", "brain-B"), 3);
+        service.firstToken(MessageTurnContext.of("msg-2", "brain-B"));
+        service.token(MessageTurnContext.of("msg-2", "brain-B"), 5);
+        service.token(MessageTurnContext.of("msg-2", "brain-B"), 3);
         sleep(5);
-        service.onStreamEnd(MessageTurnContext.of("msg-2", "brain-B"));
+        service.turnEnd(MessageTurnContext.of("msg-2", "brain-B"));
 
         Timer latency = registry.find("chat_stream_latency_seconds").tag("brain_tag", "brain-B").timer();
         assertNotNull(latency);
@@ -54,10 +54,10 @@ class ChatStreamMetricsServiceTest {
 
     @Test
     void nullMessageId_skipsAllRecording() {
-        service.onStreamStart(MessageTurnContext.of(null, "brain-A"));
-        service.onFirstToken(MessageTurnContext.of(null, "brain-A"));
-        service.onToken(MessageTurnContext.of(null, "brain-A"), 10);
-        service.onStreamEnd(MessageTurnContext.of(null, "brain-A"));
+        service.turnStart(MessageTurnContext.of(null, "brain-A"));
+        service.firstToken(MessageTurnContext.of(null, "brain-A"));
+        service.token(MessageTurnContext.of(null, "brain-A"), 10);
+        service.turnEnd(MessageTurnContext.of(null, "brain-A"));
 
         // Cache metrics are registered at construction time; null messageId should produce no chat_stream business metrics
         assertNull(registry.find("chat_stream_ttft_seconds").timer());
@@ -67,9 +67,9 @@ class ChatStreamMetricsServiceTest {
 
     @Test
     void missingBrainTag_usesUnknownFallback() {
-        service.onStreamStart(MessageTurnContext.of("msg-3", null));
+        service.turnStart(MessageTurnContext.of("msg-3", null));
         sleep(5);
-        service.onFirstToken(MessageTurnContext.of("msg-3", null));
+        service.firstToken(MessageTurnContext.of("msg-3", null));
 
         Timer ttft = registry.find("chat_stream_ttft_seconds").tag("brain_tag", "UNKNOWN").timer();
         assertNotNull(ttft);

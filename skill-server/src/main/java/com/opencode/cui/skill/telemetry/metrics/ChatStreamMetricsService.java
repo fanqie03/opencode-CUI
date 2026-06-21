@@ -9,6 +9,7 @@ import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -22,7 +23,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 @Slf4j
 @Service
-public class ChatStreamMetricsService {
+@Order(10)
+public class ChatStreamMetricsService implements MessageTurnHandler {
 
     private final MeterRegistry meterRegistry;
     private final Cache<String, Long> sessionStartTimes;
@@ -47,24 +49,26 @@ public class ChatStreamMetricsService {
         CaffeineCacheMetrics.monitor(meterRegistry, tokenCounts, "tokenCounts");
     }
 
-    public void onStreamStart(MessageTurnContext ctx) {
+    @Override
+    public void turnStart(MessageTurnContext ctx) {
         String messageId = ctx.messageId();
         if (messageId == null) {
-            log.warn("onStreamStart: messageId is null, skipping");
+            log.warn("turnStart: messageId is null, skipping");
             return;
         }
         sessionStartTimes.put(messageId, System.currentTimeMillis());
     }
 
-    public void onFirstToken(MessageTurnContext ctx) {
+    @Override
+    public void firstToken(MessageTurnContext ctx) {
         String messageId = ctx.messageId();
         if (messageId == null) {
-            log.warn("onFirstToken: messageId is null, skipping");
+            log.warn("firstToken: messageId is null, skipping");
             return;
         }
         Long startTime = sessionStartTimes.getIfPresent(messageId);
         if (startTime == null) {
-            log.warn("onFirstToken: startTime not found for messageId={}, skipping", messageId);
+            log.warn("firstToken: startTime not found for messageId={}, skipping", messageId);
             return;
         }
         long now = System.currentTimeMillis();
@@ -75,22 +79,24 @@ public class ChatStreamMetricsService {
                 .record(ttft, TimeUnit.MILLISECONDS);
     }
 
-    public void onToken(MessageTurnContext ctx, int contentLength) {
+    @Override
+    public void token(MessageTurnContext ctx, int contentLength) {
         String messageId = ctx.messageId();
         if (messageId == null) return;
         AtomicInteger count = tokenCounts.get(messageId, k -> new AtomicInteger(0));
         count.addAndGet(contentLength);
     }
 
-    public void onStreamEnd(MessageTurnContext ctx) {
+    @Override
+    public void turnEnd(MessageTurnContext ctx) {
         String messageId = ctx.messageId();
         if (messageId == null) {
-            log.warn("onStreamEnd: messageId is null, skipping");
+            log.warn("turnEnd: messageId is null, skipping");
             return;
         }
         Long startTime = sessionStartTimes.getIfPresent(messageId);
         if (startTime == null) {
-            log.warn("onStreamEnd: startTime not found for messageId={}, skipping", messageId);
+            log.warn("turnEnd: startTime not found for messageId={}, skipping", messageId);
             return;
         }
         long now = System.currentTimeMillis();
@@ -107,7 +113,7 @@ public class ChatStreamMetricsService {
             meterRegistry.summary("chat_stream_tokens_per_second", Tags.of("brain_tag", tag))
                     .record(tps);
         } else {
-            log.warn("onStreamEnd: skipped TPS calculation for messageId={}, latency={}, tokens={}", messageId, latency, tokens);
+            log.warn("turnEnd: skipped TPS calculation for messageId={}, latency={}, tokens={}", messageId, latency, tokens);
         }
 
         sessionStartTimes.invalidate(messageId);

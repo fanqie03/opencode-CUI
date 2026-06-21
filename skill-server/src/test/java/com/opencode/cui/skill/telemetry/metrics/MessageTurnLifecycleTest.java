@@ -1,79 +1,107 @@
 package com.opencode.cui.skill.telemetry.metrics;
 
-import com.opencode.cui.skill.telemetry.chat.ChatFirstTokenTelemetryEvent;
-import com.opencode.cui.skill.telemetry.core.WelinkTelemetryReporter;
-import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.List;
 
 import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
 
 class MessageTurnLifecycleTest {
 
-    private MeterRegistry registry;
-    private ChatStreamMetricsService streamMetrics;
-    private WelinkTelemetryReporter welinkReporter;
+    private SimpleMeterRegistry registry;
+    private MessageTurnHandler mockHandler;
     private MessageTurnLifecycle lifecycle;
 
     @BeforeEach
     void setUp() {
         registry = new SimpleMeterRegistry();
-        streamMetrics = new ChatStreamMetricsService(registry, 10000, Duration.ofMinutes(30));
-        welinkReporter = mock(WelinkTelemetryReporter.class);
-        when(welinkReporter.isEffectiveEnabled()).thenReturn(true);
-        lifecycle = new MessageTurnLifecycle(streamMetrics, welinkReporter, registry, true, 10000, Duration.ofMinutes(30));
+        mockHandler = mock(MessageTurnHandler.class);
+        lifecycle = new MessageTurnLifecycle(List.of(mockHandler), registry, 10000, Duration.ofMinutes(30));
     }
 
     @Test
-    void onTurnStart_delegatesToStreamMetrics() {
-        lifecycle.onTurnStart(new MessageTurnContext("msg-1", "brain-A", "sess-1", null, "user-1", "brain-A"));
-        // First onToken call triggers first-token logic internally
-        lifecycle.onToken(new MessageTurnContext("msg-1", "brain-A", "sess-1", "assistant-1", null, null), 5);
-        assertNotNull(registry.find("chat_stream_ttft_seconds").tag("brain_tag", "brain-A").timer());
+    void onTurnStart_callsHandlerTurnStart() {
+        MessageTurnContext ctx = new MessageTurnContext("msg-1", "brain-A", "sess-1", "assistant-1", "user-1", "brain-A");
+        lifecycle.onTurnStart(ctx);
+        verify(mockHandler).turnStart(ctx);
     }
 
     @Test
-    void onFirstToken_reportsToWelinkWhenEnabled() {
-        lifecycle.onTurnStart(new MessageTurnContext("msg-2", "brain-A", "sess-2", null, "user-2", "brain-A"));
-        // First onToken triggers first-token reporting internally
-        lifecycle.onToken(new MessageTurnContext("msg-2", "brain-A", "sess-2", "assistant-2", null, null), 5);
+    void onToken_firstTokenFiresOncePerMessageId() {
+        MessageTurnContext ctx = new MessageTurnContext("msg-2", "brain-A", "sess-2", "assistant-2", "user-2", "brain-A");
+        lifecycle.onTurnStart(ctx);
 
-        verify(welinkReporter).report(argThat(event ->
-            event instanceof ChatFirstTokenTelemetryEvent
-            && "skill_chat_first_token".equals(event.eventId())));
+        lifecycle.onToken(ctx, 5);
+        lifecycle.onToken(ctx, 3);
+        lifecycle.onToken(ctx, 7);
+
+        // firstToken must be called exactly once
+        verify(mockHandler, times(1)).firstToken(ctx);
+        // token should be called for each onToken invocation
+        verify(mockHandler, times(3)).token(eq(ctx), anyInt());
     }
 
     @Test
-    void onFirstToken_onlyFiresOncePerMessageId() {
-        lifecycle.onTurnStart(new MessageTurnContext("msg-2b", "brain-A", "sess-2b", null, "user-2b", "brain-A"));
-        lifecycle.onToken(new MessageTurnContext("msg-2b", "brain-A", "sess-2b", "assistant-2b", null, null), 5);
-        lifecycle.onToken(new MessageTurnContext("msg-2b", "brain-A", "sess-2b", "assistant-2b", null, null), 3);
-        lifecycle.onToken(new MessageTurnContext("msg-2b", "brain-A", "sess-2b", "assistant-2b", null, null), 7);
+    void turnEnd_invalidatesCache_allowingFirstTokenToFireAgain() {
+        MessageTurnContext ctx = new MessageTurnContext("msg-3", "brain-B", "sess-3", "assistant-3", "user-3", "brain-B");
 
-        // Welink should only be called once (first token only)
-        verify(welinkReporter, times(1)).report(any(ChatFirstTokenTelemetryEvent.class));
+        // First turn
+        lifecycle.onTurnStart(ctx);
+        lifecycle.onToken(ctx, 5);
+        lifecycle.onTurnEnd(ctx);
+
+        // Second turn with same messageId — firstToken should fire again because cache was invalidated
+        lifecycle.onTurnStart(ctx);
+        lifecycle.onToken(ctx, 4);
+
+        verify(mockHandler, times(2)).firstToken(ctx);
+        verify(mockHandler, times(2)).turnStart(ctx);
+        verify(mockHandler, times(1)).turnEnd(ctx);
     }
 
     @Test
-    void onFirstToken_skipsWelinkWhenDisabled() {
-        MessageTurnLifecycle disabledLifecycle = new MessageTurnLifecycle(streamMetrics, welinkReporter, registry, false, 10000, Duration.ofMinutes(30));
-        disabledLifecycle.onTurnStart(new MessageTurnContext("msg-3", "brain-A", "sess-3", null, "user-3", "brain-A"));
-        disabledLifecycle.onToken(new MessageTurnContext("msg-3", "brain-A", "sess-3", "assistant-3", null, null), 5);
-
-        verify(welinkReporter, never()).report(any());
+    void onTurnEnd_callsHandlerTurnEnd() {
+        MessageTurnContext ctx = new MessageTurnContext("msg-4", "brain-B", "sess-4", "assistant-4", "user-4", "brain-B");
+        lifecycle.onTurnStart(ctx);
+        lifecycle.onToken(ctx, 5);
+        lifecycle.onTurnEnd(ctx);
+        verify(mockHandler).turnEnd(ctx);
     }
 
     @Test
-    void onTurnEnd_delegatesToStreamMetrics() {
-        lifecycle.onTurnStart(new MessageTurnContext("msg-4", "brain-B", "sess-4", null, "user-4", "brain-B"));
-        lifecycle.onToken(new MessageTurnContext("msg-4", "brain-B", "sess-4", "assistant-4", null, null), 5);
-        lifecycle.onToken(new MessageTurnContext("msg-4", "brain-B", "sess-4", "assistant-4", null, null), 3);
-        lifecycle.onTurnEnd(new MessageTurnContext("msg-4", "brain-B", "sess-4", "assistant-4", null, null));
+    void multipleHandlers_allCalled() {
+        MessageTurnHandler handler1 = mock(MessageTurnHandler.class);
+        MessageTurnHandler handler2 = mock(MessageTurnHandler.class);
+        MessageTurnLifecycle multiLifecycle = new MessageTurnLifecycle(
+                List.of(handler1, handler2), new SimpleMeterRegistry(), 10000, Duration.ofMinutes(30));
 
-        assertNotNull(registry.find("chat_stream_latency_seconds").tag("brain_tag", "brain-B").timer());
+        MessageTurnContext ctx = new MessageTurnContext("msg-5", "brain-C", "sess-5", "assistant-5", "user-5", "brain-C");
+        multiLifecycle.onTurnStart(ctx);
+        multiLifecycle.onToken(ctx, 10);
+        multiLifecycle.onTurnEnd(ctx);
+
+        verify(handler1).turnStart(ctx);
+        verify(handler2).turnStart(ctx);
+        verify(handler1).firstToken(ctx);
+        verify(handler2).firstToken(ctx);
+        verify(handler1).token(ctx, 10);
+        verify(handler2).token(ctx, 10);
+        verify(handler1).turnEnd(ctx);
+        verify(handler2).turnEnd(ctx);
+    }
+
+    @Test
+    void emptyHandlerList_doesNotThrow() {
+        MessageTurnLifecycle emptyLifecycle = new MessageTurnLifecycle(
+                List.of(), new SimpleMeterRegistry(), 10000, Duration.ofMinutes(30));
+
+        MessageTurnContext ctx = new MessageTurnContext("msg-6", "brain-D", "sess-6", "assistant-6", "user-6", "brain-D");
+        emptyLifecycle.onTurnStart(ctx);
+        emptyLifecycle.onToken(ctx, 5);
+        emptyLifecycle.onTurnEnd(ctx);
+        // No exception means pass
     }
 }

@@ -2,40 +2,32 @@ package com.opencode.cui.skill.telemetry.metrics;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.opencode.cui.skill.telemetry.chat.ChatFirstTokenTelemetryEvent;
-import com.opencode.cui.skill.telemetry.core.WelinkTelemetryReporter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.List;
 
 /**
  * 消息轮次生命周期编排器。
- * 委托给 ChatStreamMetricsService（Prometheus）+ WelinkTelemetryReporter（TTFT 双上报）。
- * 不接管现有 ChatRequestTelemetryEvent / ChatReplyTelemetryEvent，避免双重上报。
+ * 遍历所有注册的 {@link MessageTurnHandler} 插件，分发 turnStart / firstToken / token / turnEnd 事件。
+ * firstToken 事件由本类基于 {@code processedFirstToken} 缓存做幂等去重（每 messageId 仅触发一次）。
+ * turnEnd 时清理缓存，允许同一 messageId 的后续轮次重新触发 firstToken。
  */
 @Component
 public class MessageTurnLifecycle {
 
-    private final ChatStreamMetricsService streamMetrics;
-    private final WelinkTelemetryReporter welinkReporter;
-    private final boolean welinkEnabled;
-    private final MeterRegistry meterRegistry;
+    private final List<MessageTurnHandler> handlers;
     /** Track which messageIds have already reported their first token (bounded, TTL-evicted). */
     private final Cache<String, Boolean> processedFirstToken;
 
-     public MessageTurnLifecycle(ChatStreamMetricsService streamMetrics,
-                                 WelinkTelemetryReporter welinkReporter,
-                                 MeterRegistry meterRegistry,
-                                 @Value("${telemetry.welink.enabled:false}") boolean welinkEnabled,
-                                 @Value("${telemetry.chatstream.max-sessions:10000}") long maxSessions,
-                                 @Value("${telemetry.chatstream.session-ttl-minutes:30}") Duration sessionTtl) {
-        this.streamMetrics = streamMetrics;
-        this.welinkReporter = welinkReporter;
-        this.welinkEnabled = welinkEnabled;
-        this.meterRegistry = meterRegistry;
+    public MessageTurnLifecycle(List<MessageTurnHandler> handlers,
+                                MeterRegistry meterRegistry,
+                                @Value("${telemetry.chatstream.max-sessions:10000}") long maxSessions,
+                                @Value("${telemetry.chatstream.session-ttl-minutes:30}") Duration sessionTtl) {
+        this.handlers = handlers;
         this.processedFirstToken = Caffeine.newBuilder()
                 .recordStats()
                 .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
@@ -43,14 +35,14 @@ public class MessageTurnLifecycle {
     }
 
     public void onTurnStart(MessageTurnContext ctx) {
-        streamMetrics.onStreamStart(ctx);
+        for (MessageTurnHandler handler : handlers) {
+            handler.turnStart(ctx);
+        }
     }
 
     private void onFirstToken(MessageTurnContext ctx) {
-        streamMetrics.onFirstToken(ctx);
-        if (welinkEnabled) {
-            welinkReporter.report(new ChatFirstTokenTelemetryEvent(
-                ctx.sessionId(), ctx.assistantAccount(), ctx.brainTag(), ctx.messageId()));
+        for (MessageTurnHandler handler : handlers) {
+            handler.firstToken(ctx);
         }
     }
 
@@ -60,11 +52,15 @@ public class MessageTurnLifecycle {
             // This thread won the race — it's the first token
             onFirstToken(ctx);
         }
-        streamMetrics.onToken(ctx, contentLength);
+        for (MessageTurnHandler handler : handlers) {
+            handler.token(ctx, contentLength);
+        }
     }
 
     public void onTurnEnd(MessageTurnContext ctx) {
-        streamMetrics.onStreamEnd(ctx);
+        for (MessageTurnHandler handler : handlers) {
+            handler.turnEnd(ctx);
+        }
         processedFirstToken.invalidate(ctx.messageId());
     }
 }
