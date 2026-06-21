@@ -1447,3 +1447,187 @@ git commit -m "feat(metrics): add ai-gateway actuator+prometheus and SkillRelayS
 | skill-server 对外 API 拦截器 | Task 5 (ApiMetricsInterceptor) |
 | skill-server WS Client 连接数 | Task 11 (GatewayWSClient) |
 | ai-gateway WS 被连接数 | Task 12 (SkillRelayService) |
+
+---
+
+## 实现复盘与差异分析
+
+> 分析日期：2026-06-19
+> 分析范围：feature-ops-metrics 分支全部代码变更
+
+### 一、整体完成度评估
+
+| 维度 | 完成度 | 说明 |
+|------|--------|------|
+| 核心功能 | **~95%** | 13 个第三方接口埋码、对外 API 拦截器、流式效率指标、WS 连接数、慧眼告警 MDC、消息生命周期抽象、TTFT 双上报全部实现 |
+| 代码质量 | **高** | 委托模式、防泄漏设计（MDC finally 清理 + Caffeine TTL）、finally 清理等最佳实践都到位 |
+| 设计一致性 | **大部分一致** | 有 1 个重要配置不一致问题，2 个次要差异 |
+
+### 二、需求 vs 实现对比
+
+#### ✅ 已正确实现的部分
+
+| 需求点 | 实现状态 | 关键文件 |
+|--------|----------|----------|
+| MetricServiceEnum 13 个接口级枚举 | ✅ 完全一致 | [MetricServiceEnum.java](file:///d:/code/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/telemetry/metrics/MetricServiceEnum.java) |
+| recordApiCall (3 Counter + 1 Timer + URL 去 query) | ✅ 完全一致 | [ApiCallMetricsService.java](file:///d:/code/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/telemetry/metrics/ApiCallMetricsService.java) |
+| 失败时写 `[EXT_CALL]` ERROR 日志 | ✅ 完全一致 | 同上，第 45-47 行 |
+| 13 个第三方调用接入点 | ✅ 完全一致 | 9 个服务类，覆盖 IM(3) + Gateway(6) + 业务中心(3) + 埋码上报(1) |
+| MDC businessDomain + log4j2 pattern | ✅ 完全一致 | [MdcConstants.java](file:///d:/code/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/logging/MdcConstants.java) + [log4j2-spring.xml](file:///d:/code/opencode-CUI/skill-server/src/main/resources/log4j2-spring.xml) |
+| 13 个入口 MDC 清理（finally 模式） | ✅ 完全一致 | 所有接入点均在 finally 中 `putBusinessDomain(null)` |
+| ApiMetricsInterceptor 对外 API 拦截 | ✅ 完全一致 | [ApiMetricsInterceptor.java](file:///d:/code/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/telemetry/metrics/ApiMetricsInterceptor.java) |
+| ChatStreamMetricsService (TTFT/Latency/TPS) | ✅ 已实现 | [ChatStreamMetricsService.java](file:///d:/code/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/telemetry/metrics/ChatStreamMetricsService.java) |
+| Caffeine Cache 防内存泄漏 | ✅ 已实现 | 同上，maximumSize + expireAfterWrite 双重保障 |
+| brain_tag + UNKNOWN 兜底 | ✅ 完全一致 | 同上，第 90-92 行 `resolveBrainTag` |
+| MessageTurnLifecycle 编排器（委托模式） | ✅ 完全一致 | [MessageTurnLifecycle.java](file:///d:/code/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/telemetry/metrics/MessageTurnLifecycle.java) |
+| TTFT 双上报 Prometheus + Welink | ✅ 完全一致 | 同上，第 35-39 行 |
+| ChatFirstTokenTelemetryEvent | ✅ 完全一致 | [ChatFirstTokenTelemetryEvent.java](file:///d:/code/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/telemetry/chat/ChatFirstTokenTelemetryEvent.java) |
+| SkillMessageFlowService onTurnStart 接入 | ✅ 已实现 | [SkillMessageFlowService.java](file:///d:/code/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/service/SkillMessageFlowService.java) 第 116-122 行 |
+| GatewayMessageRouter onFirstToken/onToken/onTurnEnd 接入 | ✅ 已实现 | [GatewayMessageRouter.java](file:///d:/code/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/service/GatewayMessageRouter.java) 第 847/849/1051 行 |
+| GatewayWSClient 连接数（Gauge + Counter） | ✅ 完全一致 | [GatewayWSClient.java](file:///d:/code/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/ws/GatewayWSClient.java) |
+| SkillRelayService 连接数（Gauge + Counter） | ✅ 完全一致 | [SkillRelayService.java](file:///d:/code/opencode-CUI/ai-gateway/src/main/java/com/opencode/cui/gateway/service/SkillRelayService.java) |
+| Actuator + Prometheus 依赖与配置 | ✅ 完全一致 | pom.xml + application.yml |
+
+#### ⚠️ 存在差异 / 问题
+
+| # | 问题 | 严重程度 | 详情 | 建议 |
+|---|------|----------|------|------|
+| 1 | **ChatStreamMetricsService 配置路径不一致** | 🔴 高 | 代码 `@Value` 读 `telemetry.chatstream.max-sessions` / `telemetry.chatstream.session-ttl-minutes`，但 `application.yml` 配置的是 `skill.metrics.stream.max-sessions` / `skill.metrics.stream.session-ttl`。配置不生效，一直用默认值。 | 统一为 `skill.metrics.stream.*` 前缀 |
+| 2 | TPOT 指标未实现 | 🟡 中 | 需求中提到了 TPOT（每 token 输出延迟），但设计文档 §八.1 也将其标记为"待确认"，属于有意识地未实现 | 确认是否需要后补充实现 |
+| 3 | Welink 开关读取方式 | 🟢 低 | 设计建议复用 `WelinkTelemetryReporter.isEffectiveEnabled()`，代码直接读 `telemetry.welink.enabled`。影响不大，因为 reporter 内部也有自己的 enabled 判断 | 可保持现状，或统一为注入 reporter 的 enabled 状态 |
+
+### 三、问题 1 详细说明：配置路径不一致
+
+**代码中的配置读取**（[ChatStreamMetricsService.java](file:///d:/code/opencode-CUI/skill-server/src/main/java/com/opencode/cui/skill/telemetry/metrics/ChatStreamMetricsService.java#L31-L33) 第 31-33 行）：
+
+```java
+public ChatStreamMetricsService(MeterRegistry meterRegistry,
+                               @Value("${telemetry.chatstream.max-sessions:10000}") long maxSessions,
+                               @Value("${telemetry.chatstream.session-ttl-minutes:60}") Duration sessionTtl) {
+```
+
+**application.yml 中的配置**（第 141-144 行）：
+
+```yaml
+skill:
+  metrics:
+    stream:
+      max-sessions: ${SKILL_METRICS_STREAM_MAX_SESSIONS:10000}
+      session-ttl: ${SKILL_METRICS_STREAM_SESSION_TTL:30m}
+```
+
+**影响**：
+- 配置项 `skill.metrics.stream.max-sessions` 和 `skill.metrics.stream.session-ttl` 完全不生效
+- 代码始终使用默认值：max-sessions=10000，session-ttl=60 分钟
+- 设计文档、计划文档、yml 配置三者一致，但代码实现不一致
+
+### 四、核心实现逻辑总结
+
+#### 4.1 ApiCallMetricsService 调用链
+
+```
+调用方 (9 个服务，13 个入口)
+    │
+    ├── 1. MdcHelper.putBusinessDomain(serviceId)   ← 设置慧眼告警 MDC
+    ├── 2. long start = System.currentTimeMillis()  ← 记录开始时间
+    ├── 3. 执行业务调用 (HTTP/WS)
+    │
+    └── 4. finally {
+            recordApiCall(service, urlTemplate, success, duration)
+                ├── URL 去 query 参数
+                ├── Tags: serviceId + serviceComment + url
+                ├── Counter: external_api_call_total++
+                ├── Counter: external_api_call_success/failure_total++
+                ├── Timer: external_api_call_duration_seconds.record(ms)
+                └── 失败时 log.error("[EXT_CALL] {} failed: durationMs={}", ...)
+            MdcHelper.putBusinessDomain(null)    ← 清理 MDC，防泄漏
+          }
+```
+
+#### 4.2 MessageTurnLifecycle 生命周期时序
+
+```
+用户发消息 → saveUserMessage() 生成 messageId
+              ↓
+         onTurnStart(messageId, brainTag, ...)
+              ↓
+         streamMetrics.onStreamStart() → Caffeine 写入 startTime
+              ↓
+         发往 Gateway (携带 messageId)
+                     │
+                     ▼
+              Gateway 流式返回
+                     │
+        ┌────────────┴────────────┐
+        ▼                         ▼
+  首个 text.delta             后续 text.delta
+        │                         │
+  onFirstToken(messageId)    onToken(messageId)
+        │                         │
+  ├─ streamMetrics.onFirstToken → 计算 TTFT + Timer.record
+  └─ welinkReporter.report(ChatFirstTokenTelemetryEvent)  ← TTFT 双上报
+                                     │
+                                     ▼
+                              tokenCount++ (Caffeine)
+                                     │
+                                     ▼
+                              tool_done 到达
+                                     │
+                              onTurnEnd(messageId)
+                                     │
+                              ├─ streamMetrics.onStreamEnd
+                              │   ├─ 计算 Latency + Timer.record
+                              │   ├─ 计算 TPS + DistributionSummary.record
+                              │   └─ 清理 Caffeine 中该 messageId 的状态
+                              └─ (不上报 Welink reply — 由现有 AOP 切面负责)
+```
+
+#### 4.3 WS 连接数指标
+
+**skill-server 端**（GatewayWSClient）：
+- `gateway_ws_current_connections` (Gauge) → 当前已连接数
+- `gateway_ws_total_connections` (Counter) → 累计连接次数
+- onOpen 时两者都 ++，onClose 时 current --
+
+**ai-gateway 端**（SkillRelayService）：
+- `gateway_ws_skill_current_connections` (Gauge) → 当前被 skill 连接数
+- `gateway_ws_skill_total_connections` (Counter) → 累计被连接次数
+- registerSourceSession 时两者都 ++，removeSourceSession 时 current --
+
+### 五、慧眼告警工作原理
+
+```
+日志格式改造：... [%X{scenario}] [%X{businessDomain}] %-5level ...
+
+MDC 设置模式（13 个入口统一）：
+  try {
+      MdcHelper.putBusinessDomain("im_group_chat");  // 值 = MetricServiceEnum.id()
+      // 业务逻辑
+  } finally {
+      MdcHelper.putBusinessDomain(null);  // 清理，防泄漏
+  }
+
+慧眼告警语法：
+  - 第三方接口异常: loglevel:"ERROR" AND businessDomain:"xxx" AND message:"[EXT_CALL]"
+  - 业务异常:     loglevel:"ERROR" AND businessDomain:"xxx" AND message:"[ERROR]"
+
+双观测面：
+  - Prometheus: external_api_call_failure_total → 看趋势、统计
+  - 慧眼日志: [EXT_CALL] ERROR 日志 → 看具体堆栈和上下文
+```
+
+### 六、代码亮点
+
+1. **侵入式 vs 非侵入式的明确取舍**：设计阶段探讨后决定用侵入式，理由是更清晰可控，文档有据可查
+2. **MDC 泄漏防护**：所有 13 个入口都在 finally 中清理 businessDomain
+3. **Caffeine Cache 双重防护**：size-limited + TTL，防止异常 session 导致内存泄漏
+4. **生命周期抽象合理**：委托不重写，职责清晰，避免双重上报
+5. **双观测面设计**：同一个失败事件同时输出 Prometheus 指标（趋势）和 ERROR 日志（细节）
+
+### 七、修复建议优先级
+
+| 优先级 | 问题 | 预计工作量 |
+|--------|------|------------|
+| P0 | 修复 ChatStreamMetricsService 配置路径不一致 | 5 分钟（改 2 个 @Value 注解） |
+| P1 | 确认 TPOT 是否需要，需要则补充实现 | 1-2 小时 |
+| P2 | 统一 Welink 开关读取方式 | 可选，影响不大 |
