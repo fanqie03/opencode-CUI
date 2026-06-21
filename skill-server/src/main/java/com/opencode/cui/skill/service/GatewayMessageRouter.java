@@ -1043,6 +1043,8 @@ public class GatewayMessageRouter {
                 }
             }
             messageTurnLifecycle.onTurnEnd(messageId, brainTag, sessionId, assistantAccount);
+        } else {
+            log.warn("[SKIP] onTurnEnd: messageId is null or blank, sessionId={}, skipping lifecycle cleanup", sessionId);
         }
 
         StreamMessage msg = StreamMessage.sessionStatus("idle");

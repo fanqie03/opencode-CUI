@@ -4,6 +4,8 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.skill.telemetry.chat.ChatFirstTokenTelemetryEvent;
 import com.opencode.cui.skill.telemetry.core.WelinkTelemetryReporter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -20,19 +22,24 @@ public class MessageTurnLifecycle {
     private final ChatStreamMetricsService streamMetrics;
     private final WelinkTelemetryReporter welinkReporter;
     private final boolean welinkEnabled;
+    private final MeterRegistry meterRegistry;
     /** Track which messageIds have already reported their first token (bounded, TTL-evicted). */
     private final Cache<String, Boolean> processedFirstToken;
 
      public MessageTurnLifecycle(ChatStreamMetricsService streamMetrics,
                                  WelinkTelemetryReporter welinkReporter,
+                                 MeterRegistry meterRegistry,
                                  @Value("${telemetry.welink.enabled:false}") boolean welinkEnabled,
                                  @Value("${telemetry.chatstream.max-sessions:10000}") long maxSessions,
                                  @Value("${telemetry.chatstream.session-ttl-minutes:30}") Duration sessionTtl) {
         this.streamMetrics = streamMetrics;
         this.welinkReporter = welinkReporter;
         this.welinkEnabled = welinkEnabled;
+        this.meterRegistry = meterRegistry;
         this.processedFirstToken = Caffeine.newBuilder()
+                .recordStats()
                 .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
+        CaffeineCacheMetrics.monitor(meterRegistry, processedFirstToken, "processedFirstToken");
     }
 
     public void onTurnStart(String messageId, String brainTag, String sessionId,
@@ -50,9 +57,10 @@ public class MessageTurnLifecycle {
     }
 
     public void onToken(String messageId, String brainTag, String sessionId, String assistantAccount) {
-        if (processedFirstToken.getIfPresent(messageId) == null) {
+        Boolean wasFirst = processedFirstToken.asMap().putIfAbsent(messageId, Boolean.TRUE);
+        if (wasFirst == null) {
+            // This thread won the race — it's the first token
             onFirstToken(messageId, brainTag, sessionId, assistantAccount);
-            processedFirstToken.put(messageId, Boolean.TRUE);
         }
         streamMetrics.onToken(messageId, brainTag);
     }

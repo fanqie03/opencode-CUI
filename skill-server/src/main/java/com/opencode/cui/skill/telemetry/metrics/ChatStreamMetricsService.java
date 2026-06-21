@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -33,11 +34,17 @@ public class ChatStreamMetricsService {
                                    @Value("${telemetry.chatstream.session-ttl-minutes:60}") Duration sessionTtl) {
         this.meterRegistry = meterRegistry;
         this.sessionStartTimes = Caffeine.newBuilder()
+                .recordStats()
                 .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
+        CaffeineCacheMetrics.monitor(meterRegistry, sessionStartTimes, "sessionStartTimes");
         this.firstTokenTimestamps = Caffeine.newBuilder()
+                .recordStats()
                 .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
+        CaffeineCacheMetrics.monitor(meterRegistry, firstTokenTimestamps, "firstTokenTimestamps");
         this.tokenCounts = Caffeine.newBuilder()
+                .recordStats()
                 .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
+        CaffeineCacheMetrics.monitor(meterRegistry, tokenCounts, "tokenCounts");
     }
 
     public void onStreamStart(String messageId, String brainTag) {

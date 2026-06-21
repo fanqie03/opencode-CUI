@@ -59,7 +59,10 @@ class ChatStreamMetricsServiceTest {
         service.onToken(null, "brain-A");
         service.onStreamEnd(null, "brain-A");
 
-        assertEquals(0, registry.getMeters().size());
+        // Cache metrics are registered at construction time; null messageId should produce no chat_stream business metrics
+        assertNull(registry.find("chat_stream_ttft_seconds").timer());
+        assertNull(registry.find("chat_stream_latency_seconds").timer());
+        assertNull(registry.find("chat_stream_tokens_per_second").summary());
     }
 
     @Test

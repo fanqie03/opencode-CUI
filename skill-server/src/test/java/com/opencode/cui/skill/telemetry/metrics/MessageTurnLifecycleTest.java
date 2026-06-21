@@ -25,7 +25,7 @@ class MessageTurnLifecycleTest {
         streamMetrics = new ChatStreamMetricsService(registry, 10000, Duration.ofMinutes(30));
         welinkReporter = mock(WelinkTelemetryReporter.class);
         when(welinkReporter.isEffectiveEnabled()).thenReturn(true);
-        lifecycle = new MessageTurnLifecycle(streamMetrics, welinkReporter, true, 10000, Duration.ofMinutes(30));
+        lifecycle = new MessageTurnLifecycle(streamMetrics, welinkReporter, registry, true, 10000, Duration.ofMinutes(30));
     }
 
     @Test
@@ -60,7 +60,7 @@ class MessageTurnLifecycleTest {
 
     @Test
     void onFirstToken_skipsWelinkWhenDisabled() {
-        MessageTurnLifecycle disabledLifecycle = new MessageTurnLifecycle(streamMetrics, welinkReporter, false, 10000, Duration.ofMinutes(30));
+        MessageTurnLifecycle disabledLifecycle = new MessageTurnLifecycle(streamMetrics, welinkReporter, registry, false, 10000, Duration.ofMinutes(30));
         disabledLifecycle.onTurnStart("msg-3", "brain-A", "sess-3", "user-3", "brain-A");
         disabledLifecycle.onToken("msg-3", "brain-A", "sess-3", "assistant-3");
 
