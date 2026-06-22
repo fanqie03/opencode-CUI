@@ -52,3 +52,4 @@ documents/ss-gw-architecture/
 
 # Trellis per-user workspace scratch
 .trellis/workspace/*/tmp/
+/plugins/

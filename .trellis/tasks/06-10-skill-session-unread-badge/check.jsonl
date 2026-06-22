@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "检查 MultiDeviceSyncService 接口+CompositeMultiDeviceSyncService 复合路由、StreamMessageEmitter 推送是否符合约定"}
+{"file": ".trellis/spec/skill-server/backend/error-handling.md", "reason": "检查 POST /{id}/read + POST /unread 端点错误返回格式、session.unread 事件错误处理"}
+{"file": ".trellis/spec/skill-server/backend/type-safety.md", "reason": "检查 StreamMessage.sessionUnread 工厂方法契约、ToolDoneEvent/ReadReportedEvent record"}
+{"file": ".trellis/spec/skill-miniapp/frontend/index.md", "reason": "检查前端 UnreadInfo 类型、SessionSidebar 角标渲染、readMessageSeq 追踪逻辑"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查前端上报 → Lua markRead → MultiDeviceSyncService 广播数据流完整性"}

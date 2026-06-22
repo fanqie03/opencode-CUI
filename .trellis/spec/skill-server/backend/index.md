@@ -15,6 +15,7 @@
 - 2026-05-20（晚）：`conventions.md` 新增 "外部 fire-and-forget 上报 / 埋码模式"（5 条不变量：独立 executor + `@ConditionalOnProperty` 总开关 + 必填缺失 soft-disable + 每个异步边界顶层 try-catch + 日志禁 secret/栈），并在 "测试 mock 不能跨过抽象层" 下增子节 "Spring AOP 切面 + Mockito mock target bean = 静默失活"（advice 直调 vs 半 mock 容器陷阱）；"禁止事项" 表新增 4 条（复用业务 Executor / 配置缺失 fail-fast / 日志带栈或 secret / `@MockBean` mock 切面 target）。来源：任务 05-20-chat-telemetry-welink-reporter，canonical 实现 `skill-server/src/main/java/com/opencode/cui/skill/telemetry/`。
 - 2026-05-23：`conventions.md` 将 Redis pub/sub 自愈从 `PUBSUB NUMSUB` 硬判活更新为 loopback probe（`verifySubscriptionDelivery`），避免 Redis 6 Cluster / 云 Redis 代理下节点局部订阅统计误判；单通道恢复失败后不再整容器 `stop/start`，避免打断 `user-stream:*` 跨实例流式投递。来源：任务 05-23-diagnose-redis-relay-self-check-and-multi-instance-streaming-gaps。
 - 2026-06-12：新增 `design-and-refactoring.md`，沉淀 Java 软件设计、重构阈值、业务一致性八荣八耻、兜底边界、Wrong vs Correct 与测试要求。来源：任务 06-12-java。
+- 2026-06-17：`type-safety.md` 新增"外部 API 模型类 @JsonProperty vs @JsonNaming"（每字段显式 wire format，禁止类级别 SnakeCaseStrategy）、"外部 API 响应类型化 record 替代 JsonNode"（`RestTemplate.postForEntity(url, entity, TypedRecord.class)` + accessor 访问，禁用 `JsonNode.path()` fallback 链）、"外部 API URL 配置化"（完整 URL 走配置属性，禁止 `joinUrl` 硬编码路径）。来源：任务 06-17-remove-jsonnode-from-im-app-notify-response-use-typed-response-object。
 - 本次校准依据的近期代码变更：`9454a8c`（personal-scope cloud protocol + `StreamMessageEmitter`）与 `d10d64a`（`senderUserAccount` 信封层迁移）。
 
 ## 技术栈概览

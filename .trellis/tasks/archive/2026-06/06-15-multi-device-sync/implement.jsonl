@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/skill-server/backend/index.md", "reason": "skill-server 后端开发规范总索引，model 包枚举/record 放置规则、service 子包命名约定、构造注入模式"}
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "StreamMessageEmitter 约束、RedisMessageBroker pub/sub 模式、构造注入约定、外部调用可观测性 [EXT_CALL]"}
+{"file": ".trellis/spec/skill-server/backend/type-safety.md", "reason": "record 设计规范、枚举定义惯例、模型字段完整性检查"}
+{"file": ".trellis/spec/skill-server/backend/error-handling.md", "reason": "IM 调用失败的错误处理模式、日志告警规范"}
+{"file": ".trellis/spec/skill-server/backend/logging-guidelines.md", "reason": "[EXT_CALL] 外部调用日志格式、MDC 约定"}
+{"file": ".trellis/tasks/06-10-skill-session-unread-badge/im-mulit-client-sync-api.md", "reason": "IM /v1/app-notify 接口文档，ImMultiDeviceSyncService 实现的请求/响应格式依据"}
+{"file": ".trellis/tasks/06-10-skill-session-unread-badge/design.md", "reason": "uread-badge 中 MultiDeviceSyncService 原始设计，作为抽离起点参考"}

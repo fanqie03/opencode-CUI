@@ -616,6 +616,170 @@ return PendingChatRequest.fromSessionFallback(session, raw);     // 老格式 / 
 
 ---
 
+## 外部 API 模型类：`@JsonProperty` vs `@JsonNaming`
+
+### 1. Scope / Trigger
+
+当定义与外部 API 交互的 Java record / DTO（请求体、响应体）时适用。外部 API 的 JSON 字段名遵循其自有规范（通常 snake_case），不应通过类级别 `@JsonNaming` 隐式转换。
+
+### 2. Convention
+
+**使用 `@JsonProperty` 在每个字段上显式指定 wire format，禁止使用 `@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)`。**
+
+### 3. Rationale
+
+| 方案 | 问题 |
+|------|------|
+| `@JsonNaming(SnakeCaseStrategy.class)` 类级别 | 隐式转换整个类，字段增删时容易漏掉命名不一致；读者需要记住类上有策略注解才能理解 wire format |
+| `@JsonProperty("snake_case")` 每字段 | 显式对照，一目了然 Java 名 ↔ wire 名的映射关系；支持个别字段特殊命名 |
+
+### 4. Examples
+
+Good — 显式 `@JsonProperty`:
+
+```java
+public record AppNotifyRequest(
+    @JsonProperty("client_notify_id") String clientNotifyId,
+    @JsonProperty("notify_scope") int notifyScope,
+    @JsonProperty("notify_tenant") String notifyTenant,
+    @JsonProperty("notify_accounts") List<String> notifyAccounts,
+    @JsonProperty("notify_module") String notifyModule,
+    @JsonProperty("notify_data") String notifyData
+) {}
+
+public record ImAppNotifyResponse(
+    @JsonProperty("error") ErrorInfo error
+) {
+    public record ErrorInfo(
+        @JsonProperty("error_code") String errorCode,
+        @JsonProperty("error_msg") String errorMsg
+    ) {}
+}
+```
+
+Bad — 隐式类级别策略:
+
+```java
+@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)  // ← 禁止
+public record AppNotifyRequest(
+    String clientNotifyId,    // 隐式 → client_notify_id？读者需记住类注解
+    int notifyScope,
+    ...
+) {}
+```
+
+来源：`skill-server/src/main/java/com/opencode/cui/skill/model/AppNotifyRequest.java`、`AppNotifyData.java`、`ImAppNotifyResponse.java`
+
+---
+
+## 外部 API 响应：类型化 record 替代 JsonNode
+
+### 1. Scope / Trigger
+
+当调用外部 HTTP API 并解析其 JSON 响应时适用。禁止使用 `JsonNode` + `path()` 手动遍历响应结构。
+
+### 2. Convention
+
+**定义专用的响应 record，通过 `RestTemplate.postForEntity(url, entity, TypedResponse.class)` 直接反序列化，通过 record accessor 访问字段。**
+
+### 3. Rationale
+
+| 方案 | 问题 |
+|------|------|
+| `ResponseEntity<JsonNode>` + `respBody.path("error").path("error_code").asText(null)` | 字符串路径无编译检查，字段名拼写错误运行时才发现；fallback 链 (`error_code` / `errorCode`) 冗长 |
+| `ResponseEntity<ImAppNotifyResponse>` + `respBody.error().errorCode()` | 编译期类型检查，IDE 自动补全，单一事实来源 |
+
+### 4. Examples
+
+Good:
+
+```java
+ResponseEntity<ImAppNotifyResponse> response = restTemplate.postForEntity(
+    appNotifyUrl, new HttpEntity<>(body, headers), ImAppNotifyResponse.class);
+
+ImAppNotifyResponse respBody = response.getBody();
+if (respBody != null && respBody.error() != null) {
+    String errorCode = respBody.error().errorCode();
+    if (errorCode != null && !errorCode.isBlank()) {
+        log.warn("business error: errorCode={}, errorMsg={}", errorCode, respBody.error().errorMsg());
+    }
+}
+```
+
+Bad:
+
+```java
+ResponseEntity<JsonNode> response = restTemplate.postForEntity(url, entity, JsonNode.class);
+JsonNode respBody = response.getBody();
+if (respBody != null) {
+    JsonNode errorNode = respBody.path("error");  // 字符串路径，无类型检查
+    if (!errorNode.isMissingNode()) {
+        String errorCode = firstNonBlank(          // 需要 fallback 兼容
+            errorNode.path("error_code").asText(null),
+            errorNode.path("errorCode").asText(null));
+    }
+}
+```
+
+### 5. Good / Base / Bad Cases
+
+- Good: 响应 record 覆盖所有需要读取的字段，通过 accessor 访问
+- Base: 响应仅成功时无需读取 body（`response.getStatusCode().is2xxSuccessful()` 即足够）
+- Bad: `JsonNode.path()` 链式遍历 + fallback 兼容多命名
+
+### 6. Tests Required
+
+- 单元测试中 mock `RestTemplate.postForEntity` 返回 `ResponseEntity.ok(new ImAppNotifyResponse(null))` 或 `new ImAppNotifyResponse(new ErrorInfo("ERR", "msg"))`
+- 不应再出现 `new ObjectMapper().readTree("{}")` 来构造 mock 响应
+
+### 7. Wrong vs Correct
+
+Wrong: 用 `JsonNode` 接收外部 API 响应，通过字符串路径访问字段，写 fallback 兼容多命名。
+
+Correct: 定义 record 响应类（`@JsonProperty` 每字段），`RestTemplate` 直接反序列化，通过 accessor 访问。
+
+---
+
+## 外部 API URL 配置化
+
+### 1. Scope / Trigger
+
+当在代码中构造外部 HTTP 请求 URL 时适用。禁止在代码中硬编码路径片段（如 `/v1/app-notify`），禁止通过 `joinUrl(baseUrl, "/path")` 拼接。
+
+### 2. Convention
+
+**URL 通过配置属性完整注入，代码中直接使用，不做拼接。配置值可使用 Spring 占位符引用其他属性。**
+
+```yaml
+# application.yml
+skill:
+  sync:
+    im:
+      app-notify:
+        url: ${skill.im.api-url}/v1/app-notify  # 完整 URL，路径可配置
+```
+
+```java
+// 代码中直接使用完整 URL，不做拼接
+String appNotifyUrl = syncProperties.getIm().getAppNotify().getUrl();
+restTemplate.postForEntity(appNotifyUrl, entity, ResponseType.class);
+```
+
+### 3. Rationale
+
+| 方案 | 问题 |
+|------|------|
+| `joinUrl(imApiUrl, "/v1/app-notify")` | 路径硬编码在代码中，变更需改代码 + 重新部署；base URL 与 path 拼接逻辑多此一举 |
+| 配置属性完整注入 | URL 变更只需改配置，热重载或多环境 profile 即可 |
+
+### 4. Good / Base / Bad Cases
+
+- Good: `SyncProperties.Im.AppNotify.url` 完整 URL，配置值 `${skill.im.api-url}/v1/app-notify`
+- Base: `@Value("${skill.im.api-url}")` 注入 base URL，但至少路径也走配置
+- Bad: 代码中 `joinUrl(imApiUrl, "/v1/app-notify")` 硬编码路径
+
+---
+
 ## 常见错误
 
 1. 不要把 `StreamMessage` 重构成 Jackson 多态层级；当前实现不是这个方向。
@@ -624,3 +788,6 @@ return PendingChatRequest.fromSessionFallback(session, raw);     // 老格式 / 
 4. 不要恢复 `payload.senderUserAccount`；信封层迁移已经完成。
 5. 不要手动拼 `welinkSessionId`；让 `StreamMessageEmitter` 统一覆写。
 6. 不要为单聊 `sendUserAccount` 引入 `ownerWelinkId` 默认值；`senderUserAccount` 在 controller 已经强制非空。
+7. 不要在外部 API 模型类上用 `@JsonNaming(SnakeCaseStrategy.class)`；用 `@JsonProperty` 在每个字段显式指定 wire format。
+8. 不要用 `JsonNode.path()` 手动解析外部 API 响应；定义类型化 record 响应类。
+9. 不要在代码中硬编码外部 API 请求路径；走配置属性完整注入 URL。

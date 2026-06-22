@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "MultiDeviceSyncService 接口设计 + CompositeMultiDeviceSyncService 复合路由 + StreamMessageEmitter 推送"}
+{"file": ".trellis/spec/skill-server/backend/error-handling.md", "reason": "POST /{id}/read 端点错误处理 + POST /unread 端点 + StreamMessage SESSION_UNREAD 新类型"}
+{"file": ".trellis/spec/skill-server/backend/type-safety.md", "reason": "StreamMessage.sessionUnread 工厂方法 + ToolDoneEvent/ReadReportedEvent record"}
+{"file": ".trellis/spec/skill-miniapp/frontend/index.md", "reason": "前端 UnreadInfo 类型 + SessionSidebar 角标 + useSkillSession readMessageSeq 追踪 + useSkillStream session.unread 处理"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流：前端上报 readSeq → Lua markRead → MultiDeviceSyncService 广播"}
+{"file": ".trellis/workspace/feison/skill-server-api.md", "reason": "现有 REST API 规范参考，新增 POST /{id}/read + POST /unread 端点保持一致"}
+{"file": ".trellis/tasks/06-10-skill-session-unread-badge/im-mulit-client-sync-api.md", "reason": "IM /v1/app-notify 接口文档，ImMultiDeviceSyncService 实现依据"}
