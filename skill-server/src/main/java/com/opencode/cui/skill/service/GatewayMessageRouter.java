@@ -1125,6 +1125,32 @@ public class GatewayMessageRouter {
         SkillSession session = resolveSession(sessionId);
         Long numericId = ProtocolUtils.parseSessionId(sessionId);
 
+        // === Call onTurnEnd on error (same as handleToolDone) ===
+        String messageId = node.path("messageId").asText(null);
+        if (messageId != null && !messageId.isBlank()) {
+            String brainTag = null;
+            String assistantAccount = null;
+            if (session != null) {
+                assistantAccount = session.getAssistantAccount();
+                if (!isDefaultAssistant(session)) {
+                    AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
+                    if (info != null) {
+                        brainTag = info.getBusinessTag();
+                    } else {
+                        log.warn("[SKIP] onTurnEnd(tool_error) brainTag: assistant info not found, ak={}, sessionId={}, messageId={}", session.getAk(), sessionId, messageId);
+                    }
+                } else {
+                    log.warn("[SKIP] onTurnEnd(tool_error) brainTag: default assistant, sessionId={}, messageId={}", sessionId, messageId);
+                }
+            } else {
+                log.warn("[SKIP] onTurnEnd(tool_error) brainTag: session is null, sessionId={}, messageId={}", sessionId, messageId);
+            }
+            messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null));
+        } else {
+            log.warn("[SKIP] onTurnEnd(tool_error): messageId is null or blank, sessionId={}", sessionId);
+        }
+        // === END ===
+
         if (numericId != null) {
             try {
                 messageService.saveSystemMessage(numericId, "Error: " + error);

@@ -6,10 +6,13 @@ import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ChatStreamMetricsServiceTest {
 
@@ -19,7 +22,11 @@ class ChatStreamMetricsServiceTest {
     @BeforeEach
     void setUp() {
         registry = new SimpleMeterRegistry();
-        service = new ChatStreamMetricsService(registry, 10000, Duration.ofMinutes(30));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<com.opencode.cui.skill.telemetry.core.WelinkTelemetryReporter> welinkProvider =
+                mock(ObjectProvider.class);
+        when(welinkProvider.getIfAvailable()).thenReturn(null);
+        service = new ChatStreamMetricsService(registry, welinkProvider, 10000, Duration.ofMinutes(30));
     }
 
     @Test

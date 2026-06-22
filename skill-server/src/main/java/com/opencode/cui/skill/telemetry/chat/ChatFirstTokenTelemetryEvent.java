@@ -13,7 +13,8 @@ public record ChatFirstTokenTelemetryEvent(
         String sessionId,
         String assistantAccount,
         String businessTag,
-        String messageId
+        String messageId,
+        long ttftMs
 ) implements TelemetryEvent {
 
     @Override
@@ -36,6 +37,7 @@ public record ChatFirstTokenTelemetryEvent(
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("businessTag", businessTag != null ? businessTag : "UNKNOWN");
         data.put("messageId", messageId);
+        data.put("ttftMs", ttftMs);
         data.put("ttftReportedAt", System.currentTimeMillis());
         return data;
     }

@@ -2,12 +2,15 @@ package com.opencode.cui.skill.telemetry.metrics;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.opencode.cui.skill.telemetry.chat.ChatFirstTokenTelemetryEvent;
+import com.opencode.cui.skill.telemetry.core.WelinkTelemetryReporter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Service;
@@ -27,14 +30,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ChatStreamMetricsService implements MessageTurnHandler {
 
     private final MeterRegistry meterRegistry;
+    private final WelinkTelemetryReporter welinkReporter;
     private final Cache<String, Long> sessionStartTimes;
     private final Cache<String, Long> firstTokenTimestamps;
     private final Cache<String, AtomicInteger> tokenCounts;
 
     public ChatStreamMetricsService(MeterRegistry meterRegistry,
+                                   ObjectProvider<WelinkTelemetryReporter> welinkReporterProvider,
                                    @Value("${telemetry.chatstream.max-sessions:10000}") long maxSessions,
                                    @Value("${telemetry.chatstream.session-ttl-minutes:60}") Duration sessionTtl) {
         this.meterRegistry = meterRegistry;
+        this.welinkReporter = welinkReporterProvider.getIfAvailable();
         this.sessionStartTimes = Caffeine.newBuilder()
                 .recordStats()
                 .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
@@ -77,6 +83,15 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
         String tag = resolveBrainTag(ctx.brainTag());
         meterRegistry.timer("chat_stream_ttft_seconds", Tags.of("brain_tag", tag))
                 .record(ttft, TimeUnit.MILLISECONDS);
+        // Report TTFT to Welink if reporter is available
+        if (welinkReporter != null) {
+            try {
+                welinkReporter.report(new ChatFirstTokenTelemetryEvent(
+                        ctx.sessionId(), ctx.assistantAccount(), ctx.brainTag(), ctx.messageId(), ttft));
+            } catch (Throwable t) {
+                log.warn("[ChatStreamMetricsService] Welink firstToken report failed: messageId={}, error={}", messageId, t.getMessage());
+            }
+        }
     }
 
     @Override

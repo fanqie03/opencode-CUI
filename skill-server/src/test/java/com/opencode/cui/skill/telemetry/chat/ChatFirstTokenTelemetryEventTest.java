@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ChatFirstTokenTelemetryEventTest {
 
     private final ChatFirstTokenTelemetryEvent event = new ChatFirstTokenTelemetryEvent(
-            "sess-1", "assistant-1", "brain-A", "msg-1");
+            "sess-1", "assistant-1", "brain-A", "msg-1", 150L);
 
     @Test
     void eventId_isSkillChatFirstToken() {
@@ -42,7 +42,7 @@ class ChatFirstTokenTelemetryEventTest {
     @Test
     void nullBusinessTag_usesUnknownFallback() {
         ChatFirstTokenTelemetryEvent e = new ChatFirstTokenTelemetryEvent(
-                "sess-1", "assistant-1", null, "msg-1");
+                "sess-1", "assistant-1", null, "msg-1", 150L);
         assertEquals("UNKNOWN", e.extendData().get("businessTag"));
     }
 }

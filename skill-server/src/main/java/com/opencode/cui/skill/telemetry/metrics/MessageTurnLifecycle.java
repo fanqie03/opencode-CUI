@@ -38,12 +38,14 @@ public class MessageTurnLifecycle {
     }
 
     public void onTurnStart(MessageTurnContext ctx) {
+        log.info("[ENTRY] onTurnStart: messageId={}, brainTag={}, sessionId={}", ctx.messageId(), ctx.brainTag(), ctx.sessionId());
         for (MessageTurnHandler handler : handlers) {
             handler.turnStart(ctx);
         }
     }
 
     private void onFirstToken(MessageTurnContext ctx) {
+        log.info("[ENTRY] onFirstToken: messageId={}, brainTag={}, sessionId={}", ctx.messageId(), ctx.brainTag(), ctx.sessionId());
         for (MessageTurnHandler handler : handlers) {
             handler.firstToken(ctx);
         }
@@ -61,6 +63,7 @@ public class MessageTurnLifecycle {
     }
 
     public void onTurnEnd(MessageTurnContext ctx) {
+        log.info("[ENTRY] onTurnEnd: messageId={}, brainTag={}, sessionId={}", ctx.messageId(), ctx.brainTag(), ctx.sessionId());
         for (MessageTurnHandler handler : handlers) {
             handler.turnEnd(ctx);
         }
