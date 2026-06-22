@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/skill-server/backend/type-safety.md", "reason": "record 设计规范、字段命名 Jackson 序列化约定"}
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "构造注入模式、model 包命名放置规则"}
+{"file": ".trellis/tasks/06-10-skill-session-unread-badge/im-mulit-client-sync-api.md", "reason": "IM /v1/app-notify 请求体字段规范，AppNotifyRequest 字段对齐依据"}

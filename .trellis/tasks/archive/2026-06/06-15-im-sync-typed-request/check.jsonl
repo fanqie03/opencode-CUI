@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/skill-server/backend/type-safety.md", "reason": "检查 AppNotifyRequest/AppNotifyData record 字段类型、Jackson 序列化正确性"}
+{"file": ".trellis/tasks/06-10-skill-session-unread-badge/im-mulit-client-sync-api.md", "reason": "检查 AppNotifyRequest 字段与 IM API 规范对齐"}

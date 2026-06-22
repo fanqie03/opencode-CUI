@@ -138,6 +138,14 @@ skill:
     invoke-source-ttl-seconds: ${SKILL_DELIVERY_INVOKE_SOURCE_TTL_SECONDS:300}
     registry-ttl-seconds: ${SKILL_DELIVERY_REGISTRY_TTL_SECONDS:30}
     registry-heartbeat-interval-ms: ${SKILL_DELIVERY_REGISTRY_HEARTBEAT_INTERVAL_MS:10000}
+  multi-sync:
+    mode: ${SKILL_MULTI_SYNC_MODE:ws}
+    im:
+      app-notify:
+        url: ${SKILL_MULTI_SYNC_IM_APP_NOTIFY_URL:${skill.im.api-url}/v1/app-notify}
+        tenant: ${SKILL_MULTI_SYNC_IM_APP_NOTIFY_TENANT:}
+        module: ${SKILL_MULTI_SYNC_IM_APP_NOTIFY_MODULE:}
+        scope: ${SKILL_MULTI_SYNC_IM_APP_NOTIFY_SCOPE:2}
   metrics:
     stream:
       max-sessions: ${SKILL_METRICS_STREAM_MAX_SESSIONS:10000}

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "检查 CompositeMultiDeviceSyncService 构造注入+自注册模式、WsMultiDeviceSyncService publishToUser 格式、ImMultiDeviceSyncService HTTP 调用的 [EXT_CALL] 日志"}
+{"file": ".trellis/spec/skill-server/backend/type-safety.md", "reason": "检查 SyncRequest record 字段完整性、SyncType enum type 属性序列化、SyncMode enum"}
+{"file": ".trellis/spec/skill-server/backend/error-handling.md", "reason": "检查 IM 调用失败不抛异常、WS 模式降级处理"}
+{"file": ".trellis/spec/skill-server/backend/logging-guidelines.md", "reason": "检查外部调用日志格式、MDC 清理"}
+{"file": ".trellis/tasks/06-10-skill-session-unread-badge/im-mulit-client-sync-api.md", "reason": "检查 ImMultiDeviceSyncService 请求体字段对齐 IM API 规范"}
