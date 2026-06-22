@@ -12,6 +12,7 @@ package com.opencode.cui.skill.telemetry.metrics;
  * @param assistantAccount 助手账号
  * @param senderUserAccount 发送者用户账号
  * @param businessTag      业务标签（与 brainTag 同源，Welink 上报用）
+ * @param success          本轮问答是否成功（handleToolDone=true，handleToolError=false）
  */
 public record MessageTurnContext(
         String messageId,
@@ -19,12 +20,13 @@ public record MessageTurnContext(
         String sessionId,
         String assistantAccount,
         String senderUserAccount,
-        String businessTag
+        String businessTag,
+        boolean success
 ) {
     /**
      * 便捷工厂方法：用 messageId + brainTag 构建最小上下文（ChatStreamMetricsService 只需要这两个字段）。
      */
     public static MessageTurnContext of(String messageId, String brainTag) {
-        return new MessageTurnContext(messageId, brainTag, null, null, null, null);
+        return new MessageTurnContext(messageId, brainTag, null, null, null, null, true);
     }
 }

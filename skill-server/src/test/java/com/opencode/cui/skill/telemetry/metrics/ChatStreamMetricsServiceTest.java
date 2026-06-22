@@ -82,6 +82,36 @@ class ChatStreamMetricsServiceTest {
         assertNotNull(ttft);
     }
 
+    @Test
+    void turnEnd_recordsSuccessCounters() {
+        service.turnStart(MessageTurnContext.of("msg-success", "brain-S"));
+        sleep(5);
+        service.firstToken(MessageTurnContext.of("msg-success", "brain-S"));
+        service.token(MessageTurnContext.of("msg-success", "brain-S"), 4);
+        sleep(5);
+        // MessageTurnContext.of(...) defaults success=true
+        service.turnEnd(MessageTurnContext.of("msg-success", "brain-S"));
+
+        assertNotNull(registry.find("chat_stream_turn_total").tag("brain_tag", "brain-S").counter());
+        assertEquals(1.0, registry.find("chat_stream_turn_total").tag("brain_tag", "brain-S").counter().count());
+        assertNotNull(registry.find("chat_stream_turn_success_total").tag("brain_tag", "brain-S").counter());
+        assertEquals(1.0, registry.find("chat_stream_turn_success_total").tag("brain_tag", "brain-S").counter().count());
+        assertNull(registry.find("chat_stream_turn_failure_total").tag("brain_tag", "brain-S").counter());
+    }
+
+    @Test
+    void turnEnd_recordsFailureCounters() {
+        service.turnStart(new MessageTurnContext("msg-fail", "brain-F", null, null, null, null, false));
+        sleep(5);
+        service.turnEnd(new MessageTurnContext("msg-fail", "brain-F", null, null, null, null, false));
+
+        assertNotNull(registry.find("chat_stream_turn_total").tag("brain_tag", "brain-F").counter());
+        assertEquals(1.0, registry.find("chat_stream_turn_total").tag("brain_tag", "brain-F").counter().count());
+        assertNotNull(registry.find("chat_stream_turn_failure_total").tag("brain_tag", "brain-F").counter());
+        assertEquals(1.0, registry.find("chat_stream_turn_failure_total").tag("brain_tag", "brain-F").counter().count());
+        assertNull(registry.find("chat_stream_turn_success_total").tag("brain_tag", "brain-F").counter());
+    }
+
     private void sleep(long ms) {
         try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }

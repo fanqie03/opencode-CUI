@@ -409,7 +409,7 @@ public class InboundProcessingService {
         String messageId = String.valueOf(System.currentTimeMillis());
 
         // Record turn start for metrics (covers IM + External inbound paths that don't go through SkillMessageFlowService)
-        messageTurnLifecycle.onTurnStart(new MessageTurnContext(messageId, bizRobotTag, String.valueOf(session.getId()), null, effectiveSender, bizRobotTag));
+        messageTurnLifecycle.onTurnStart(new MessageTurnContext(messageId, bizRobotTag, String.valueOf(session.getId()), null, effectiveSender, bizRobotTag, true));
 
         // A7 + B2: allowed-slash-commands personal scope gating
         //   appendToPending == true ≡ personal scope（business 路径 strategy.generateToolSessionId() != null,

@@ -842,7 +842,7 @@ public class GatewayMessageRouter {
                 }
                 int contentLength = msg.getContent() != null ? msg.getContent().length() : 0;
                 // Delegate first-token tracking + token counting to MessageTurnLifecycle
-                messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null), contentLength);
+                messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, true), contentLength);
             }
         }
 
@@ -1053,7 +1053,7 @@ public class GatewayMessageRouter {
                 log.warn("[SKIP] onTurnEnd brainTag: session is null, sessionId={}, messageId={}, using UNKNOWN",
                     sessionId, messageId);
             }
-            messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null));
+            messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, true));
         } else {
             log.warn("[SKIP] onTurnEnd: messageId is null or blank, sessionId={}, skipping lifecycle cleanup", sessionId);
         }
@@ -1145,7 +1145,7 @@ public class GatewayMessageRouter {
             } else {
                 log.warn("[SKIP] onTurnEnd(tool_error) brainTag: session is null, sessionId={}, messageId={}", sessionId, messageId);
             }
-            messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null));
+            messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, false));
         } else {
             log.warn("[SKIP] onTurnEnd(tool_error): messageId is null or blank, sessionId={}", sessionId);
         }

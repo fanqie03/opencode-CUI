@@ -24,14 +24,14 @@ class MessageTurnLifecycleTest {
 
     @Test
     void onTurnStart_callsHandlerTurnStart() {
-        MessageTurnContext ctx = new MessageTurnContext("msg-1", "brain-A", "sess-1", "assistant-1", "user-1", "brain-A");
+        MessageTurnContext ctx = new MessageTurnContext("msg-1", "brain-A", "sess-1", "assistant-1", "user-1", "brain-A", true);
         lifecycle.onTurnStart(ctx);
         verify(mockHandler).turnStart(ctx);
     }
 
     @Test
     void onToken_firstTokenFiresOncePerMessageId() {
-        MessageTurnContext ctx = new MessageTurnContext("msg-2", "brain-A", "sess-2", "assistant-2", "user-2", "brain-A");
+        MessageTurnContext ctx = new MessageTurnContext("msg-2", "brain-A", "sess-2", "assistant-2", "user-2", "brain-A", true);
         lifecycle.onTurnStart(ctx);
 
         lifecycle.onToken(ctx, 5);
@@ -46,7 +46,7 @@ class MessageTurnLifecycleTest {
 
     @Test
     void turnEnd_invalidatesCache_allowingFirstTokenToFireAgain() {
-        MessageTurnContext ctx = new MessageTurnContext("msg-3", "brain-B", "sess-3", "assistant-3", "user-3", "brain-B");
+        MessageTurnContext ctx = new MessageTurnContext("msg-3", "brain-B", "sess-3", "assistant-3", "user-3", "brain-B", true);
 
         // First turn
         lifecycle.onTurnStart(ctx);
@@ -64,7 +64,7 @@ class MessageTurnLifecycleTest {
 
     @Test
     void onTurnEnd_callsHandlerTurnEnd() {
-        MessageTurnContext ctx = new MessageTurnContext("msg-4", "brain-B", "sess-4", "assistant-4", "user-4", "brain-B");
+        MessageTurnContext ctx = new MessageTurnContext("msg-4", "brain-B", "sess-4", "assistant-4", "user-4", "brain-B", false);
         lifecycle.onTurnStart(ctx);
         lifecycle.onToken(ctx, 5);
         lifecycle.onTurnEnd(ctx);
@@ -78,7 +78,7 @@ class MessageTurnLifecycleTest {
         MessageTurnLifecycle multiLifecycle = new MessageTurnLifecycle(
                 List.of(handler1, handler2), new SimpleMeterRegistry(), 10000, Duration.ofMinutes(30));
 
-        MessageTurnContext ctx = new MessageTurnContext("msg-5", "brain-C", "sess-5", "assistant-5", "user-5", "brain-C");
+        MessageTurnContext ctx = new MessageTurnContext("msg-5", "brain-C", "sess-5", "assistant-5", "user-5", "brain-C", true);
         multiLifecycle.onTurnStart(ctx);
         multiLifecycle.onToken(ctx, 10);
         multiLifecycle.onTurnEnd(ctx);
@@ -98,7 +98,7 @@ class MessageTurnLifecycleTest {
         MessageTurnLifecycle emptyLifecycle = new MessageTurnLifecycle(
                 List.of(), new SimpleMeterRegistry(), 10000, Duration.ofMinutes(30));
 
-        MessageTurnContext ctx = new MessageTurnContext("msg-6", "brain-D", "sess-6", "assistant-6", "user-6", "brain-D");
+        MessageTurnContext ctx = new MessageTurnContext("msg-6", "brain-D", "sess-6", "assistant-6", "user-6", "brain-D", true);
         emptyLifecycle.onTurnStart(ctx);
         emptyLifecycle.onToken(ctx, 5);
         emptyLifecycle.onTurnEnd(ctx);

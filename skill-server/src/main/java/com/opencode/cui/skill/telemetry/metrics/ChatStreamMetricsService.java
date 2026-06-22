@@ -131,6 +131,15 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             log.warn("turnEnd: skipped TPS calculation for messageId={}, latency={}, tokens={}", messageId, latency, tokens);
         }
 
+        // Turn success/failure
+        Tags turnTags = Tags.of("brain_tag", tag);
+        meterRegistry.counter("chat_stream_turn_total", turnTags).increment();
+        if (ctx.success()) {
+            meterRegistry.counter("chat_stream_turn_success_total", turnTags).increment();
+        } else {
+            meterRegistry.counter("chat_stream_turn_failure_total", turnTags).increment();
+        }
+
         sessionStartTimes.invalidate(messageId);
         firstTokenTimestamps.invalidate(messageId);
         tokenCounts.invalidate(messageId);
