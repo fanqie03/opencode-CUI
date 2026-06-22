@@ -273,80 +273,6 @@ public class GatewayMessageRouter {
         this.ticker = ticker;
     }
 
-    /**
-     * 简化构造：兼容现有测试入口。使用默认 confirm-dedup 配置（enabled=true, 25min）
-     * 与系统默认 Clock/Ticker，避免在测试 setup 中显式传入。
-     *
-     * <p>该构造已主动初始化 {@link #confirmedToolSessions} cache（无需依赖
-     * {@code @PostConstruct} 时机）。</p>
-     */
-    // Backward compatible constructor for tests
-    public GatewayMessageRouter(ObjectMapper objectMapper,
-            SkillMessageService messageService,
-            SkillSessionService sessionService,
-            RedisMessageBroker redisMessageBroker,
-            OpenCodeEventTranslator translator,
-            MessagePersistenceService persistenceService,
-            StreamBufferService bufferService,
-            SessionRebuildService rebuildService,
-            ImInteractionStateService interactionStateService,
-            ImOutboundService imOutboundService,
-            SessionRouteService sessionRouteService,
-            SkillInstanceRegistry skillInstanceRegistry,
-            AssistantInfoService assistantInfoService,
-            ChannelLookupService channelLookupService,
-            ChannelSuppressReplyWhitelistService channelSuppressReplyWhitelistService,
-            AssistantScopeDispatcher scopeDispatcher,
-            OutboundDeliveryDispatcher outboundDeliveryDispatcher,
-            com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter,
-            int ownerDeadThresholdSeconds) {
-        this(objectMapper, messageService, sessionService, redisMessageBroker, translator,
-                persistenceService, bufferService, rebuildService, interactionStateService,
-                imOutboundService, sessionRouteService, skillInstanceRegistry,
-                assistantInfoService, channelLookupService, channelSuppressReplyWhitelistService,
-                scopeDispatcher, outboundDeliveryDispatcher, emitter,
-                null, // availabilityService — tests inject via mock where needed
-                null, // ruleService — will be NPE but existing tests don't use isDefaultAssistant check
-                null, // messageTurnLifecycle — null-safe, call sites guard with null check
-                ownerDeadThresholdSeconds, true, 25, Clock.systemUTC(), Ticker.systemTicker());
-        // 主动初始化 cache，避免测试场景下 @PostConstruct 未触发导致 NPE
-        initConfirmDedupCache();
-    }
-
-    public GatewayMessageRouter(ObjectMapper objectMapper,
-            SkillMessageService messageService,
-            SkillSessionService sessionService,
-            RedisMessageBroker redisMessageBroker,
-            OpenCodeEventTranslator translator,
-            MessagePersistenceService persistenceService,
-            StreamBufferService bufferService,
-            SessionRebuildService rebuildService,
-            ImInteractionStateService interactionStateService,
-            ImOutboundService imOutboundService,
-            SessionRouteService sessionRouteService,
-            SkillInstanceRegistry skillInstanceRegistry,
-            AssistantInfoService assistantInfoService,
-            ChannelLookupService channelLookupService,
-            ChannelSuppressReplyWhitelistService channelSuppressReplyWhitelistService,
-            AssistantScopeDispatcher scopeDispatcher,
-            OutboundDeliveryDispatcher outboundDeliveryDispatcher,
-            com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter,
-            DefaultAssistantRuleService ruleService,
-            MessageTurnLifecycle messageTurnLifecycle,
-            int ownerDeadThresholdSeconds) {
-        this(objectMapper, messageService, sessionService, redisMessageBroker, translator,
-                persistenceService, bufferService, rebuildService, interactionStateService,
-                imOutboundService, sessionRouteService, skillInstanceRegistry,
-                assistantInfoService, channelLookupService, channelSuppressReplyWhitelistService,
-                scopeDispatcher, outboundDeliveryDispatcher, emitter,
-                null, // availabilityService — tests inject via mock where needed
-                ruleService,
-                messageTurnLifecycle,
-                ownerDeadThresholdSeconds, true, 25, Clock.systemUTC(), Ticker.systemTicker());
-        // 主动初始化 cache，避免测试场景下 @PostConstruct 未触发导致 NPE
-        initConfirmDedupCache();
-    }
-
     // ==================== SS relay subscription (启动时订阅本实例的中转 channel) ====================
 
     /**
@@ -840,11 +766,9 @@ public class GatewayMessageRouter {
                         }
                     }
                 }
-                if (messageTurnLifecycle != null) {
-                    int contentLength = msg.getContent() != null ? msg.getContent().length() : 0;
-                    // Delegate first-token tracking + token counting to MessageTurnLifecycle
-                    messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, true), contentLength);
-                }
+                int contentLength = msg.getContent() != null ? msg.getContent().length() : 0;
+                // Delegate first-token tracking + token counting to MessageTurnLifecycle
+                messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, true), contentLength);
             }
         }
 
@@ -1017,6 +941,43 @@ public class GatewayMessageRouter {
         }
     }
 
+    /**
+     * 通知 MessageTurnLifecycle 轮次结束。从 session 解析 brainTag/assistantAccount，
+     * messageId 缺失或 brainTag 为 null 时记录 warn 日志。
+     *
+     * @param session  会话（可能为 null）
+     * @param sessionId 会话 ID
+     * @param messageId 消息 ID
+     * @param success  是否成功（tool_done=true, tool_error=false）
+     */
+    private void notifyTurnEnd(SkillSession session, String sessionId, String messageId, boolean success) {
+        if (messageId == null || messageId.isBlank()) {
+            log.warn("[SKIP] onTurnEnd: messageId is null or blank, sessionId={}, skipping lifecycle cleanup", sessionId);
+            return;
+        }
+        String brainTag = null;
+        String assistantAccount = null;
+        if (session != null) {
+            assistantAccount = session.getAssistantAccount();
+            if (!isDefaultAssistant(session)) {
+                AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
+                if (info != null) {
+                    brainTag = info.getBusinessTag();
+                } else {
+                    log.warn("[SKIP] onTurnEnd brainTag: assistant info not found, ak={}, sessionId={}, messageId={}, using UNKNOWN",
+                        session.getAk(), sessionId, messageId);
+                }
+            } else {
+                log.warn("[SKIP] onTurnEnd brainTag: default assistant, sessionId={}, messageId={}, using UNKNOWN",
+                    sessionId, messageId);
+            }
+        } else {
+            log.warn("[SKIP] onTurnEnd brainTag: session is null, sessionId={}, messageId={}, using UNKNOWN",
+                sessionId, messageId);
+        }
+        messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, success));
+    }
+
     /** 处理 tool_done：标记会话完成、统一投递 idle 状态、持久化最终消息。 */
     private void handleToolDone(String sessionId, String userId, JsonNode node) {
         if (sessionId == null) {
@@ -1034,33 +995,7 @@ public class GatewayMessageRouter {
         flushAccumulatedCloudImTextDone(sessionId, userId, session, traceId);
 
         // Call onTurnEnd when stream completes
-        if (messageTurnLifecycle != null) {
-            if (messageId != null && !messageId.isBlank()) {
-                String brainTag = null;
-                String assistantAccount = null;
-                if (session != null) {
-                    assistantAccount = session.getAssistantAccount();
-                    if (!isDefaultAssistant(session)) {
-                        AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
-                        if (info != null) {
-                            brainTag = info.getBusinessTag();
-                        } else {
-                            log.warn("[SKIP] onTurnEnd brainTag: assistant info not found, ak={}, sessionId={}, messageId={}, using UNKNOWN",
-                                session.getAk(), sessionId, messageId);
-                        }
-                    } else {
-                        log.warn("[SKIP] onTurnEnd brainTag: default assistant, sessionId={}, messageId={}, using UNKNOWN",
-                            sessionId, messageId);
-                    }
-                } else {
-                    log.warn("[SKIP] onTurnEnd brainTag: session is null, sessionId={}, messageId={}, using UNKNOWN",
-                        sessionId, messageId);
-                }
-                messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, true));
-            } else {
-                log.warn("[SKIP] onTurnEnd: messageId is null or blank, sessionId={}, skipping lifecycle cleanup", sessionId);
-            }
-        }
+        notifyTurnEnd(session, sessionId, messageId, true);
 
         StreamMessage msg = StreamMessage.sessionStatus("idle");
         Long numericId = ProtocolUtils.parseSessionId(sessionId);
@@ -1131,30 +1066,7 @@ public class GatewayMessageRouter {
 
         // === Call onTurnEnd on error (same as handleToolDone) ===
         String messageId = node.path("messageId").asText(null);
-        if (messageTurnLifecycle != null) {
-            if (messageId != null && !messageId.isBlank()) {
-                String brainTag = null;
-                String assistantAccount = null;
-                if (session != null) {
-                    assistantAccount = session.getAssistantAccount();
-                    if (!isDefaultAssistant(session)) {
-                        AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
-                        if (info != null) {
-                            brainTag = info.getBusinessTag();
-                        } else {
-                            log.warn("[SKIP] onTurnEnd(tool_error) brainTag: assistant info not found, ak={}, sessionId={}, messageId={}", session.getAk(), sessionId, messageId);
-                        }
-                    } else {
-                        log.warn("[SKIP] onTurnEnd(tool_error) brainTag: default assistant, sessionId={}, messageId={}", sessionId, messageId);
-                    }
-                } else {
-                    log.warn("[SKIP] onTurnEnd(tool_error) brainTag: session is null, sessionId={}, messageId={}", sessionId, messageId);
-                }
-                messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, false));
-            } else {
-                log.warn("[SKIP] onTurnEnd(tool_error): messageId is null or blank, sessionId={}", sessionId);
-            }
-        }
+        notifyTurnEnd(session, sessionId, messageId, false);
         // === END ===
 
         if (numericId != null) {
