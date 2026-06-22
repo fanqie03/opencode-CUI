@@ -27,8 +27,8 @@ public class MessageTurnLifecycle {
 
     public MessageTurnLifecycle(List<MessageTurnHandler> handlers,
                                 MeterRegistry meterRegistry,
-                                @Value("${telemetry.chatstream.max-sessions:10000}") long maxSessions,
-                                @Value("${telemetry.chatstream.session-ttl-minutes:30}") Duration sessionTtl) {
+                                @Value("${skill.metrics.stream.max-sessions:10000}") long maxSessions,
+                                @Value("${skill.metrics.stream.session-ttl:30m}") Duration sessionTtl) {
         this.handlers = handlers;
         this.processedFirstToken = Caffeine.newBuilder()
                 .recordStats()

@@ -307,7 +307,7 @@ public class GatewayMessageRouter {
                 scopeDispatcher, outboundDeliveryDispatcher, emitter,
                 null, // availabilityService — tests inject via mock where needed
                 null, // ruleService — will be NPE but existing tests don't use isDefaultAssistant check
-                null, // messageTurnLifecycle — will be NPE but existing tests don't process metrics
+                null, // messageTurnLifecycle — null-safe, call sites guard with null check
                 ownerDeadThresholdSeconds, true, 25, Clock.systemUTC(), Ticker.systemTicker());
         // 主动初始化 cache，避免测试场景下 @PostConstruct 未触发导致 NPE
         initConfirmDedupCache();
@@ -840,9 +840,11 @@ public class GatewayMessageRouter {
                         }
                     }
                 }
-                int contentLength = msg.getContent() != null ? msg.getContent().length() : 0;
-                // Delegate first-token tracking + token counting to MessageTurnLifecycle
-                messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, true), contentLength);
+                if (messageTurnLifecycle != null) {
+                    int contentLength = msg.getContent() != null ? msg.getContent().length() : 0;
+                    // Delegate first-token tracking + token counting to MessageTurnLifecycle
+                    messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, true), contentLength);
+                }
             }
         }
 
@@ -1032,30 +1034,32 @@ public class GatewayMessageRouter {
         flushAccumulatedCloudImTextDone(sessionId, userId, session, traceId);
 
         // Call onTurnEnd when stream completes
-        if (messageId != null && !messageId.isBlank()) {
-            String brainTag = null;
-            String assistantAccount = null;
-            if (session != null) {
-                assistantAccount = session.getAssistantAccount();
-                if (!isDefaultAssistant(session)) {
-                    AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
-                    if (info != null) {
-                        brainTag = info.getBusinessTag();
+        if (messageTurnLifecycle != null) {
+            if (messageId != null && !messageId.isBlank()) {
+                String brainTag = null;
+                String assistantAccount = null;
+                if (session != null) {
+                    assistantAccount = session.getAssistantAccount();
+                    if (!isDefaultAssistant(session)) {
+                        AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
+                        if (info != null) {
+                            brainTag = info.getBusinessTag();
+                        } else {
+                            log.warn("[SKIP] onTurnEnd brainTag: assistant info not found, ak={}, sessionId={}, messageId={}, using UNKNOWN",
+                                session.getAk(), sessionId, messageId);
+                        }
                     } else {
-                        log.warn("[SKIP] onTurnEnd brainTag: assistant info not found, ak={}, sessionId={}, messageId={}, using UNKNOWN",
-                            session.getAk(), sessionId, messageId);
+                        log.warn("[SKIP] onTurnEnd brainTag: default assistant, sessionId={}, messageId={}, using UNKNOWN",
+                            sessionId, messageId);
                     }
                 } else {
-                    log.warn("[SKIP] onTurnEnd brainTag: default assistant, sessionId={}, messageId={}, using UNKNOWN",
+                    log.warn("[SKIP] onTurnEnd brainTag: session is null, sessionId={}, messageId={}, using UNKNOWN",
                         sessionId, messageId);
                 }
+                messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, true));
             } else {
-                log.warn("[SKIP] onTurnEnd brainTag: session is null, sessionId={}, messageId={}, using UNKNOWN",
-                    sessionId, messageId);
+                log.warn("[SKIP] onTurnEnd: messageId is null or blank, sessionId={}, skipping lifecycle cleanup", sessionId);
             }
-            messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, true));
-        } else {
-            log.warn("[SKIP] onTurnEnd: messageId is null or blank, sessionId={}, skipping lifecycle cleanup", sessionId);
         }
 
         StreamMessage msg = StreamMessage.sessionStatus("idle");
@@ -1127,27 +1131,29 @@ public class GatewayMessageRouter {
 
         // === Call onTurnEnd on error (same as handleToolDone) ===
         String messageId = node.path("messageId").asText(null);
-        if (messageId != null && !messageId.isBlank()) {
-            String brainTag = null;
-            String assistantAccount = null;
-            if (session != null) {
-                assistantAccount = session.getAssistantAccount();
-                if (!isDefaultAssistant(session)) {
-                    AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
-                    if (info != null) {
-                        brainTag = info.getBusinessTag();
+        if (messageTurnLifecycle != null) {
+            if (messageId != null && !messageId.isBlank()) {
+                String brainTag = null;
+                String assistantAccount = null;
+                if (session != null) {
+                    assistantAccount = session.getAssistantAccount();
+                    if (!isDefaultAssistant(session)) {
+                        AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
+                        if (info != null) {
+                            brainTag = info.getBusinessTag();
+                        } else {
+                            log.warn("[SKIP] onTurnEnd(tool_error) brainTag: assistant info not found, ak={}, sessionId={}, messageId={}", session.getAk(), sessionId, messageId);
+                        }
                     } else {
-                        log.warn("[SKIP] onTurnEnd(tool_error) brainTag: assistant info not found, ak={}, sessionId={}, messageId={}", session.getAk(), sessionId, messageId);
+                        log.warn("[SKIP] onTurnEnd(tool_error) brainTag: default assistant, sessionId={}, messageId={}", sessionId, messageId);
                     }
                 } else {
-                    log.warn("[SKIP] onTurnEnd(tool_error) brainTag: default assistant, sessionId={}, messageId={}", sessionId, messageId);
+                    log.warn("[SKIP] onTurnEnd(tool_error) brainTag: session is null, sessionId={}, messageId={}", sessionId, messageId);
                 }
+                messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, false));
             } else {
-                log.warn("[SKIP] onTurnEnd(tool_error) brainTag: session is null, sessionId={}, messageId={}", sessionId, messageId);
+                log.warn("[SKIP] onTurnEnd(tool_error): messageId is null or blank, sessionId={}", sessionId);
             }
-            messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, false));
-        } else {
-            log.warn("[SKIP] onTurnEnd(tool_error): messageId is null or blank, sessionId={}", sessionId);
         }
         // === END ===
 

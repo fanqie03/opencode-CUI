@@ -37,8 +37,8 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
 
     public ChatStreamMetricsService(MeterRegistry meterRegistry,
                                    ObjectProvider<WelinkTelemetryReporter> welinkReporterProvider,
-                                   @Value("${telemetry.chatstream.max-sessions:10000}") long maxSessions,
-                                   @Value("${telemetry.chatstream.session-ttl-minutes:60}") Duration sessionTtl) {
+                                   @Value("${skill.metrics.stream.max-sessions:10000}") long maxSessions,
+                                   @Value("${skill.metrics.stream.session-ttl:30m}") Duration sessionTtl) {
         this.meterRegistry = meterRegistry;
         this.welinkReporter = welinkReporterProvider.getIfAvailable();
         this.sessionStartTimes = Caffeine.newBuilder()
