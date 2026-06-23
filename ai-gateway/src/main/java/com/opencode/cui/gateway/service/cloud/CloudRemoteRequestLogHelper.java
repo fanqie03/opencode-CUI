@@ -7,12 +7,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-final class CloudRemoteRequestLogHelper {
+public final class CloudRemoteRequestLogHelper {
 
     private CloudRemoteRequestLogHelper() {
     }
 
-    static void logRequest(Logger log,
+    public static void logRequest(Logger log,
                            String protocol,
                            String endpoint,
                            Map<String, List<String>> headers,

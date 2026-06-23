@@ -25,6 +25,7 @@ import com.opencode.cui.skill.service.SkillMessageService;
 import com.opencode.cui.skill.service.GatewayMessageRouter;
 import com.opencode.cui.skill.service.SkillMessageFlowService;
 import com.opencode.cui.skill.service.SkillSessionService;
+import com.opencode.cui.skill.service.SysConfigService;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import lombok.Data;
@@ -63,18 +64,21 @@ public class SkillMessageController {
     private final ObjectMapper objectMapper;
     private final SessionAccessControlService accessControlService;
     private final SkillMessageFlowService flowService;
+    private final SysConfigService sysConfigService;
 
     @Autowired
     public SkillMessageController(SkillMessageService messageService,
                                   ImMessageService imMessageService,
                                   ObjectMapper objectMapper,
                                   SessionAccessControlService accessControlService,
-                                  SkillMessageFlowService flowService) {
+                                  SkillMessageFlowService flowService,
+                                  SysConfigService sysConfigService) {
         this.messageService = messageService;
         this.imMessageService = imMessageService;
         this.objectMapper = objectMapper;
         this.accessControlService = accessControlService;
         this.flowService = flowService;
+        this.sysConfigService = sysConfigService;
     }
 
     public SkillMessageController(SkillMessageService messageService,
@@ -95,12 +99,14 @@ public class SkillMessageController {
             AllowedSlashCommandsResolver allowedSlashCommandsResolver,
             MessagePersistenceService persistenceService,
             ApplicationEventPublisher eventPublisher,
+            SysConfigService sysConfigService,
             MessageTurnLifecycle messageTurnLifecycle) {
         this(messageService, imMessageService, objectMapper, accessControlService,
                 new SkillMessageFlowService(
                         messageService, gatewayRelayService, objectMapper, messageRouter, assistantIdProperties,
                         assistantInfoService, scopeDispatcher, availabilityService, assistantAccountResolverService,
-                        ruleService, allowedSlashCommandsResolver, eventPublisher, persistenceService, messageTurnLifecycle));
+                        ruleService, allowedSlashCommandsResolver, eventPublisher, persistenceService, messageTurnLifecycle),
+                sysConfigService);
     }
 
     /**
@@ -272,8 +278,15 @@ public class SkillMessageController {
         }
 
         String targetType = parsed.targetType().name().toLowerCase();
+
+        // 读取 msg_ext 配置
+        String msgExt = null;
+        if ("1".equals(sysConfigService.getValue("msg_ext", "enabled"))) {
+            msgExt = sysConfigService.getValue("msg_ext", "content");
+        }
+
         boolean success = imMessageService.sendMessage(
-                targetType, parsed.targetId(), parsed.senderAccount(), request.getContent());
+                targetType, parsed.targetId(), parsed.senderAccount(), request.getContent(), msgExt);
 
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
         if (success) {
