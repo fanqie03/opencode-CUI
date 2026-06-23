@@ -14,6 +14,7 @@ import com.opencode.cui.gateway.service.cloud.CloudConnectionContext;
 import com.opencode.cui.gateway.service.cloud.CloudConnectionHandle;
 import com.opencode.cui.gateway.service.cloud.CloudConnectionLifecycle;
 import com.opencode.cui.gateway.service.cloud.CloudProtocolClient;
+import com.opencode.cui.gateway.service.cloud.CloudRemoteRequestLogHelper;
 import com.opencode.cui.gateway.service.cloud.WebHookExecutor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -597,7 +598,17 @@ public class CloudAgentService {
                     }
                     // 构造请求体（与 question 接口同构）
                     ObjectNode body = buildAbortBody(invokeMessage, toolSessionId);
-                    sendAbortRequest(route, body, traceId);
+                    // 构建 context 供统一远程调用日志 helper 使用（header 脱敏 + 字段形态一致）
+                    CloudConnectionContext abortContext = CloudConnectionContext.builder()
+                            .channelAddress(route.channelAddress())
+                            .channelType(route.channelType())
+                            .scope(ACTION_TO_SCOPE.get(ACTION_ABORT_SESSION))
+                            .appId(route.appId())
+                            .authType(route.authType())
+                            .traceId(traceId)
+                            .cloudProfile(route.cloudProfile())
+                            .build();
+                    sendAbortRequest(route, body, abortContext);
                 } catch (Exception e) {
                     log.warn("[CLOUD_AGENT] Async abort request failed: traceId={}, error={}",
                             traceId, e.getMessage());
@@ -653,8 +664,11 @@ public class CloudAgentService {
      * <p>内联发送而非复用 WebHookExecutor：abort 是 fire-and-forget 旁路通知，
      * 失败不回传 tool_error；WebHookExecutor 失败会回调 onRelay 产生 tool_error，
      * 语义不匹配。</p>
+     *
+     * <p>请求日志走 {@link CloudRemoteRequestLogHelper#logRequest}，与 SSE/WebHook/WebSocket
+     * 三条协议保持统一的 header 脱敏和字段形态。</p>
      */
-    private void sendAbortRequest(RemoteRoute route, ObjectNode body, String traceId)
+    private void sendAbortRequest(RemoteRoute route, ObjectNode body, CloudConnectionContext context)
             throws Exception {
         String bodyStr = objectMapper.writeValueAsString(body);
         HttpRequest.Builder builder = HttpRequest.newBuilder()
@@ -662,21 +676,21 @@ public class CloudAgentService {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(bodyStr))
                 .timeout(Duration.ofSeconds(10));
-        if (traceId != null) {
-            builder.header("X-Trace-Id", traceId);
+        if (context.getTraceId() != null) {
+            builder.header("X-Trace-Id", context.getTraceId());
         }
         cloudAuthService.applyAuth(builder, route.appId(), route.authType());
 
         HttpRequest request = builder.build();
-        log.info("[CLOUD_AGENT] Abort request: url={}, traceId={}, body={}",
-                route.channelAddress(), traceId, bodyStr);
+        CloudRemoteRequestLogHelper.logRequest(log, route.channelType(), route.channelAddress(),
+                request.headers().map(), bodyStr, context);
         HttpResponse<String> resp = httpClient.send(request,
                 HttpResponse.BodyHandlers.ofString());
         log.info("[CLOUD_AGENT] Abort response: url={}, status={}, body={}, traceId={}",
-                route.channelAddress(), resp.statusCode(), resp.body(), traceId);
+                route.channelAddress(), resp.statusCode(), resp.body(), context.getTraceId());
         if (resp.statusCode() != 200) {
             log.warn("[CLOUD_AGENT] Abort request returned non-200: url={}, status={}, body={}, traceId={}",
-                    route.channelAddress(), resp.statusCode(), resp.body(), traceId);
+                    route.channelAddress(), resp.statusCode(), resp.body(), context.getTraceId());
         }
     }
 
