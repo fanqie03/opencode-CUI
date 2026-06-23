@@ -1,4 +1,4 @@
-﻿# Skill Abort 第三方助手终止接口调用 — 实现计划
+# Skill Abort 第三方助手终止接口调用 — 实现计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -754,4 +754,3 @@ Expected: 仅 `CloudAgentConfig.java`（新增）、`CloudAgentService.java`（�
 
 Run: `cd ai-gateway; mvn compile -q`
 Expected: BUILD SUCCESS, zero warnings
-

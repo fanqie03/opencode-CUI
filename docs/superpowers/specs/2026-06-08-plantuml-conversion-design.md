@@ -1,7 +1,7 @@
 # PlantUML 文本转换设计
 
-> **日期**: 2026-06-08  
-> **需求来源**: `docs/human-docs/002支持plantUml转换.md`  
+> **日期**: 2026-06-08
+> **需求来源**: `docs/human-docs/002支持plantUml转换.md`
 > **目标**: skill-server 新增文本内容转换能力，将 PlantUML / Graphviz 文本转换为可直接展示的图片内容（PNG Base64 / SVG XML）。
 
 ---

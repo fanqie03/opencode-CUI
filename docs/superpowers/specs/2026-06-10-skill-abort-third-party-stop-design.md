@@ -1,7 +1,7 @@
 # Skill Abort 第三方助手终止接口调用设计
 
-> **日期**: 2026-06-10  
-> **需求来源**: `docs/human-docs/003终止skill对话流程.md`  
+> **日期**: 2026-06-10
+> **需求来源**: `docs/human-docs/003终止skill对话流程.md`
 > **目标**: Gateway 收到 `abort_session` 时，通过 remoteProperty 配置调用第三方助手的终止执行接口，实现异步 fire-and-forget。
 
 ---
@@ -139,7 +139,7 @@ public class CloudAgentConfig {
 }
 ```
 
-> **为什么不用虚拟线程**：项目里 `BusinessInvokeRouteStrategy` 用虚拟线程执行 webhook，但 abort 请求是旁路通知（非主业务路径），使用固定线程池更可控，避免虚拟线程无限制增长。  
+> **为什么不用虚拟线程**：项目里 `BusinessInvokeRouteStrategy` 用虚拟线程执行 webhook，但 abort 请求是旁路通知（非主业务路径），使用固定线程池更可控，避免虚拟线程无限制增长。
 > **专用线程池**：与 `RedisConfig` 中的 `redisListenerExecutor` / `redisSubscriptionExecutor` 对齐，独立配置、独立生命周期、独立监控。
 
 #### 3.2.3 `CloudAgentService` — 注入专用线程池
@@ -164,7 +164,7 @@ public void handleInvoke(GatewayMessage invokeMessage, Consumer<GatewayMessage> 
     if (ACTION_ABORT_SESSION.equals(action)) {
         // 【新增】异步调用第三方终止接口（fire-and-forget）
         invokeRemoteAbortIfConfigured(invokeMessage, toolSessionId, assistantAccount, businessTag);
-        
+
         // 【原有】取消本地活跃 SSE/WS 连接
         cancelStreamingConnection(invokeMessage, toolSessionId);
         return;
@@ -202,7 +202,7 @@ private void invokeRemoteAbortIfConfigured(GatewayMessage invokeMessage,
 }
 ```
 
-> 使用 `CompletableFuture.runAsync()` + 固定线程池异步执行，不阻塞主流程。  
+> 使用 `CompletableFuture.runAsync()` + 固定线程池异步执行，不阻塞主流程。
 > 失败仅打 WARN 日志，不回传 tool_error。
 
 #### 3.2.6 `CloudAgentService` — 构造终止请求体（与 question 接口一致）
@@ -307,7 +307,7 @@ private void sendAbortRequest(RemoteRoute route, ObjectNode body, String traceId
 
 > **响应处理**：需求明确第三方终止接口返回 `{"code":200, "msg":"success", "data":null}`（成功）或
 > `{"code":500, "msg":"pc is offline", "data":null}`（失败）。当前实现仅校验 HTTP 状态码（200 = 成功），
-> 不解析 response body 中的 `code` 字段。后续如有需要可扩展 body 解析逻辑。  
+> 不解析 response body 中的 `code` 字段。后续如有需要可扩展 body 解析逻辑。
 > **为什么内联而非复用 WebHookExecutor**：abort 是 fire-and-forget 旁路通知，失败不回传 `tool_error`；
 > WebHookExecutor 失败会回调 `onRelay` 产生 `tool_error`，语义不匹配。
 

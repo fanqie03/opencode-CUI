@@ -1,7 +1,7 @@
 # Prometheus 指标埋码设计
 
-> **日期**: 2026-06-08  
-> **需求来源**: `docs/human-docs/001运维埋码.md`  
+> **日期**: 2026-06-08
+> **需求来源**: `docs/human-docs/001运维埋码.md`
 > **目标**: 为 skill-server 和 ai-gateway 接入 Prometheus 指标上报，覆盖第三方接口调用、对外 API 调用、流式对话效率、WS 连接数四个维度。
 
 ---
