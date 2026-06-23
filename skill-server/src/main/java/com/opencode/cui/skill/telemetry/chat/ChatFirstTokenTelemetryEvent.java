@@ -8,9 +8,12 @@ import java.util.Map;
 /**
  * 首 token 到达事件（skill_chat_first_token）。
  * 实现 TelemetryEvent 接口，供 MessageTurnLifecycle.onFirstToken 上报到 WelinkTelemetryReporter。
+ *
+ * <p>维度：messageId、sessionId、userId（发送者账号）、assistantAccount（助手账号）。
  */
 public record ChatFirstTokenTelemetryEvent(
         String sessionId,
+        String senderUserAccount,
         String assistantAccount,
         String businessTag,
         String messageId,
@@ -29,7 +32,7 @@ public record ChatFirstTokenTelemetryEvent(
 
     @Override
     public String userId() {
-        return assistantAccount;
+        return senderUserAccount;
     }
 
     @Override
@@ -37,6 +40,7 @@ public record ChatFirstTokenTelemetryEvent(
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("businessTag", businessTag != null ? businessTag : "UNKNOWN");
         data.put("messageId", messageId);
+        data.put("assistantAccount", assistantAccount);
         data.put("ttftMs", ttftMs);
         data.put("ttftReportedAt", System.currentTimeMillis());
         return data;

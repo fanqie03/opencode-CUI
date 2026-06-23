@@ -3,6 +3,7 @@ package com.opencode.cui.skill.telemetry.metrics;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.skill.telemetry.chat.ChatFirstTokenTelemetryEvent;
+import com.opencode.cui.skill.telemetry.chat.ChatTurnEndTelemetryEvent;
 import com.opencode.cui.skill.telemetry.core.WelinkTelemetryReporter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -87,7 +88,8 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
         if (welinkReporter != null) {
             try {
                 welinkReporter.report(new ChatFirstTokenTelemetryEvent(
-                        ctx.sessionId(), ctx.assistantAccount(), ctx.brainTag(), ctx.messageId(), ttft));
+                        ctx.sessionId(), ctx.senderUserAccount(), ctx.assistantAccount(),
+                        ctx.brainTag(), ctx.messageId(), ttft));
             } catch (Throwable t) {
                 log.warn("[ChatStreamMetricsService] Welink firstToken report failed: messageId={}, error={}", messageId, t.getMessage());
             }
@@ -150,6 +152,17 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             meterRegistry.counter("chat_stream_turn_success_total", turnTags).increment();
         } else {
             meterRegistry.counter("chat_stream_turn_failure_total", turnTags).increment();
+        }
+
+        // Report turn-end metrics to Welink: content length, duration, success/failure
+        if (welinkReporter != null) {
+            try {
+                welinkReporter.report(new ChatTurnEndTelemetryEvent(
+                        ctx.sessionId(), ctx.senderUserAccount(), ctx.assistantAccount(),
+                        ctx.brainTag(), ctx.messageId(), tokens, latency, ctx.success()));
+            } catch (Throwable t) {
+                log.warn("[ChatStreamMetricsService] Welink turnEnd report failed: messageId={}, error={}", messageId, t.getMessage());
+            }
         }
 
         sessionStartTimes.invalidate(messageId);

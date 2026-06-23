@@ -768,7 +768,7 @@ public class GatewayMessageRouter {
                 }
                 int contentLength = msg.getContent() != null ? msg.getContent().length() : 0;
                 // Delegate first-token tracking + token counting to MessageTurnLifecycle
-                messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, true), contentLength);
+                messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, userId, null, true), contentLength);
             }
         }
 
@@ -975,7 +975,8 @@ public class GatewayMessageRouter {
             log.warn("[SKIP] onTurnEnd brainTag: session is null, sessionId={}, messageId={}, using UNKNOWN",
                 sessionId, messageId);
         }
-        messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, null, null, success));
+        String senderUserAccount = session != null ? session.getUserId() : null;
+        messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, senderUserAccount, null, success));
     }
 
     /** 处理 tool_done：标记会话完成、统一投递 idle 状态、持久化最终消息。 */
