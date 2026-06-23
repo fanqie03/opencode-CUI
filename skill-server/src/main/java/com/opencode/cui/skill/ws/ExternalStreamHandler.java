@@ -7,6 +7,7 @@ import com.opencode.cui.skill.logging.StreamEventLogHelper;
 import com.opencode.cui.skill.service.ExternalWsRegistry;
 import com.opencode.cui.skill.service.RedisMessageBroker;
 import com.opencode.cui.skill.service.SkillInstanceRegistry;
+import com.opencode.cui.skill.telemetry.metrics.WsConnectionMetrics;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -46,6 +47,11 @@ public class ExternalStreamHandler extends TextWebSocketHandler implements Hands
     private final ExternalWsRegistry wsRegistry;
     private final SkillInstanceRegistry instanceRegistry;
     private final DeliveryProperties deliveryProperties;
+    private final WsConnectionMetrics wsConnectionMetrics;
+
+    private static final String WS_URL = "/ws/external/stream";
+    private static final String WS_BUSINESS = "external-module";
+    private static final String WS_DIRECTION = "inbound";
 
     private final ConnectionPool connectionPool = new ConnectionPool();
     /** wsSessionId → last activity time */
@@ -56,13 +62,15 @@ public class ExternalStreamHandler extends TextWebSocketHandler implements Hands
                                   @Value("${skill.im.inbound-token:changeme}") String inboundToken,
                                   ExternalWsRegistry wsRegistry,
                                   SkillInstanceRegistry instanceRegistry,
-                                  DeliveryProperties deliveryProperties) {
+                                  DeliveryProperties deliveryProperties,
+                                  WsConnectionMetrics wsConnectionMetrics) {
         this.objectMapper = objectMapper;
         this.redisMessageBroker = redisMessageBroker;
         this.inboundToken = inboundToken;
         this.wsRegistry = wsRegistry;
         this.instanceRegistry = instanceRegistry;
         this.deliveryProperties = deliveryProperties;
+        this.wsConnectionMetrics = wsConnectionMetrics;
     }
 
     @Override
@@ -90,6 +98,7 @@ public class ExternalStreamHandler extends TextWebSocketHandler implements Hands
 
         connectionPool.add(source, instanceId, session);
         lastActivity.put(session.getId(), Instant.now());
+        wsConnectionMetrics.connectionOpened(WS_URL, WS_BUSINESS, WS_DIRECTION);
 
         String channel = CHANNEL_PREFIX + source;
         if (!redisMessageBroker.isChannelSubscribed(channel)) {
@@ -120,6 +129,7 @@ public class ExternalStreamHandler extends TextWebSocketHandler implements Hands
 
         int remaining = connectionPool.remove(source, instanceId, session);
         lastActivity.remove(session.getId());
+        wsConnectionMetrics.connectionClosed(WS_URL, WS_BUSINESS, WS_DIRECTION);
 
         if (remaining == 0) {
             redisMessageBroker.unsubscribeFromChannel(CHANNEL_PREFIX + source);

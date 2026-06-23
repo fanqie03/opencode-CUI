@@ -10,6 +10,7 @@ import com.opencode.cui.skill.service.ProtocolUtils;
 import com.opencode.cui.skill.service.RedisMessageBroker;
 import com.opencode.cui.skill.service.SkillSessionService;
 import com.opencode.cui.skill.service.SnapshotService;
+import com.opencode.cui.skill.telemetry.metrics.WsConnectionMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -52,6 +53,11 @@ public class SkillStreamHandler extends TextWebSocketHandler {
     private final SkillSessionService sessionService;
     private final SnapshotService snapshotService;
     private final RedisMessageBroker redisMessageBroker;
+    private final WsConnectionMetrics wsConnectionMetrics;
+
+    private static final String WS_URL = "/ws/skill/stream";
+    private static final String WS_BUSINESS = "miniapp-stream";
+    private static final String WS_DIRECTION = "inbound";
 
     /**
      * 按 userId 分组的协议订阅者。
@@ -81,11 +87,13 @@ public class SkillStreamHandler extends TextWebSocketHandler {
     public SkillStreamHandler(ObjectMapper objectMapper,
             SkillSessionService sessionService,
             SnapshotService snapshotService,
-            RedisMessageBroker redisMessageBroker) {
+            RedisMessageBroker redisMessageBroker,
+            WsConnectionMetrics wsConnectionMetrics) {
         this.objectMapper = objectMapper;
         this.sessionService = sessionService;
         this.snapshotService = snapshotService;
         this.redisMessageBroker = redisMessageBroker;
+        this.wsConnectionMetrics = wsConnectionMetrics;
     }
 
     @Override
@@ -98,6 +106,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
             return;
         }
 
+        wsConnectionMetrics.connectionOpened(WS_URL, WS_BUSINESS, WS_DIRECTION);
         registerUserSubscriber(session, userId);
         sendInitialStreamingState(session, userId);
     }
@@ -135,7 +144,11 @@ public class SkillStreamHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        boolean wasRegistered = session.getAttributes().containsKey(ATTR_USER_ID);
         unregisterSubscriber(session);
+        if (wasRegistered) {
+            wsConnectionMetrics.connectionClosed(WS_URL, WS_BUSINESS, WS_DIRECTION);
+        }
         log.info("Skill stream subscriber disconnected: wsId={}, status={}", session.getId(), status);
     }
 
@@ -149,7 +162,10 @@ public class SkillStreamHandler extends TextWebSocketHandler {
             log.error("Skill stream transport error: wsId={}, error={}",
                     session.getId(), error, exception);
         }
-        unregisterSubscriber(session);
+        boolean wasRegistered = unregisterSubscriber(session);
+        if (wasRegistered) {
+            wsConnectionMetrics.connectionClosed(WS_URL, WS_BUSINESS, WS_DIRECTION);
+        }
     }
 
     /**
@@ -188,7 +204,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
     }
 
     /** 注销订阅者（幂等操作，传输错误和关闭回调都可能触发）。 */
-    private void unregisterSubscriber(WebSocketSession session) {
+    private boolean unregisterSubscriber(WebSocketSession session) {
         // 传输错误和关闭回调可能重复触发，提前移除标记以保证幂等性
         String userId = (String) session.getAttributes().remove(ATTR_USER_ID);
         if (userId != null) {
@@ -202,7 +218,7 @@ public class SkillStreamHandler extends TextWebSocketHandler {
             }
 
             if (!removed) {
-                return;
+                return false;
             }
 
             AtomicInteger counter = activeConnectionCounts.get(userId);
@@ -213,7 +229,9 @@ public class SkillStreamHandler extends TextWebSocketHandler {
                     unsubscribeFromUserStream(userId);
                 }
             }
+            return true;
         }
+        return false;
     }
 
     /** 订阅用户级别的 Redis 消息流。 */

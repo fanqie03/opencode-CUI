@@ -5,7 +5,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.model.RelayMessage;
-import io.micrometer.core.instrument.Counter;
+import com.opencode.cui.gateway.telemetry.WsConnectionMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -59,6 +59,7 @@ public class SkillRelayService {
     private final GatewayMessageIdentityService messageIdentityService;
     private final AsyncSessionSenderFactory senderFactory;
     private final MeterRegistry meterRegistry;
+    private final WsConnectionMetrics wsConnectionMetrics;
 
     /** Invoke 路由策略 Map：scope → strategy */
     private final Map<String, InvokeRouteStrategy> routeStrategyMap;
@@ -111,9 +112,9 @@ public class SkillRelayService {
     /** Lazy-initialized reference to EventRelayService (set via setter to break circular dependency). */
     private EventRelayService eventRelayService;
 
-    // Connection metrics for Prometheus
-    private final AtomicInteger currentSkillConnections = new AtomicInteger(0);
-    private final Counter totalSkillConnections;
+    private static final String WS_URL = "/ws/skill";
+    private static final String WS_BUSINESS = "skill-server-relay";
+    private static final String WS_DIRECTION = "inbound";
 
     @Autowired
     public SkillRelayService(RedisMessageBroker redisMessageBroker,
@@ -123,7 +124,8 @@ public class SkillRelayService {
             GatewayMessageIdentityService messageIdentityService,
             AsyncSessionSenderFactory senderFactory,
             List<InvokeRouteStrategy> invokeRouteStrategies,
-            MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry,
+            WsConnectionMetrics wsConnectionMetrics) {
         this.redisMessageBroker = redisMessageBroker;
         this.objectMapper = objectMapper;
         this.gatewayInstanceId = gatewayInstanceId;
@@ -131,17 +133,12 @@ public class SkillRelayService {
         this.messageIdentityService = messageIdentityService;
         this.senderFactory = senderFactory;
         this.meterRegistry = meterRegistry;
+        this.wsConnectionMetrics = wsConnectionMetrics;
         Map<String, InvokeRouteStrategy> strategyMap = new HashMap<>();
         for (InvokeRouteStrategy s : invokeRouteStrategies) {
             strategyMap.put(s.getScope(), s);
         }
         this.routeStrategyMap = strategyMap;
-
-        // Register connection metrics
-        this.totalSkillConnections = Counter.builder("gateway_ws_skill_total_connections")
-                .description("Cumulative total skill server connections")
-                .register(meterRegistry);
-        meterRegistry.gauge("gateway_ws_skill_current_connections", currentSkillConnections);
     }
 
     public SkillRelayService(RedisMessageBroker redisMessageBroker,
@@ -152,7 +149,8 @@ public class SkillRelayService {
             List<InvokeRouteStrategy> invokeRouteStrategies,
             MeterRegistry meterRegistry) {
         this(redisMessageBroker, objectMapper, gatewayInstanceId, routingTable, messageIdentityService,
-                AsyncSessionSenderFactory.defaultFactory(), invokeRouteStrategies, meterRegistry);
+                AsyncSessionSenderFactory.defaultFactory(), invokeRouteStrategies, meterRegistry,
+                new WsConnectionMetrics(meterRegistry));
     }
 
     /**
@@ -205,8 +203,7 @@ public class SkillRelayService {
 
         // Update connection metrics
         if (SOURCE_TYPE_SKILL_SERVER.equals(canonicalSourceType(sourceType))) {
-            currentSkillConnections.incrementAndGet();
-            totalSkillConnections.increment();
+            wsConnectionMetrics.connectionOpened(WS_URL, WS_BUSINESS, WS_DIRECTION);
         }
 
         log.info("[Mesh] Registered source session: sourceType={}, ssInstanceId={}, sessionId={}, gwInstanceId={}, activeLinks={}, hashRingSize={}",
@@ -274,7 +271,7 @@ public class SkillRelayService {
 
         // Update connection metrics
         if (SOURCE_TYPE_SKILL_SERVER.equals(canonicalSourceType(sourceType))) {
-            currentSkillConnections.decrementAndGet();
+            wsConnectionMetrics.connectionClosed(WS_URL, WS_BUSINESS, WS_DIRECTION);
         }
 
         log.info("[Mesh] Removed source session: reason={}, sourceType={}, ssInstanceId={}, sessionId={}, gwInstanceId={}, activeLinks={}",

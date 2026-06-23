@@ -3,6 +3,7 @@ package com.opencode.cui.gateway.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.opencode.cui.gateway.model.GatewayMessage;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -67,7 +68,7 @@ class SkillRelayServiceV2Test {
         routingTable = new UpstreamRoutingTable(100000, 30);
         messageIdentityService = new GatewayMessageIdentityService();
         service = new SkillRelayService(redisMessageBroker, objectMapper, INSTANCE_ID, routingTable,
-                messageIdentityService, List.of());
+                messageIdentityService, List.of(), new SimpleMeterRegistry());
         service.setEventRelayService(eventRelayService);
     }
 

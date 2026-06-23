@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.ModelAndView;
 
 import java.util.concurrent.TimeUnit;
@@ -32,10 +33,26 @@ public class ApiMetricsInterceptor implements HandlerInterceptor {
         }
         long startTime = (long) startObj;
         long cost = System.currentTimeMillis() - startTime;
-        String url = request.getRequestURI();
+
+        // Use Spring's best-matching pattern template to avoid high-cardinality labels.
+        // e.g. "/api/skill/sessions/{sessionId}/messages" instead of "/api/skill/sessions/12345/messages"
+        String url = resolveUrlPattern(request);
 
         meterRegistry.timer("common_interface_duration_seconds",
                 "common_interface_url", url)
             .record(cost, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Resolves the route pattern template from the request attribute set by Spring's
+     * {@link HandlerMapping}. Falls back to the raw URI if the pattern is unavailable
+     * (e.g. static resources or unmatched paths).
+     */
+    private String resolveUrlPattern(HttpServletRequest request) {
+        Object pattern = request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        if (pattern != null && !pattern.toString().isBlank()) {
+            return pattern.toString();
+        }
+        return request.getRequestURI();
     }
 }

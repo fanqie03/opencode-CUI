@@ -127,6 +127,18 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             double tps = (tokens * 1000.0) / latency;
             meterRegistry.summary("chat_stream_tokens_per_second", Tags.of("brain_tag", tag))
                     .record(tps);
+
+            // TPOT: time per output token = (latency - ttft) / (tokens - 1)
+            // Only meaningful when there are tokens after the first one (tokens > 1)
+            Long firstTokenTs = firstTokenTimestamps.getIfPresent(messageId);
+            if (firstTokenTs != null && tokens > 1) {
+                long generationTime = now - firstTokenTs;
+                if (generationTime > 0) {
+                    double tpotMs = (double) generationTime / (tokens - 1);
+                    meterRegistry.timer("chat_stream_tpot_seconds", Tags.of("brain_tag", tag))
+                            .record((long) tpotMs, TimeUnit.MILLISECONDS);
+                }
+            }
         } else {
             log.warn("turnEnd: skipped TPS calculation for messageId={}, latency={}, tokens={}", messageId, latency, tokens);
         }

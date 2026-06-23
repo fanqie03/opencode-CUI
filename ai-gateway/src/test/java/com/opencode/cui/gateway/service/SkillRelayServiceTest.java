@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.service.cloud.InvokeRouteStrategy;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -58,7 +59,7 @@ class SkillRelayServiceTest {
         routingTable = new UpstreamRoutingTable(100000, 30);
         messageIdentityService = new GatewayMessageIdentityService();
         service = new SkillRelayService(redisMessageBroker, objectMapper, INSTANCE_ID, routingTable,
-                messageIdentityService, List.of());
+                messageIdentityService, List.of(), new SimpleMeterRegistry());
     }
 
     /** Wait for AsyncSessionSender background thread to flush the send queue. */
@@ -105,7 +106,7 @@ class SkillRelayServiceTest {
         when(businessStrategy.getScope()).thenReturn("business");
         SkillRelayService serviceWithBusinessRoute = new SkillRelayService(
                 redisMessageBroker, objectMapper, INSTANCE_ID, routingTable,
-                messageIdentityService, List.of(businessStrategy));
+                messageIdentityService, List.of(businessStrategy), new SimpleMeterRegistry());
 
         lenient().when(ss1Session.getId()).thenReturn("ss1-link");
         when(ss1Session.getAttributes()).thenReturn(mutableAttrs(SOURCE_TYPE_SKILL, "ss-1"));
@@ -135,7 +136,7 @@ class SkillRelayServiceTest {
         when(businessStrategy.getScope()).thenReturn("business");
         SkillRelayService serviceWithBusinessRoute = new SkillRelayService(
                 redisMessageBroker, objectMapper, INSTANCE_ID, routingTable,
-                messageIdentityService, List.of(businessStrategy));
+                messageIdentityService, List.of(businessStrategy), new SimpleMeterRegistry());
         GatewayMessage abort = GatewayMessage.builder()
                 .type(GatewayMessage.Type.INVOKE)
                 .action("abort_session")
