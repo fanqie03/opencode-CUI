@@ -49,12 +49,17 @@ public record ChatTurnEndTelemetryEvent(
     public Map<String, Object> extendData() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("messageId", messageId);
-        data.put("assistantAccount", assistantAccount);
+        data.put("senderUserAccount", nullToEmpty(senderUserAccount));
+        data.put("assistantAccount", nullToEmpty(assistantAccount));
         data.put("businessTag", businessTag != null ? businessTag : "UNKNOWN");
         data.put("contentLength", contentLength);
         data.put("durationMs", durationMs);
         data.put("success", success);
         data.put("turnEndReportedAt", System.currentTimeMillis());
         return data;
+    }
+
+    private static String nullToEmpty(String v) {
+        return v == null ? "" : v;
     }
 }

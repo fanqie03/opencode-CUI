@@ -35,6 +35,7 @@ class ChatTurnEndTelemetryEventTest {
     void extendData_includesAllMetrics() {
         Map<String, Object> data = event.extendData();
         assertEquals("msg-1", data.get("messageId"));
+        assertEquals("user-1", data.get("senderUserAccount"));
         assertEquals("assistant-1", data.get("assistantAccount"));
         assertEquals("brain-A", data.get("businessTag"));
         assertEquals(42, data.get("contentLength"));

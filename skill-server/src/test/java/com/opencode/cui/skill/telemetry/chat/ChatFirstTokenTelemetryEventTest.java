@@ -36,6 +36,7 @@ class ChatFirstTokenTelemetryEventTest {
         Map<String, Object> data = event.extendData();
         assertEquals("brain-A", data.get("businessTag"));
         assertEquals("msg-1", data.get("messageId"));
+        assertEquals("user-1", data.get("senderUserAccount"));
         assertEquals("assistant-1", data.get("assistantAccount"));
         assertEquals(150L, data.get("ttftMs"));
         assertNotNull(data.get("ttftReportedAt"));

@@ -38,11 +38,16 @@ public record ChatFirstTokenTelemetryEvent(
     @Override
     public Map<String, Object> extendData() {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("businessTag", businessTag != null ? businessTag : "UNKNOWN");
         data.put("messageId", messageId);
-        data.put("assistantAccount", assistantAccount);
+        data.put("senderUserAccount", nullToEmpty(senderUserAccount));
+        data.put("assistantAccount", nullToEmpty(assistantAccount));
+        data.put("businessTag", businessTag != null ? businessTag : "UNKNOWN");
         data.put("ttftMs", ttftMs);
         data.put("ttftReportedAt", System.currentTimeMillis());
         return data;
+    }
+
+    private static String nullToEmpty(String v) {
+        return v == null ? "" : v;
     }
 }
