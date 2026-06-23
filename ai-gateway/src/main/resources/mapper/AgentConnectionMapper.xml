@@ -54,10 +54,11 @@
 
     <insert id="insert">
         INSERT INTO agent_connection
-            (id, user_id, ak_id, device_name, mac_address, os, tool_type, tool_version, status, last_seen_at, created_at)
+            (id, user_id, ak_id, device_name, mac_address, os, tool_type, tool_version,
+             plugin_version, sdk_version, status, last_seen_at, created_at)
         VALUES
             (#{id}, #{userId}, #{akId}, #{deviceName}, #{macAddress}, #{os}, #{toolType}, #{toolVersion},
-             #{status}, #{lastSeenAt}, #{createdAt})
+             #{pluginVersion}, #{sdkVersion}, #{status}, #{lastSeenAt}, #{createdAt})
     </insert>
 
     <select id="findById" resultMap="AgentConnectionResultMap">
@@ -91,6 +92,8 @@
             mac_address = #{macAddress},
             os = #{os},
             tool_version = #{toolVersion},
+            plugin_version = #{pluginVersion},
+            sdk_version = #{sdkVersion},
             last_seen_at = #{lastSeenAt}
         WHERE id = #{id}
     </update>

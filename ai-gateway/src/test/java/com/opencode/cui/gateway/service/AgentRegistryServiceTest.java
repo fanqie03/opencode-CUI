@@ -39,7 +39,7 @@ class AgentRegistryServiceTest {
         when(snowflakeIdGenerator.nextId()).thenReturn(9001L);
         when(repository.findByAkIdAndToolType("ak-1", "channel")).thenReturn(null);
 
-        AgentConnection connection = service.register("user-1", "ak-1", "laptop", "mac", "win", null, "1.0.0");
+        AgentConnection connection = service.register("user-1", "ak-1", "laptop", "mac", "win", null, "1.0.0", null, null);
 
         assertEquals(9001L, connection.getId());
         assertEquals(AgentConnection.AgentStatus.ONLINE, connection.getStatus());
@@ -61,7 +61,7 @@ class AgentRegistryServiceTest {
                 .build();
         when(repository.findByAkIdAndToolType("ak-1", "opencode")).thenReturn(existing);
 
-        AgentConnection connection = service.register("user-1", "ak-1", "desktop", "mac", "macOS", "opencode", "2.0.0");
+        AgentConnection connection = service.register("user-1", "ak-1", "desktop", "mac", "macOS", "opencode", "2.0.0", null, null);
 
         assertSame(existing, connection);
         assertEquals(AgentConnection.AgentStatus.ONLINE, connection.getStatus());

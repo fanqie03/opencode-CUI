@@ -166,6 +166,8 @@ public class GatewayMessage {
     private String os;
     private String toolType;
     private String toolVersion;
+    private String pluginVersion;
+    private String sdkVersion;
 
     /**
      * 注册拒绝原因。

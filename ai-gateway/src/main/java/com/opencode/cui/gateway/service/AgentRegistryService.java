@@ -53,7 +53,8 @@ public class AgentRegistryService {
      */
     @Transactional
     public AgentConnection register(String userId, String akId, String deviceName,
-            String macAddress, String os, String toolType, String toolVersion) {
+            String macAddress, String os, String toolType, String toolVersion,
+            String pluginVersion, String sdkVersion) {
         String effectiveToolType = toolType != null ? toolType : "channel";
 
         // 查找相同 AK + toolType 的已有记录（任意状态）
@@ -66,6 +67,8 @@ public class AgentRegistryService {
             existing.setMacAddress(macAddress);
             existing.setOs(os);
             existing.setToolVersion(toolVersion);
+            existing.setPluginVersion(pluginVersion);
+            existing.setSdkVersion(sdkVersion);
             existing.setLastSeenAt(LocalDateTime.now());
             repository.updateAgentInfo(existing);
 
@@ -84,6 +87,8 @@ public class AgentRegistryService {
                 .os(os)
                 .toolType(effectiveToolType)
                 .toolVersion(toolVersion)
+                .pluginVersion(pluginVersion)
+                .sdkVersion(sdkVersion)
                 .status(AgentStatus.ONLINE)
                 .lastSeenAt(LocalDateTime.now())
                 .createdAt(LocalDateTime.now())

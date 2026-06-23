@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-0.md`
-- **Total Sessions**: 8
-- **Last Active**: 2026-06-22
+- **Total Sessions**: 9
+- **Last Active**: 2026-06-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-06-23 | gateway plugin版本字段入库——测试签名适配+验证 | `0a5c7958` | `feature--US20260612694037` |
 | 8 | 2026-06-22 | PR #106 review fixes + spec updates | `30c02501`, `9bf5625a`, `3554958d` | `feature--US20260602503185` |
 | 8 | 2026-06-22 | PR #104 rename review fixes | `c9d196f4`, `88f4362e` | `feature--US20260602503185` |
 | 7 | 2026-06-22 | PR #104 review fixes | `794bae32` | `feature--US20260602503381` |

@@ -97,7 +97,7 @@ class AgentWebSocketHandlerTest {
         verify(redisMessageBroker, never()).getInternalAgentInstance(anyString());
         verify(eventRelayService, never()).hasAgentSession("ak-1");
         verify(agentRegistryService, never()).register(
-                anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+                anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
         verify(eventRelayService, never()).registerAgentSession(anyString(), anyString(), any());
     }
 
@@ -116,7 +116,7 @@ class AgentWebSocketHandlerTest {
         verify(redisMessageBroker).getInternalAgentInstance("ak-1");
         verify(eventRelayService, never()).hasAgentSession("ak-1");
         verify(agentRegistryService, never()).register(
-                anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+                anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -134,7 +134,9 @@ class AgentWebSocketHandlerTest {
                 "AA:BB:CC:DD:EE:FF",
                 "macOS",
                 "openx",
-                "1.0.0"))
+                "1.0.0",
+                null,
+                null))
                 .thenReturn(AgentConnection.builder().id(100L).akId("ak-1").build());
         when(redisMessageBroker.drainPending("ak-1")).thenReturn(List.of());
 
@@ -164,7 +166,9 @@ class AgentWebSocketHandlerTest {
                 "AA:BB:CC:DD:EE:FF",
                 "macOS",
                 "openx",
-                "1.0.0"))
+                "1.0.0",
+                null,
+                null))
                 .thenReturn(AgentConnection.builder().id(100L).akId("ak-1").build());
         when(redisMessageBroker.drainPending("ak-1")).thenReturn(List.of());
         when(redisMessageBroker.conditionalRemoveConnAk("ak-1", GATEWAY_INSTANCE_ID)).thenReturn(false);

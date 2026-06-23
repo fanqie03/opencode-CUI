@@ -363,6 +363,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
         String os = message.getOs();
         String toolType = message.getToolType() != null ? message.getToolType() : "channel";
         String toolVersion = message.getToolVersion();
+        String pluginVersion = message.getPluginVersion();
+        String sdkVersion = message.getSdkVersion();
 
         log.info("[ENTRY] AgentWSHandler.handleRegister: ak={}, toolType={}, os={}",
                 akId, toolType, os);
@@ -411,7 +413,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
 
             // 步骤 4：数据库注册（复用已有记录或新建）
             AgentConnection agent = agentRegistryService.register(
-                    userId, akId, deviceName, macAddress, os, toolType, toolVersion);
+                    userId, akId, deviceName, macAddress, os, toolType, toolVersion,
+                    pluginVersion, sdkVersion);
 
             Long agentId = agent.getId();
 

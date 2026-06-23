@@ -47,6 +47,12 @@ public class AgentConnection {
     /** 工具版本号 */
     private String toolVersion;
 
+    /** 插件版本号（Agent 注册时上报） */
+    private String pluginVersion;
+
+    /** SDK 版本号（Agent 注册时上报） */
+    private String sdkVersion;
+
     /** Agent 在线状态，默认 OFFLINE */
     @Builder.Default
     private AgentStatus status = AgentStatus.OFFLINE;
