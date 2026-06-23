@@ -152,6 +152,10 @@
         DELETE FROM skill_message_part WHERE message_id = #{messageId}
     </delete>
 
+    <delete id="deleteBySessionId">
+        DELETE FROM skill_message_part WHERE session_id = #{sessionId} LIMIT #{limit}
+    </delete>
+
     <!-- Batch upsert: insert or update multiple parts in one statement -->
     <insert id="batchUpsert">
         INSERT INTO skill_message_part

@@ -76,6 +76,7 @@
     <select id="findByAk" resultMap="SkillSessionResultMap">
         <include refid="selectAllColumns"/>
         WHERE ak = #{ak}
+          AND status IN ('ACTIVE', 'IDLE')
     </select>
 
     <select id="findActiveByAk" resultMap="SkillSessionResultMap">
@@ -95,6 +96,7 @@
           AND business_session_type = #{businessSessionType}
           AND business_session_id = #{businessSessionId}
           AND ak = #{ak}
+          AND status IN ('ACTIVE', 'IDLE')
         LIMIT 1
     </select>
 
@@ -105,6 +107,7 @@
           AND business_session_id = #{businessSessionId}
           AND ak = #{ak}
           AND assistant_account = #{assistantAccount}
+          AND status IN ('ACTIVE', 'IDLE')
         LIMIT 1
     </select>
 
@@ -114,6 +117,7 @@
           AND business_session_type = #{businessSessionType}
           AND business_session_id = #{businessSessionId}
           AND assistant_account = #{assistantAccount}
+          AND status IN ('ACTIVE', 'IDLE')
         LIMIT 1
     </select>
 
@@ -250,5 +254,9 @@
         WHERE status = 'ACTIVE'
           AND last_active_at &lt; #{cutoff}
     </update>
+
+    <delete id="deleteById">
+        DELETE FROM skill_session WHERE id = #{id}
+    </delete>
 
 </mapper>

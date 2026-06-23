@@ -62,4 +62,7 @@ public interface SkillMessageRepository {
 
         /** 标记消息为已完成 */
         int markFinished(@Param("id") Long id);
+
+        /** 按会话 ID 分批删除消息，返回删除行数 */
+        int deleteBySessionId(@Param("sessionId") Long sessionId, @Param("limit") int limit);
 }

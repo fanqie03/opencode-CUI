@@ -227,13 +227,43 @@ body {
 }
 
 .session-item .session-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     font-size: 13px;
     font-weight: 500;
     color: var(--text-primary);
     margin-bottom: 4px;
+}
+
+.session-title-text {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 1;
+}
+
+.btn-delete-session {
+    display: none;
+    flex-shrink: 0;
+    margin-left: 6px;
+    padding: 0 4px;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.btn-delete-session:hover {
+    color: #e74c3c;
+    background: rgba(231, 76, 60, 0.1);
+}
+
+.session-item:hover .btn-delete-session {
+    display: inline-block;
 }
 
 .session-item .session-meta {

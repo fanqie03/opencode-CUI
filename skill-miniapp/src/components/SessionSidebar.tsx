@@ -6,6 +6,7 @@ interface SessionSidebarProps {
   activeSessionId: string | null;
   onSelect: (sessionId: string) => void;
   onNewSession: () => void;
+  onDelete?: (sessionId: string) => void;
 }
 
 const statusColors: Record<string, string> = {
@@ -37,6 +38,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   activeSessionId,
   onSelect,
   onNewSession,
+  onDelete,
 }) => {
   return (
     <div className="sidebar">
@@ -64,7 +66,20 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
                 }}
               >
                 <div className="session-title">
-                  {session.title || '未命名会话'}
+                  <span className="session-title-text">{session.title || '未命名会话'}</span>
+                  {onDelete && (
+                    <button
+                      type="button"
+                      className="btn-delete-session"
+                      title="删除会话"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(session.id);
+                      }}
+                    >
+                      x
+                    </button>
+                  )}
                 </div>
                 <div className="session-meta">
                   <span

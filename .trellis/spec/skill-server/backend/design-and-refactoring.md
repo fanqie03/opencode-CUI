@@ -151,10 +151,36 @@ public InboundResult handleInboundChat(Request request) {
 - 编排层可以长在流程上，但业务不变量要收敛到清晰方法。
 - 一个 service 注入依赖超过 8 个，必须评估是否职责膨胀。
 - 同一段事实校验出现 3 次，必须提取为命名方法或专用策略。
+- 编排方法中调用 `@Transactional` 子方法后再 `publishEvent`，**必须**给编排方法加 `@Transactional`——消除子方法提交后、事件发布前的崩溃窗口。
+
+### 事务 + 事件发布原子性
+
+当编排方法调用带 `@Transactional` 的子方法（Spring 默认 REQUIRED 传播会独立提交），随后发布事件时，两者不在同一事务边界内。若 JVM 在 `subMethod()` 返回和 `publishEvent()` 之间崩溃，DB 变更已提交但事件丢失。
+
+```java
+// ❌ 子方法独立提交 → publishEvent 在事务外 → 中间崩溃事件丢失
+public void deleteSession(SkillSession session, String userId) {
+    sessionService.deleteSession(sessionId);  // @Transactional，独立提交
+    eventPublisher.publishEvent(...);          // 在事务外！
+}
+
+// ✅ 外层加 @Transactional → 子方法 REQUIRED 传播加入 → 原子执行
+@Transactional
+public void deleteSession(SkillSession session, String userId) {
+    sessionService.deleteSession(sessionId);  // 加入外层事务，不提交
+    eventPublisher.publishEvent(...);          // 仍在事务内
+}  // 提交在此，delete + publishEvent 原子化
+```
+
+规则：
+
+- 编排方法调用 `@Transactional` 子方法 + 发布事件 → 外层加 `@Transactional`。
+- `@EventListener` 同步执行——若抛未捕获异常，事务整体回滚。监听器必须保持 defensive try-catch。
+- 定时扫描兜底（如 `@Scheduled`）仍然保留，覆盖事件丢失的极端情况。
+
+> **历史踩坑**：PR #106 `SkillSessionFlowService.deleteSession()` 无 `@Transactional`，`sessionService.deleteSession()` 独立提交后 `publishEvent`——中间崩溃会导致 DB 已删但 WS 推送、Gateway 通知、异步任务清理全部丢失。review 后补上外层 `@Transactional`。
 
 ---
-
-## 6. 模型、值对象与状态规范
 
 优先用类型表达业务含义，不要让裸 `String` / `Integer` 承担关键语义。
 
@@ -216,6 +242,41 @@ return strategies.stream()
         .findFirst()
         .orElseThrow(() -> new ProtocolException("delivery strategy not found"));
 ```
+
+### Composite/Router 模式：@Primary 标注入口
+
+当接口有多个 `@Component` 实现，且其中一个是组合/路由入口（Composite），其余是内部叶子实现时，**Composite 必须加 `@Primary`**。否则任何 `@Autowired XxxInterface` 都会触发 `NoUniqueBeanDefinitionException`。
+
+```java
+// ✅ Composite 加 @Primary，调用方直接注入接口拿到路由入口
+@Primary
+@Component
+public class CompositeMultiDeviceSyncService implements MultiDeviceSyncService {
+    private final Map<SyncMode, MultiDeviceSyncService> registry;
+
+    public CompositeMultiDeviceSyncService(List<MultiDeviceSyncService> services) {
+        // List<> 注入不受 @Primary 影响，所有实现都进入 registry
+        this.registry = services.stream()
+            .filter(s -> !(s instanceof CompositeMultiDeviceSyncService))
+            .collect(Collectors.toMap(MultiDeviceSyncService::getSyncMode, Function.identity()));
+    }
+}
+
+@Component
+public class WsMultiDeviceSyncService implements MultiDeviceSyncService { ... }
+
+@Component
+public class ImMultiDeviceSyncService implements MultiDeviceSyncService { ... }
+```
+
+规则：
+
+- 接口 + ≥2 个 `@Component` 实现 → 确定对外入口 → 加 `@Primary`。
+- 如果**没有**对外入口（全部由 `List<Xxx>` 注入调度），不需要 `@Primary`（例：`OutboundDeliveryStrategy` 由 `OutboundDeliveryDispatcher` 统一调度）。
+- 叶子实现不加 `@Primary`——只有 Composite/Router 加。
+- `@Primary` 不影响 `List<Xxx>` 注入：Spring 仍然注入所有实现。
+
+> **历史踩坑**：PR #104 `MultiDeviceSyncService` 三个实现均 `@Component` 无 `@Primary`，review 补上。若合入前有调用方直接注入接口，启动即 `NoUniqueBeanDefinitionException`。
 
 ---
 

@@ -27,6 +27,8 @@ const App: React.FC = () => {
     error: sessionError,
     createSession,
     switchSession,
+    removeSessionLocally,
+    deleteSession,
     updateSessionStatus,
     updateSessionTitle,
   } = useSkillSession();
@@ -43,6 +45,7 @@ const App: React.FC = () => {
     error: streamError,
   } = useSkillStream(activeSessionId, {
     onSessionTitleUpdate: updateSessionTitle,
+    onSessionDeleted: removeSessionLocally,
   });
 
   // When streaming starts, update session status to 'active' in sidebar
@@ -170,6 +173,7 @@ const App: React.FC = () => {
             activeSessionId={activeSessionId}
             onSelect={(id) => switchSession(id)}
             onNewSession={handleNewSession}
+            onDelete={(id) => deleteSession(id)}
           />
         )}
         <div className="main-content">

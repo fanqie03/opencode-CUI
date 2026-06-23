@@ -3,7 +3,9 @@ package com.opencode.cui.skill.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.model.event.SessionDeletedEvent;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -408,5 +410,23 @@ public class StreamBufferService {
 
     private String partsOrderKey(String sessionId) {
         return PREFIX + sessionId + SUFFIX_ORDER;
+    }
+
+    /**
+     * 会话删除后同步清理本服务管理的 stream buffer 缓存。
+     * 缓存的 owner 自行管理清理，便于统一维护。
+     */
+    @EventListener
+    public void onSessionDeleted(SessionDeletedEvent event) {
+        if (event.session() == null) {
+            return;
+        }
+        try {
+            clearSession(String.valueOf(event.session().getId()));
+            log.debug("Cleared stream buffer for deleted session: sessionId={}", event.session().getId());
+        } catch (Exception e) {
+            log.warn("Failed to clear stream buffer for deleted session: sessionId={}, error={}",
+                    event.session().getId(), e.getMessage());
+        }
     }
 }

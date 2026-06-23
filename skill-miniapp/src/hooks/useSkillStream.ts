@@ -473,6 +473,17 @@ function shouldWaitForHistory(msg: StreamMessage): boolean {
 
 export interface UseSkillStreamOptions {
   onSessionTitleUpdate?: (sessionId: string, title: string) => void;
+  onSessionDeleted?: (sessionId: string) => void;
+}
+
+function parseSessionDeletedContent(content: string | null | undefined): string | null {
+  if (!content) return null;
+  try {
+    const parsed = JSON.parse(content);
+    return parsed?.welinkSessionId ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function useSkillStream(sessionId: string | null, options?: UseSkillStreamOptions): UseSkillStreamReturn {
@@ -494,6 +505,7 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
   const pendingStreamMessagesRef = useRef<StreamMessage[]>([]);
   const sessionIdRef = useRef<string | null>(sessionId);
   const onSessionTitleUpdateRef = useRef(options?.onSessionTitleUpdate);
+  const onSessionDeletedRef = useRef(options?.onSessionDeleted);
 
   const clearHeartbeatTimer = useCallback(() => {
     if (heartbeatTimerRef.current) {
@@ -546,6 +558,10 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
   useEffect(() => {
     onSessionTitleUpdateRef.current = options?.onSessionTitleUpdate;
   }, [options?.onSessionTitleUpdate]);
+
+  useEffect(() => {
+    onSessionDeletedRef.current = options?.onSessionDeleted;
+  }, [options?.onSessionDeleted]);
 
   useEffect(() => {
     knownUserMessageIdsRef.current = new Set(
@@ -1073,6 +1089,14 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
         }
         break;
 
+      case 'session.deleted': {
+        const deletedSessionId = parseSessionDeletedContent(msg.content) ?? sessionIdRef.current ?? '';
+        if (onSessionDeletedRef.current && deletedSessionId) {
+          onSessionDeletedRef.current(deletedSessionId);
+        }
+        break;
+      }
+
       case 'agent.online':
         setAgentStatus('online');
         break;
@@ -1123,12 +1147,17 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
   }, [processStreamMessage]);
 
   const handleStreamMessage = useCallback((msg: StreamMessage) => {
-    const currentSessionId = sessionIdRef.current;
-    const messageSessionId = getStreamMessageSessionId(msg);
-    if (messageSessionId && (!currentSessionId || messageSessionId !== currentSessionId)) {
-      return;
+    // session.deleted 无论当前会话都必须处理，确保多端同步
+    if (msg.type !== 'session.deleted') {
+      const currentSessionId = sessionIdRef.current;
+      const messageSessionId = getStreamMessageSessionId(msg);
+      if (messageSessionId && (!currentSessionId || messageSessionId !== currentSessionId)) {
+        return;
+      }
     }
 
+    const currentSessionId = sessionIdRef.current;
+    const messageSessionId = getStreamMessageSessionId(msg);
     if (
       currentSessionId
       && messageSessionId === currentSessionId

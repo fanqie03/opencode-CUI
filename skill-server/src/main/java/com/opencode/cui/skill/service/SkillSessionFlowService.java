@@ -8,12 +8,18 @@ import com.opencode.cui.skill.model.ExistenceStatus;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.model.enums.AsyncTaskType;
+import com.opencode.cui.skill.model.event.SessionDeletedEvent;
+import com.opencode.cui.skill.repository.SkillMessageRepository;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
 import com.opencode.cui.skill.service.scope.DefaultAssistantScopeStrategy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,6 +41,9 @@ public class SkillSessionFlowService {
     private final DefaultAssistantScopeStrategy defaultAssistantScopeStrategy;
     private final MessagePersistenceService persistenceService;
     private final StreamBufferService bufferService;
+    private final SkillMessageRepository messageRepository;
+    private final AsyncTaskService asyncTaskService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public SkillSessionFlowService(SkillSessionService sessionService,
                                    GatewayRelayService gatewayRelayService,
@@ -45,7 +54,10 @@ public class SkillSessionFlowService {
                                    DefaultAssistantRuleService ruleService,
                                    DefaultAssistantScopeStrategy defaultAssistantScopeStrategy,
                                    MessagePersistenceService persistenceService,
-                                   StreamBufferService bufferService) {
+                                   StreamBufferService bufferService,
+                                   SkillMessageRepository messageRepository,
+                                   AsyncTaskService asyncTaskService,
+                                   ApplicationEventPublisher eventPublisher) {
         this.sessionService = sessionService;
         this.gatewayRelayService = gatewayRelayService;
         this.objectMapper = objectMapper;
@@ -56,6 +68,9 @@ public class SkillSessionFlowService {
         this.defaultAssistantScopeStrategy = defaultAssistantScopeStrategy;
         this.persistenceService = persistenceService;
         this.bufferService = bufferService;
+        this.messageRepository = messageRepository;
+        this.asyncTaskService = asyncTaskService;
+        this.eventPublisher = eventPublisher;
     }
 
     public ApiResponse<SkillSession> createSession(String resolvedUserId,
@@ -116,6 +131,42 @@ public class SkillSessionFlowService {
             gatewayRelayService.sendInvokeToGateway(lifecycleCommand(session, GatewayActions.ABORT_SESSION));
         }
         finalizeAbortedSession(session);
+    }
+
+    /**
+     * 硬删除会话。主流程：
+     * 1. 如 ACTIVE 则先 abort（持久化缓冲 → IDLE）
+     * 2. 统计被删消息数量
+     * 3. 物理删除 session 主表
+     * 4. 创建异步清理任务（事务内，失败回滚）
+     * 5. 发布 SessionDeletedEvent（WS/Gateway 通知）
+     */
+    @Transactional
+    public void deleteSession(SkillSession session, String userId) {
+        Long sessionId = session.getId();
+        log.info("[ENTRY] deleteSession: sessionId={}, userId={}", sessionId, userId);
+
+        // ACTIVE 会话先 abort（持久化流式缓冲）
+        if (session.getStatus() == SkillSession.Status.ACTIVE) {
+            abortSession(session);
+            log.info("Aborted ACTIVE session before delete: sessionId={}", sessionId);
+        }
+
+        // 统计消息数（用于事件 payload）
+        int messageCount = (int) messageRepository.countBySessionId(sessionId);
+
+        // 物理删除主表
+        sessionService.deleteSession(sessionId);
+
+        // 创建异步清理任务（在事务内，失败则回滚）
+        String cleanPayload = "{\"sessionId\":" + sessionId + ",\"messageCount\":" + messageCount + "}";
+        asyncTaskService.createTask(AsyncTaskType.DELETE_SESSION_MESSAGES, cleanPayload);
+
+        // 发布事件（WS 推送、Gateway 通知）
+        eventPublisher.publishEvent(new SessionDeletedEvent(
+                session, userId, Instant.now(), messageCount));
+
+        log.info("[EXIT] deleteSession: sessionId={}", sessionId);
     }
 
     private void finalizeAbortedSession(SkillSession session) {

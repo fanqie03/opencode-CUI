@@ -7,17 +7,21 @@ import com.opencode.cui.skill.model.ExistenceStatus;
 import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.repository.SkillMessageRepository;
 import com.opencode.cui.skill.service.AssistantAccountResolverService;
 import com.opencode.cui.skill.service.AssistantInfoService;
+import com.opencode.cui.skill.service.AsyncTaskService;
 import com.opencode.cui.skill.service.DefaultAssistantRuleService;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.MessagePersistenceService;
 import com.opencode.cui.skill.service.ProtocolException;
 import com.opencode.cui.skill.service.SessionAccessControlService;
+import com.opencode.cui.skill.service.SkillSessionFlowService;
 import com.opencode.cui.skill.service.SkillSessionService;
 import com.opencode.cui.skill.service.StreamBufferService;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.DefaultAssistantScopeStrategy;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
 import java.util.Optional;
@@ -60,6 +64,12 @@ class SkillSessionControllerTest {
     private MessagePersistenceService persistenceService;
     @Mock
     private StreamBufferService bufferService;
+    @Mock
+    private SkillMessageRepository messageRepository;
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+    @Mock
+    private AsyncTaskService asyncTaskService;
 
     private SkillSessionController controller;
 
@@ -84,9 +94,12 @@ class SkillSessionControllerTest {
         // 默认 ruleService 未命中规则（PR3 老路径行为不变）
         org.mockito.Mockito.lenient().when(ruleService.lookup(any(), any())).thenReturn(Optional.empty());
 
-        controller = new SkillSessionController(sessionService, gatewayRelayService, accessControlService,
-                new ObjectMapper(), assistantInfoService, scopeDispatcher, assistantAccountResolverService,
-                ruleService, defaultAssistantScopeStrategy, persistenceService, bufferService);
+        SkillSessionFlowService flowService = new SkillSessionFlowService(
+                sessionService, gatewayRelayService, new ObjectMapper(),
+                assistantInfoService, scopeDispatcher, assistantAccountResolverService,
+                ruleService, defaultAssistantScopeStrategy, persistenceService, bufferService,
+                messageRepository, asyncTaskService, eventPublisher);
+        controller = new SkillSessionController(sessionService, accessControlService, flowService);
     }
 
     @Test

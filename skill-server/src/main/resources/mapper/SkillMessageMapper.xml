@@ -115,4 +115,8 @@
         WHERE id = #{id}
     </update>
 
+    <delete id="deleteBySessionId">
+        DELETE FROM skill_message WHERE session_id = #{sessionId} LIMIT #{limit}
+    </delete>
+
 </mapper>

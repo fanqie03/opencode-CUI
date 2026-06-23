@@ -32,6 +32,7 @@ export type StreamMessageType =
   | 'session.status'
   | 'session.title'
   | 'session.error'
+  | 'session.deleted'
   | 'permission.ask'
   | 'permission.reply'
   | 'agent.online'

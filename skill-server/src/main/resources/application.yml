@@ -91,6 +91,10 @@ skill:
       core-pool-size: ${SKILL_MESSAGE_HISTORY_REFRESH_CORE_POOL_SIZE:2}
       max-pool-size: ${SKILL_MESSAGE_HISTORY_REFRESH_MAX_POOL_SIZE:4}
       queue-capacity: ${SKILL_MESSAGE_HISTORY_REFRESH_QUEUE_CAPACITY:200}
+  async-task:
+    core-pool-size: ${SKILL_ASYNC_TASK_CORE_POOL_SIZE:2}
+    max-pool-size: ${SKILL_ASYNC_TASK_MAX_POOL_SIZE:4}
+    queue-capacity: ${SKILL_ASYNC_TASK_QUEUE_CAPACITY:100}
   relay:
     # Threshold in seconds before an owner instance is considered dead for takeover
     owner-dead-threshold-seconds: ${SKILL_RELAY_OWNER_DEAD_THRESHOLD_SECONDS:120}
@@ -108,6 +112,17 @@ skill:
     auto-create-timeout-seconds: ${SKILL_SESSION_AUTO_CREATE_TIMEOUT_SECONDS:30}
     rebuild-max-attempts: ${SKILL_SESSION_REBUILD_MAX_ATTEMPTS:3}
     rebuild-cooldown-seconds: ${SKILL_SESSION_REBUILD_COOLDOWN_SECONDS:30}
+    cleanup:
+      # Cron expression for async task scheduler
+      async-task-cron: ${SKILL_SESSION_CLEANUP_ASYNC_TASK_CRON:0 0 2 * * ?}
+      # Interval in ms between stale PROCESSING recovery scans
+      async-task-stale-recovery-interval-ms: ${SKILL_SESSION_CLEANUP_ASYNC_TASK_STALE_RECOVERY_INTERVAL_MS:300000}
+      # Max PROCESSING minutes before a task is considered stale and recovered
+      async-task-stale-timeout-minutes: ${SKILL_SESSION_CLEANUP_ASYNC_TASK_STALE_TIMEOUT_MINUTES:10}
+      # Rows per batch for DELETE_SESSION_MESSAGES cleanup
+      async-task-batch-delete-limit: ${SKILL_SESSION_CLEANUP_ASYNC_TASK_BATCH_DELETE_LIMIT:1000}
+      # Max retry count before a task is marked FAILED
+      async-task-max-retry: ${SKILL_SESSION_CLEANUP_ASYNC_TASK_MAX_RETRY:3}
   assistant-info:
     api-url: ${ASSISTANT_INFO_API_URL:http://localhost:9999/appstore/wecodeapi/open/ak/info}
     api-token: ${ASSISTANT_INFO_API_TOKEN:}

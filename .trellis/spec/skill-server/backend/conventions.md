@@ -110,12 +110,27 @@ public void scheduleLatestHistoryRefreshAfterCommit(Long sessionId) {
 规则：
 
 - 新增异步逻辑时，优先复用命名 `Executor`。
-- 不要在事务未提交前刷新 cache、发外部请求、或读取“刚写入但尚未提交”的状态。
+- 不要在事务未提交前刷新 cache、发外部请求、或读取”刚写入但尚未提交”的状态。
 - 不要为了省事引入 `@Async`，除非整个模块统一迁移。
+- **新增 Executor 时，`@Value` 默认值必须同步写入 `application.yml`**——运维需要能 grep 到完整配置，不能只靠 Java 注解默认值。
+
+```java
+// ✅ @Value 默认值 + application.yml 同步可见
+@Value(“${skill.async-task.core-pool-size:2}”)
+```
+
+```yaml
+# application.yml
+skill:
+  async-task:
+    core-pool-size: ${SKILL_ASYNC_TASK_CORE_POOL_SIZE:2}
+    max-pool-size: ${SKILL_ASYNC_TASK_MAX_POOL_SIZE:4}
+    queue-capacity: ${SKILL_ASYNC_TASK_QUEUE_CAPACITY:100}
+```
+
+> **历史踩坑**：`messageHistoryRefreshExecutor` 有 yml 配置，但 `asyncTaskExecutor`（PR #106）和 `MultiSyncProperties`（PR #104）都只在 Java 中写默认值，yml 不可见。review 后补上。
 
 ---
-
-## 外部 fire-and-forget 上报 / 埋码模式
 
 埋码（telemetry）、审计、第三方推送这类**只关心成功率不关心确认**的旁路上报，必须严格隔离业务路径。核心不变量：**上报链路任何异常都不得抛回业务线程，最坏情况只 WARN 一行日志**。
 

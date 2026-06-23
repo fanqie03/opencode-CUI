@@ -1,8 +1,10 @@
 package com.opencode.cui.skill.service;
 
 import com.opencode.cui.skill.logging.MdcHelper;
+import com.opencode.cui.skill.model.event.SessionDeletedEvent;
 import io.lettuce.core.api.async.BaseRedisAsyncCommands;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.connection.RedisConnection;
@@ -813,6 +815,35 @@ public class RedisMessageBroker {
         } catch (Exception e) {
             log.warn("tryAcquire failed, allowing through: key={}, error={}", key, e.getMessage());
             return true; // Redis 异常时放行，避免消息丢失
+        }
+    }
+
+    // ==================== 会话删除时清理本 broker 管理的缓存 ====================
+
+    /**
+     * 会话删除后同步清理本 broker 管理的 Redis key（ss:stream-seq、ss:tool-session）。
+     * 缓存的 owner 自行管理清理，便于统一维护。
+     */
+    @EventListener
+    public void onSessionDeleted(SessionDeletedEvent event) {
+        if (event.session() == null) {
+            return;
+        }
+        String sessionIdStr = String.valueOf(event.session().getId());
+        try {
+            redisTemplate.delete(STREAM_SEQ_KEY_PREFIX + sessionIdStr);
+        } catch (Exception e) {
+            log.warn("Failed to delete stream-seq for sessionId={}: {}", sessionIdStr, e.getMessage());
+        }
+
+        String toolSessionId = event.session().getToolSessionId();
+        if (toolSessionId != null && !toolSessionId.isBlank()) {
+            try {
+                redisTemplate.delete(TOOL_SESSION_PREFIX + toolSessionId);
+            } catch (Exception e) {
+                log.warn("Failed to delete tool-session mapping for toolSessionId={}: {}",
+                        toolSessionId, e.getMessage());
+            }
         }
     }
 

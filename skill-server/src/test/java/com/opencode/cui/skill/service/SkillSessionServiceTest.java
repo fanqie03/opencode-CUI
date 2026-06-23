@@ -185,10 +185,11 @@ class SkillSessionServiceTest {
     }
 
     @Test
-    @DisplayName("listSessions without status filter")
+    @DisplayName("listSessions without status filter defaults to ACTIVE+IDLE")
     void listSessionsWithoutFilter() {
-        when(sessionRepository.findByUserId("1", 0, 10)).thenReturn(List.of());
-        when(sessionRepository.countByUserId("1")).thenReturn(0L);
+        List<String> defaultStatuses = List.of("ACTIVE", "IDLE");
+        when(sessionRepository.findByUserIdAndStatusIn("1", defaultStatuses, 0, 10)).thenReturn(List.of());
+        when(sessionRepository.countByUserIdAndStatusIn("1", defaultStatuses)).thenReturn(0L);
 
         PageResult<SkillSession> result = service.listSessions(
                 new SessionListQuery("1", null, null, null, null, null, null, 0, 10));

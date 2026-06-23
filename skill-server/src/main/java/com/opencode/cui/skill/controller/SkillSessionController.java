@@ -1,24 +1,14 @@
 package com.opencode.cui.skill.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.ApiResponse;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.SkillSession;
-import com.opencode.cui.skill.service.AssistantAccountResolverService;
-import com.opencode.cui.skill.service.AssistantInfoService;
-import com.opencode.cui.skill.service.DefaultAssistantRuleService;
-import com.opencode.cui.skill.service.GatewayRelayService;
-import com.opencode.cui.skill.service.MessagePersistenceService;
 import com.opencode.cui.skill.service.ProtocolUtils;
 import com.opencode.cui.skill.service.SessionAccessControlService;
 import com.opencode.cui.skill.service.SkillSessionFlowService;
 import com.opencode.cui.skill.service.SkillSessionService;
-import com.opencode.cui.skill.service.StreamBufferService;
-import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
-import com.opencode.cui.skill.service.scope.DefaultAssistantScopeStrategy;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -46,30 +36,12 @@ public class SkillSessionController {
     private final SessionAccessControlService accessControlService;
     private final SkillSessionFlowService flowService;
 
-    @Autowired
     public SkillSessionController(SkillSessionService sessionService,
                                   SessionAccessControlService accessControlService,
                                   SkillSessionFlowService flowService) {
         this.sessionService = sessionService;
         this.accessControlService = accessControlService;
         this.flowService = flowService;
-    }
-
-    public SkillSessionController(SkillSessionService sessionService,
-            GatewayRelayService gatewayRelayService,
-            SessionAccessControlService accessControlService,
-            ObjectMapper objectMapper,
-            AssistantInfoService assistantInfoService,
-            AssistantScopeDispatcher scopeDispatcher,
-            AssistantAccountResolverService assistantAccountResolverService,
-            DefaultAssistantRuleService ruleService,
-            DefaultAssistantScopeStrategy defaultAssistantScopeStrategy,
-            MessagePersistenceService persistenceService,
-            StreamBufferService bufferService) {
-        this(sessionService, accessControlService,
-                new SkillSessionFlowService(sessionService, gatewayRelayService, objectMapper,
-                        assistantInfoService, scopeDispatcher, assistantAccountResolverService,
-                        ruleService, defaultAssistantScopeStrategy, persistenceService, bufferService));
     }
 
     /**
@@ -141,10 +113,10 @@ public class SkillSessionController {
     }
 
     /**
-     * DELETE /api/skill/sessions/{id}
+     * POST /api/skill/sessions/{id}/close
      * 关闭会话。如果存在 tool session，同时向 AI-Gateway 发送 close_session 命令。
      */
-    @DeleteMapping("/{id}")
+    @PostMapping("/{id}/close")
     public ResponseEntity<ApiResponse<Map<String, Object>>> closeSession(
             @CookieValue(value = "userId", required = false) String userIdCookie,
             @PathVariable String id) {
@@ -158,6 +130,28 @@ public class SkillSessionController {
         flowService.closeSession(session);
         log.info("[EXIT] closeSession: sessionId={}", id);
         return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "closed", "welinkSessionId", id)));
+    }
+
+    /**
+     * DELETE /api/skill/sessions/{id}
+     * 硬删除会话及所有关联数据。ACTIVE 会话先 abort 再删除。
+     * 删除后通过 WS 推送 session.deleted 到所有设备，通知 Gateway 释放资源。
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> deleteSession(
+            @CookieValue(value = "userId", required = false) String userIdCookie,
+            @PathVariable String id) {
+        Long sessionId = ProtocolUtils.parseSessionId(id);
+        if (sessionId == null) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
+        }
+        log.info("[ENTRY] deleteSession: sessionId={}", id);
+        SkillSession session = accessControlService.requireSessionAccess(sessionId, userIdCookie);
+
+        String resolvedUserId = accessControlService.requireUserId(userIdCookie);
+        flowService.deleteSession(session, resolvedUserId);
+        log.info("[EXIT] deleteSession: sessionId={}", id);
+        return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "deleted", "welinkSessionId", id)));
     }
 
     /**

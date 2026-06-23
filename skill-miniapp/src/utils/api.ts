@@ -275,8 +275,13 @@ export function getSession(id: string | number): Promise<Session> {
   return request<BackendSession>(`/api/skill/sessions/${id}`).then(normalizeSession);
 }
 
-/** DELETE /api/skill/sessions/{id} */
+/** POST /api/skill/sessions/{id}/close */
 export function closeSession(id: string | number): Promise<void> {
+  return request<void>(`/api/skill/sessions/${id}/close`, { method: 'POST' });
+}
+
+/** DELETE /api/skill/sessions/{id} — hard delete */
+export function deleteSession(id: string | number): Promise<void> {
   return request<void>(`/api/skill/sessions/${id}`, { method: 'DELETE' });
 }
 

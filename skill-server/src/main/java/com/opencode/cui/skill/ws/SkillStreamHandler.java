@@ -257,7 +257,10 @@ public class SkillStreamHandler extends TextWebSocketHandler {
                         .sessionId(sessionId)
                         .content(content)
                         .build();
-                pushStreamMessage(sessionId, adHocMsg);
+                // Use user-level push instead of session-level resolution:
+                // session-level resolveRecipients() looks up the owner via DB,
+                // which fails for deleted sessions (e.g. session.deleted).
+                pushStreamMessageToUser(userId, adHocMsg);
             }
         } catch (JsonProcessingException e) {
             log.error("Failed to parse user broadcast for user {}: {}", userId, e.getMessage());

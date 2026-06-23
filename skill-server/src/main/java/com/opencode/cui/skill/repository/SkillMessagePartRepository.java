@@ -54,4 +54,7 @@ public interface SkillMessagePartRepository {
 
     /** 按所属消息 ID 删除所有分片 */
     int deleteByMessageId(@Param("messageId") Long messageId);
+
+    /** 按会话 ID 批量删除分片（支持 LIMIT 分批删除） */
+    int deleteBySessionId(@Param("sessionId") Long sessionId, @Param("limit") int limit);
 }

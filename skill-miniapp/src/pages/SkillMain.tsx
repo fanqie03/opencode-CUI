@@ -125,6 +125,8 @@ export const SkillMain: React.FC<SkillMainProps> = ({
     error: sessionError,
     createSession,
     switchSession,
+    removeSessionLocally,
+    deleteSession,
     updateSessionTitle,
     // closeSession is available for future use (FR-5.3)
   } = useSkillSession();
@@ -149,6 +151,7 @@ export const SkillMain: React.FC<SkillMainProps> = ({
     error: streamError,
   } = useSkillStream(activeSessionId, {
     onSessionTitleUpdate: updateSessionTitle,
+    onSessionDeleted: removeSessionLocally,
   });
 
   // Send to IM
@@ -291,6 +294,7 @@ export const SkillMain: React.FC<SkillMainProps> = ({
             activeSessionId={activeSessionId}
             onSelect={(id) => switchSession(id)}
             onNewSession={handleNewSession}
+            onDelete={(id) => deleteSession(id)}
           />
         )}
         <div style={styles.main}>

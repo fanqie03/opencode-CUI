@@ -130,4 +130,7 @@ public interface SkillSessionRepository {
 
         /** 将超过截止时间未活跃的 ACTIVE 会话批量标记为指定状态 */
         int markIdleSessions(@Param("status") String status, @Param("cutoff") LocalDateTime cutoff);
+
+        /** 按主键物理删除会话 */
+        int deleteById(@Param("id") Long id);
 }

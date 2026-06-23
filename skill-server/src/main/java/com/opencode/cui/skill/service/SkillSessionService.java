@@ -201,7 +201,7 @@ public class SkillSessionService {
         return createSession(userId, ak, title, businessDomain, sessionType, sessionId, assistantAccount);
     }
 
-    /** 分页查询用户的会话列表，支持可选筛选条件。 */
+    /** 分页查询用户的会话列表，支持可选筛选条件。无状态筛选时默认排除 CLOSED 会话。 */
     @Transactional(readOnly = true)
     public PageResult<SkillSession> listSessions(SessionListQuery query) {
         int offset = query.page() * query.size();
@@ -228,8 +228,12 @@ public class SkillSessionService {
                     statusNames);
             return new PageResult<>(content, total, query.page(), query.size());
         }
-        List<SkillSession> content = sessionRepository.findByUserId(query.userId(), offset, query.size());
-        long total = sessionRepository.countByUserId(query.userId());
+        // 无任何筛选条件时，默认排除 CLOSED 会话
+        List<String> defaultStatuses = List.of(
+                SkillSession.Status.ACTIVE.name(), SkillSession.Status.IDLE.name());
+        List<SkillSession> content = sessionRepository.findByUserIdAndStatusIn(
+                query.userId(), defaultStatuses, offset, query.size());
+        long total = sessionRepository.countByUserIdAndStatusIn(query.userId(), defaultStatuses);
         return new PageResult<>(content, total, query.page(), query.size());
     }
 
@@ -391,5 +395,16 @@ public class SkillSessionService {
         log.info("Marked {} sessions as IDLE (inactive since before {})", count, cutoff);
 
         // Note: session_route MySQL cleanup removed — ownership now uses Redis TTL expiry.
+    }
+
+    /**
+     * 硬删除会话主表记录（主流程同步部分）。
+     * 关联的 message/part 数据由异步任务后续清理。
+     */
+    @Transactional
+    public void deleteSession(Long sessionId) {
+        sessionRepository.deleteById(sessionId);
+        sessionRouteService.closeRoute(sessionId, "skill-server");
+        log.info("Deleted skill session: id={}", sessionId);
     }
 }

@@ -25,4 +25,19 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    @Bean(name = "asyncTaskExecutor")
+    public Executor asyncTaskExecutor(
+            @Value("${skill.async-task.core-pool-size:2}") int corePoolSize,
+            @Value("${skill.async-task.max-pool-size:4}") int maxPoolSize,
+            @Value("${skill.async-task.queue-capacity:100}") int queueCapacity) {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(corePoolSize);
+        executor.setMaxPoolSize(maxPoolSize);
+        executor.setQueueCapacity(queueCapacity);
+        executor.setThreadNamePrefix("async-task-");
+        executor.setTaskDecorator(new MdcTaskDecorator());
+        executor.initialize();
+        return executor;
+    }
 }

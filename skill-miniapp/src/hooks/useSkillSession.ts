@@ -24,6 +24,9 @@ export interface UseSkillSessionReturn {
   loadSessions: () => Promise<void>;
   switchSession: (sessionId: string) => void;
   closeSession: (sessionId: string) => Promise<void>;
+  deleteSession: (sessionId: string) => Promise<void>;
+  /** Remove session from local state without API call (used for WS sync). */
+  removeSessionLocally: (sessionId: string) => void;
   updateSessionStatus: (sessionId: string, status: Session['status']) => void;
   updateSessionTitle: (sessionId: string, title: string) => void;
 }
@@ -90,16 +93,30 @@ export function useSkillSession(): UseSkillSessionReturn {
       try {
         await api.closeSession(sessionId);
         setSessions((prev) => prev.filter((s) => s.id !== sessionId));
-        if (currentSession?.id === sessionId) {
-          setCurrentSession(null);
-        }
+        setCurrentSession((prev) => (prev?.id === sessionId ? null : prev));
       } catch (err) {
         const message =
           err instanceof Error ? err.message : 'Failed to close session';
         setError(message);
       }
     },
-    [currentSession],
+    [],
+  );
+
+  const deleteSessionFn = useCallback(
+    async (sessionId: string) => {
+      setError(null);
+      try {
+        await api.deleteSession(sessionId);
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        setCurrentSession((prev) => (prev?.id === sessionId ? null : prev));
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to delete session';
+        setError(message);
+      }
+    },
+    [],
   );
 
   const updateSessionStatus = useCallback(
@@ -127,6 +144,14 @@ export function useSkillSession(): UseSkillSessionReturn {
     [],
   );
 
+  const removeSessionLocally = useCallback(
+    (sessionId: string) => {
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      setCurrentSession((prev) => (prev?.id === sessionId ? null : prev));
+    },
+    [],
+  );
+
   // Auto-load sessions on mount
   useEffect(() => {
     void loadSessions();
@@ -141,6 +166,8 @@ export function useSkillSession(): UseSkillSessionReturn {
     loadSessions,
     switchSession,
     closeSession: closeSessionFn,
+    deleteSession: deleteSessionFn,
+    removeSessionLocally,
     updateSessionStatus,
     updateSessionTitle,
   };
