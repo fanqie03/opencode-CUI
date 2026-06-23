@@ -9,16 +9,23 @@ import com.opencode.cui.gateway.logging.MdcHelper;
 import com.opencode.cui.gateway.model.AssistantInstanceInfo;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.model.RelayMessage;
+import com.opencode.cui.gateway.service.cloud.CloudAuthService;
 import com.opencode.cui.gateway.service.cloud.CloudConnectionContext;
 import com.opencode.cui.gateway.service.cloud.CloudConnectionHandle;
 import com.opencode.cui.gateway.service.cloud.CloudConnectionLifecycle;
 import com.opencode.cui.gateway.service.cloud.CloudProtocolClient;
+import com.opencode.cui.gateway.service.cloud.CloudRemoteRequestLogHelper;
 import com.opencode.cui.gateway.service.cloud.WebHookExecutor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -28,6 +35,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -59,7 +68,8 @@ public class CloudAgentService {
     private static final Map<String, String> ACTION_TO_SCOPE = Map.of(
             "chat",             "callback:weagent:chat",
             "question_reply",   "callback:weagent:question_reply",
-            "permission_reply", "callback:weagent:permission_reply"
+            "permission_reply", "callback:weagent:permission_reply",
+            "abort_session",    "callback:weagent:abort"
     );
 
     /** tool_error reason 枚举：让 SS 能精确区分失败类型，不再依赖 error 文案启发式。 */
@@ -77,6 +87,10 @@ public class CloudAgentService {
     private final ConcurrentHashMap<String, Set<ActiveCloudConnection>> activeStreamingConnections =
             new ConcurrentHashMap<>();
 
+    private final HttpClient httpClient;
+    private final Executor abortExecutor;
+    private final CloudAuthService cloudAuthService;
+
     @Autowired
     public CloudAgentService(SysConfigFallbackProviderV2 sysConfigRouteProvider,
                              CloudRouteSwitchService cloudRouteSwitchService,
@@ -86,6 +100,8 @@ public class CloudAgentService {
                              CloudTimeoutProperties timeoutProperties,
                              RedisMessageBroker redisMessageBroker,
                              ObjectMapper objectMapper,
+                             CloudAuthService cloudAuthService,
+                             @Qualifier("cloudAbortExecutor") Executor abortExecutor,
                              @Value("${gateway.instance-id:${HOSTNAME:gateway-local}}") String gatewayInstanceId) {
         this.sysConfigRouteProvider = sysConfigRouteProvider;
         this.cloudRouteSwitchService = cloudRouteSwitchService;
@@ -95,7 +111,12 @@ public class CloudAgentService {
         this.timeoutProperties = timeoutProperties;
         this.redisMessageBroker = redisMessageBroker;
         this.objectMapper = objectMapper;
+        this.cloudAuthService = cloudAuthService;
+        this.abortExecutor = abortExecutor;
         this.gatewayInstanceId = gatewayInstanceId;
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .build();
     }
 
     public CloudAgentService(SysConfigFallbackProviderV2 sysConfigRouteProvider,
@@ -105,7 +126,8 @@ public class CloudAgentService {
                              WebHookExecutor webHookExecutor,
                              CloudTimeoutProperties timeoutProperties) {
         this(sysConfigRouteProvider, cloudRouteSwitchService, assistantInstanceInfoService,
-                cloudProtocolClient, webHookExecutor, timeoutProperties, null, new ObjectMapper(), "gateway-local");
+                cloudProtocolClient, webHookExecutor, timeoutProperties, null, new ObjectMapper(),
+                null, null, "gateway-local");
     }
 
     public CloudAgentService(SysConfigFallbackProviderV2 sysConfigRouteProvider,
@@ -153,7 +175,14 @@ public class CloudAgentService {
                 ak, action, mask(assistantAccount), businessTag, toolSessionId, invokeMessage.getTraceId());
 
         if (ACTION_ABORT_SESSION.equals(action)) {
+            // 主路径：优先取消本地活跃 SSE/WS 连接，保证用户侧即时终止不被第三方调用拖慢
             cancelStreamingConnection(invokeMessage, toolSessionId);
+            // 旁路：异步通知第三方终止接口（fire-and-forget），不得阻塞或影响本地 cancel。
+            // 仅入口 GW 执行第三方 stop：relayed abort（_cloudControlRelayed=true）来自其它 GW 的转发，
+            // 若再次调用第三方 stop 会导致一次用户 abort 触发多次第三方终止请求。
+            if (!isCloudControlRelayed(invokeMessage)) {
+                invokeRemoteAbortIfConfigured(invokeMessage, toolSessionId, assistantAccount, businessTag);
+            }
             return;
         }
 
@@ -296,7 +325,11 @@ public class CloudAgentService {
     }
 
     private static String abilityType(String action) {
-        return "chat".equals(action) ? "chat" : "question";
+        return switch (action) {
+            case "chat" -> "chat";
+            case "abort_session" -> "abort";
+            default -> "question"; // question_reply, permission_reply
+        };
     }
 
     private static String normalizeAction(String action) {
@@ -314,6 +347,16 @@ public class CloudAgentService {
             case "http", "webhook" -> "webhook";
             default -> null;
         };
+    }
+
+    /**
+     * 判断 channelType 是否为 webhook/http（POST 语义）。
+     *
+     * <p>abort 第三方通知始终按 HTTP POST 发送，route 误配成 sse/websocket 时
+     * 会向流式地址发 POST，必须显式拒绝。</p>
+     */
+    private static boolean isWebhookChannel(String channelType) {
+        return "webhook".equalsIgnoreCase(channelType) || "http".equalsIgnoreCase(channelType);
     }
 
     private static String resolveAuthType(List<AssistantInstanceInfo.RemoteHeader> headers) {
@@ -513,6 +556,142 @@ public class CloudAgentService {
         log.info("[CLOUD_AGENT] abort_session cancelled active streams: localMatched={}, localCancelled={}, remoteRelayed={}, toolSessionId={}, welinkSessionId={}, traceId={}",
                 activeConnections.size(), cancelled, relayed, toolSessionId,
                 invokeMessage.getWelinkSessionId(), invokeMessage.getTraceId());
+    }
+
+    /**
+     * 如果配置了 type=abort 的 remoteProperty，异步调用第三方终止接口。
+     * 如果 remoteProperty 未命中，回退到 SysConfig 兜底配置（cloud_route_fallback_v2:{businessTag}:abort）。
+     *
+     * <p>fire-and-forget：路由解析、SysConfig 读取、HTTP 调用整体包进专用线程池的异步分支，
+     * 不阻塞 cancelStreamingConnection()。失败（含线程池拒绝）仅打 WARN 日志，不回传 tool_error。</p>
+     *
+     * <p>安全约束：abort route 的 channelType 必须是 webhook/http（POST 语义），
+     * 误配成 sse/websocket 时记 WARN 跳过，避免向流式地址发 POST。</p>
+     */
+    private void invokeRemoteAbortIfConfigured(GatewayMessage invokeMessage,
+                                               String toolSessionId,
+                                               String assistantAccount,
+                                               String businessTag) {
+        final String ak = invokeMessage.getAk();
+        final String traceId = invokeMessage.getTraceId();
+        try {
+            abortExecutor.execute(() -> {
+                try {
+                    RemoteRoute route = resolveRemoteRoute(assistantAccount, ACTION_ABORT_SESSION, businessTag);
+                    if (route == null) {
+                        // remoteProperty 未配置 abort → 回退到 SysConfig 兜底
+                        String scope = ACTION_TO_SCOPE.get(ACTION_ABORT_SESSION);
+                        CallbackConfig cfg = sysConfigRouteProvider.load(ak, scope, businessTag);
+                        if (cfg == null) {
+                            log.debug("[CLOUD_AGENT] No remote abort route configured, skipping third-party stop call: traceId={}", traceId);
+                            return;
+                        }
+                        route = new RemoteRoute(cfg.getChannelAddress(), cfg.getChannelType(),
+                                cfg.getAppId(), businessTag, cfg.getAuthType());
+                    }
+                    // 校验 channelType 必须是 webhook/http：sendAbortRequest 始终按 HTTP POST 发送，
+                    // 误配成 sse/websocket 会向流式地址发 POST，显式拒绝并继续本地 cancel。
+                    if (!isWebhookChannel(route.channelType())) {
+                        log.warn("[CLOUD_AGENT] Abort route channelType is not webhook/http, skip third-party abort: channelType={}, url={}, traceId={}",
+                                route.channelType(), route.channelAddress(), traceId);
+                        return;
+                    }
+                    // 构造请求体（与 question 接口同构）
+                    ObjectNode body = buildAbortBody(invokeMessage, toolSessionId);
+                    // 构建 context 供统一远程调用日志 helper 使用（header 脱敏 + 字段形态一致）
+                    CloudConnectionContext abortContext = CloudConnectionContext.builder()
+                            .channelAddress(route.channelAddress())
+                            .channelType(route.channelType())
+                            .scope(ACTION_TO_SCOPE.get(ACTION_ABORT_SESSION))
+                            .appId(route.appId())
+                            .authType(route.authType())
+                            .traceId(traceId)
+                            .cloudProfile(route.cloudProfile())
+                            .build();
+                    sendAbortRequest(route, body, abortContext);
+                } catch (Exception e) {
+                    log.warn("[CLOUD_AGENT] Async abort request failed: traceId={}, error={}",
+                            traceId, e.getMessage());
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            // 线程池队列满时 execute 同步抛出，必须吞掉以免影响本地 cancel 主路径
+            log.warn("[CLOUD_AGENT] Abort executor rejected task, skip third-party abort: traceId={}", traceId);
+        }
+    }
+
+    /**
+     * 构造终止请求体（与 question 接口同构）。
+     *
+     * <p>需求明确"只是接口地址变了，鉴权header和入参和原来的question接口一致"。
+     * 因此不定义独立 DTO，而是构造与 cloudRequest 同构的 JSON 对象。</p>
+     */
+    private ObjectNode buildAbortBody(GatewayMessage invokeMessage, String toolSessionId) {
+        JsonNode payload = invokeMessage.getPayload();
+        ObjectNode body = objectMapper.createObjectNode();
+
+        body.put("type", "abort");
+        body.put("assistantAccount", firstNonBlank(
+                invokeMessage.getAssistantAccount(),
+                textAt(payload, "assistantAccount"),
+                textAt(payload, "partnerAccount")));
+        body.put("sendUserAccount", firstNonBlank(
+                invokeMessage.getUserId(), textAt(payload, "sendUserAccount")));
+        body.put("topicId", toolSessionId);
+
+        // 可选字段
+        putIfText(body, payload, "imGroupId");
+        putIfText(body, payload, "messageId");
+        String clientLang = textAt(payload, "clientLang");
+        body.put("clientLang", (clientLang != null && !clientLang.isBlank()) ? clientLang : "zh");
+        putIfText(body, payload, "clientType");
+
+        // extParameters：与 question 接口对齐
+        ObjectNode extParams = objectMapper.createObjectNode();
+        extParams.set("businessExtParam",
+                (payload != null && payload.has("businessExtParam")
+                        && payload.get("businessExtParam").isObject())
+                        ? payload.get("businessExtParam") : objectMapper.createObjectNode());
+        extParams.set("platformExtParam", objectMapper.createObjectNode());
+        body.set("extParameters", extParams);
+
+        return body;
+    }
+
+    /**
+     * 发送终止 HTTP POST 请求到第三方助手。
+     *
+     * <p>内联发送而非复用 WebHookExecutor：abort 是 fire-and-forget 旁路通知，
+     * 失败不回传 tool_error；WebHookExecutor 失败会回调 onRelay 产生 tool_error，
+     * 语义不匹配。</p>
+     *
+     * <p>请求日志走 {@link CloudRemoteRequestLogHelper#logRequest}，与 SSE/WebHook/WebSocket
+     * 三条协议保持统一的 header 脱敏和字段形态。</p>
+     */
+    private void sendAbortRequest(RemoteRoute route, ObjectNode body, CloudConnectionContext context)
+            throws Exception {
+        String bodyStr = objectMapper.writeValueAsString(body);
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(route.channelAddress()))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(bodyStr))
+                .timeout(Duration.ofSeconds(10));
+        if (context.getTraceId() != null) {
+            builder.header("X-Trace-Id", context.getTraceId());
+        }
+        cloudAuthService.applyAuth(builder, route.appId(), route.authType());
+
+        HttpRequest request = builder.build();
+        CloudRemoteRequestLogHelper.logRequest(log, route.channelType(), route.channelAddress(),
+                request.headers().map(), bodyStr, context);
+        HttpResponse<String> resp = httpClient.send(request,
+                HttpResponse.BodyHandlers.ofString());
+        log.info("[CLOUD_AGENT] Abort response: url={}, status={}, body={}, traceId={}",
+                route.channelAddress(), resp.statusCode(), resp.body(), context.getTraceId());
+        if (resp.statusCode() != 200) {
+            log.warn("[CLOUD_AGENT] Abort request returned non-200: url={}, status={}, body={}, traceId={}",
+                    route.channelAddress(), resp.statusCode(), resp.body(), context.getTraceId());
+        }
     }
 
     private void registerCloudStreamRoute(String toolSessionId) {
@@ -723,6 +902,16 @@ public class CloudAgentService {
         }
         String text = value.asText(null);
         return (text == null || text.isBlank()) ? null : text;
+    }
+
+    /**
+     * 如果 payload 中指定字段存在且为非空文本，则写入目标 ObjectNode。
+     */
+    private static void putIfText(ObjectNode target, JsonNode source, String fieldName) {
+        String value = textAt(source, fieldName);
+        if (value != null) {
+            target.put(fieldName, value);
+        }
     }
 
     private static String firstNonBlank(String... values) {
