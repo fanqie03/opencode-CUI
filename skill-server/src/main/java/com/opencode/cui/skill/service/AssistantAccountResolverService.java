@@ -69,6 +69,7 @@ public class AssistantAccountResolverService {
     public AssistantAccountResolverService(
             RestTemplate restTemplate,
             StringRedisTemplate redisTemplate,
+            com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService apiCallMetricsService,
             @org.springframework.beans.factory.annotation.Value("${skill.assistant.resolve-url:}") String resolveUrl,
             @org.springframework.beans.factory.annotation.Value("${skill.assistant.resolve-token:}") String resolveToken,
             @org.springframework.beans.factory.annotation.Value("${skill.assistant.existence-check.skip-on-null-assistant-account:true}") boolean skipOnNullAssistantAccount,
@@ -76,7 +77,7 @@ public class AssistantAccountResolverService {
             @org.springframework.beans.factory.annotation.Value("${skill.assistant.status-cache-ttl-not-exists-seconds:60}") int statusCacheTtlNotExistsSeconds,
             @org.springframework.beans.factory.annotation.Value("${skill.assistant.deletion-message:该助理已被删除}") String deletionMessage) {
         this(new AssistantInstanceInfoService(restTemplate, redisTemplate, MAPPER,
-                        resolveUrl, resolveToken, statusCacheTtlExistsSeconds),
+                        resolveUrl, resolveToken, statusCacheTtlExistsSeconds, apiCallMetricsService),
                 redisTemplate,
                 skipOnNullAssistantAccount,
                 statusCacheTtlExistsSeconds,

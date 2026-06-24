@@ -7,9 +7,11 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.gateway.logging.MdcHelper;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.model.RelayMessage;
+import com.opencode.cui.gateway.telemetry.WsConnectionMetrics;
 import com.opencode.cui.gateway.ws.AsyncSenderIdentity;
 import com.opencode.cui.gateway.ws.AsyncSessionSender;
 import com.opencode.cui.gateway.ws.AsyncSessionSenderFactory;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -57,6 +59,11 @@ public class EventRelayService {
     private final UpstreamRoutingTable routingTable;
     private final String selfInstanceId;
     private final AsyncSessionSenderFactory senderFactory;
+    private final WsConnectionMetrics wsConnectionMetrics;
+
+    private static final String AGENT_WS_URL = "/ws/agent";
+    private static final String AGENT_WS_BUSINESS = "pcagent";
+    private static final String AGENT_WS_DIRECTION = "inbound";
 
     @Autowired
     public EventRelayService(ObjectMapper objectMapper,
@@ -64,13 +71,15 @@ public class EventRelayService {
             SkillRelayService skillRelayService,
             UpstreamRoutingTable routingTable,
             @Value("${gateway.instance-id:${HOSTNAME:gateway-local}}") String selfInstanceId,
-            AsyncSessionSenderFactory senderFactory) {
+            AsyncSessionSenderFactory senderFactory,
+            WsConnectionMetrics wsConnectionMetrics) {
         this.objectMapper = objectMapper;
         this.redisMessageBroker = redisMessageBroker;
         this.skillRelayService = skillRelayService;
         this.routingTable = routingTable;
         this.selfInstanceId = selfInstanceId;
         this.senderFactory = senderFactory;
+        this.wsConnectionMetrics = wsConnectionMetrics;
 
         // Break circular dependency: SkillRelayService needs EventRelayService for local agent lookup
         skillRelayService.setEventRelayService(this);
@@ -82,7 +91,7 @@ public class EventRelayService {
             UpstreamRoutingTable routingTable,
             String selfInstanceId) {
         this(objectMapper, redisMessageBroker, skillRelayService, routingTable, selfInstanceId,
-                AsyncSessionSenderFactory.defaultFactory());
+                AsyncSessionSenderFactory.defaultFactory(), new WsConnectionMetrics(new SimpleMeterRegistry()));
     }
 
     /**
@@ -223,8 +232,10 @@ public class EventRelayService {
             } catch (IOException e) {
                 log.warn("Error closing old session for ak={}", ak, e);
             }
+            wsConnectionMetrics.connectionClosed(AGENT_WS_URL, AGENT_WS_BUSINESS, AGENT_WS_DIRECTION);
         }
 
+        wsConnectionMetrics.connectionOpened(AGENT_WS_URL, AGENT_WS_BUSINESS, AGENT_WS_DIRECTION);
         redisMessageBroker.bindAgentUser(ak, userId);
         redisMessageBroker.subscribeToAgent(ak, message -> sendToLocalAgent(ak, message));
         log.info("Registered agent session: ak={}, wsSessionId={}", ak, session.getId());
@@ -241,6 +252,7 @@ public class EventRelayService {
                     log.warn("Error closing session during removal for ak={}", ak, e);
                 }
             }
+            wsConnectionMetrics.connectionClosed(AGENT_WS_URL, AGENT_WS_BUSINESS, AGENT_WS_DIRECTION);
         }
 
         opencodeStatusCache.put(ak, false);

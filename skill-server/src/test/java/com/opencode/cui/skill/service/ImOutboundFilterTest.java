@@ -9,6 +9,7 @@ import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
 import com.opencode.cui.skill.service.scope.BusinessScopeStrategy;
 import com.opencode.cui.skill.service.scope.PersonalScopeStrategy;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -65,6 +67,7 @@ class ImOutboundFilterTest {
     @Mock private AssistantScopeStrategy personalScopeStrategy;
     @Mock private com.opencode.cui.skill.service.delivery.OutboundDeliveryDispatcher outboundDeliveryDispatcher;
     @Mock com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter;
+    @Mock private MessageTurnLifecycle messageTurnLifecycle;
 
     private GatewayMessageRouter router;
 
@@ -92,7 +95,15 @@ class ImOutboundFilterTest {
                 scopeDispatcher,
                 outboundDeliveryDispatcher,
                 emitter,
-                120);
+                null,
+                mock(DefaultAssistantRuleService.class),
+                messageTurnLifecycle,
+                120,
+                true,
+                25,
+                java.time.Clock.systemUTC(),
+                com.github.benmanes.caffeine.cache.Ticker.systemTicker());
+        router.initConfirmDedupCache();
     }
 
     /**

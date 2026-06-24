@@ -5,6 +5,8 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.gateway.model.GatewayMessage;
 import com.opencode.cui.gateway.model.RelayMessage;
+import com.opencode.cui.gateway.telemetry.WsConnectionMetrics;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +31,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -55,6 +58,8 @@ public class SkillRelayService {
     private final UpstreamRoutingTable routingTable;
     private final GatewayMessageIdentityService messageIdentityService;
     private final AsyncSessionSenderFactory senderFactory;
+    private final MeterRegistry meterRegistry;
+    private final WsConnectionMetrics wsConnectionMetrics;
 
     /** Invoke 路由策略 Map：scope → strategy */
     private final Map<String, InvokeRouteStrategy> routeStrategyMap;
@@ -107,6 +112,10 @@ public class SkillRelayService {
     /** Lazy-initialized reference to EventRelayService (set via setter to break circular dependency). */
     private EventRelayService eventRelayService;
 
+    private static final String WS_URL = "/ws/skill";
+    private static final String WS_BUSINESS = "skill-server-relay";
+    private static final String WS_DIRECTION = "inbound";
+
     @Autowired
     public SkillRelayService(RedisMessageBroker redisMessageBroker,
             ObjectMapper objectMapper,
@@ -114,13 +123,17 @@ public class SkillRelayService {
             UpstreamRoutingTable routingTable,
             GatewayMessageIdentityService messageIdentityService,
             AsyncSessionSenderFactory senderFactory,
-            List<InvokeRouteStrategy> invokeRouteStrategies) {
+            List<InvokeRouteStrategy> invokeRouteStrategies,
+            MeterRegistry meterRegistry,
+            WsConnectionMetrics wsConnectionMetrics) {
         this.redisMessageBroker = redisMessageBroker;
         this.objectMapper = objectMapper;
         this.gatewayInstanceId = gatewayInstanceId;
         this.routingTable = routingTable;
         this.messageIdentityService = messageIdentityService;
         this.senderFactory = senderFactory;
+        this.meterRegistry = meterRegistry;
+        this.wsConnectionMetrics = wsConnectionMetrics;
         Map<String, InvokeRouteStrategy> strategyMap = new HashMap<>();
         for (InvokeRouteStrategy s : invokeRouteStrategies) {
             strategyMap.put(s.getScope(), s);
@@ -133,9 +146,11 @@ public class SkillRelayService {
             String gatewayInstanceId,
             UpstreamRoutingTable routingTable,
             GatewayMessageIdentityService messageIdentityService,
-            List<InvokeRouteStrategy> invokeRouteStrategies) {
+            List<InvokeRouteStrategy> invokeRouteStrategies,
+            MeterRegistry meterRegistry) {
         this(redisMessageBroker, objectMapper, gatewayInstanceId, routingTable, messageIdentityService,
-                AsyncSessionSenderFactory.defaultFactory(), invokeRouteStrategies);
+                AsyncSessionSenderFactory.defaultFactory(), invokeRouteStrategies, meterRegistry,
+                new WsConnectionMetrics(meterRegistry));
     }
 
     /**
@@ -185,6 +200,11 @@ public class SkillRelayService {
 
         // Register source connection in Redis for cross-cluster discovery
         redisMessageBroker.registerSourceConnection(sourceType, ssInstanceId, gatewayInstanceId, sessionId);
+
+        // Update connection metrics
+        if (SOURCE_TYPE_SKILL_SERVER.equals(canonicalSourceType(sourceType))) {
+            wsConnectionMetrics.connectionOpened(WS_URL, WS_BUSINESS, WS_DIRECTION);
+        }
 
         log.info("[Mesh] Registered source session: sourceType={}, ssInstanceId={}, sessionId={}, gwInstanceId={}, activeLinks={}, hashRingSize={}",
                 sourceType, ssInstanceId, sessionId, gatewayInstanceId, getActiveConnectionCount(sourceType),
@@ -248,6 +268,11 @@ public class SkillRelayService {
             redisMessageBroker.unregisterSourceConnection(sourceType, ssInstanceId, gatewayInstanceId, sessionId);
         }
         removeLinkAffinities(sessionId);
+
+        // Update connection metrics
+        if (SOURCE_TYPE_SKILL_SERVER.equals(canonicalSourceType(sourceType))) {
+            wsConnectionMetrics.connectionClosed(WS_URL, WS_BUSINESS, WS_DIRECTION);
+        }
 
         log.info("[Mesh] Removed source session: reason={}, sourceType={}, ssInstanceId={}, sessionId={}, gwInstanceId={}, activeLinks={}",
                 reason, sourceType, ssInstanceId, sessionId, gatewayInstanceId, getActiveConnectionCount(sourceType));

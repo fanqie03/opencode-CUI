@@ -6,6 +6,8 @@ import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.service.RedisMessageBroker;
 import com.opencode.cui.skill.service.SkillSessionService;
 import com.opencode.cui.skill.service.SnapshotService;
+import com.opencode.cui.skill.telemetry.metrics.WsConnectionMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -51,7 +53,8 @@ class SkillStreamHandlerTest {
                                 objectMapper,
                                 sessionService,
                                 snapshotService,
-                                redisMessageBroker);
+                                redisMessageBroker,
+                                new WsConnectionMetrics(new SimpleMeterRegistry()));
         }
 
         @Test

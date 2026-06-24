@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.telemetry.client.dto.TelemetryPayload;
 import com.opencode.cui.skill.telemetry.config.WelinkTelemetryProperties;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -52,9 +54,10 @@ class WelinkTelemetryClientTest {
         properties = new WelinkTelemetryProperties();
         properties.setUrl("http://welink.local/producer");
         properties.setToken("test-token");
-        properties.setPublicKey(publicKeyBase64);
-        properties.setTenantId("tenant-1");
-        client = new WelinkTelemetryClient(restTemplate, mapper, properties);
+         properties.setPublicKey(publicKeyBase64);
+         properties.setTenantId("tenant-1");
+         client = new WelinkTelemetryClient(restTemplate, mapper, properties,
+                 new ApiCallMetricsService(new SimpleMeterRegistry()));
     }
 
     @Test

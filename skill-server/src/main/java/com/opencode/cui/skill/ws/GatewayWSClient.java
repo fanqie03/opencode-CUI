@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.SessionRouteService;
+import com.opencode.cui.skill.telemetry.metrics.WsConnectionMetrics;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -51,6 +52,7 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget {
     private final GatewayRelayService gatewayRelayService;
     private final ObjectMapper objectMapper;
     private final SessionRouteService sessionRouteService;
+    private final WsConnectionMetrics wsConnectionMetrics;
 
     @Value("${skill.gateway.internal-token:changeme}")
     private String internalToken;
@@ -87,10 +89,12 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget {
 
     public GatewayWSClient(GatewayRelayService gatewayRelayService,
             ObjectMapper objectMapper,
-            SessionRouteService sessionRouteService) {
+            SessionRouteService sessionRouteService,
+            WsConnectionMetrics wsConnectionMetrics) {
         this.gatewayRelayService = gatewayRelayService;
         this.objectMapper = objectMapper;
         this.sessionRouteService = sessionRouteService;
+        this.wsConnectionMetrics = wsConnectionMetrics;
     }
 
     @PostConstruct
@@ -385,6 +389,7 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget {
                     conn.reconnectAttempts.set(0);
                 }
             }
+            wsConnectionMetrics.connectionOpened(wsUrl, "ss-to-gateway", "outbound");
             log.info("Connected to GW via pool slot {}: url={}, status={}", slotIndex, uri, handshake.getHttpStatus());
         }
 
@@ -397,6 +402,7 @@ public class GatewayWSClient implements GatewayRelayService.GatewayRelayTarget {
         public void onClose(int code, String reason, boolean remote) {
             log.warn("Disconnected from GW pool slot {}: code={}, reason={}, remote={}",
                     slotIndex, code, reason, remote);
+            wsConnectionMetrics.connectionClosed(wsUrl, "ss-to-gateway", "outbound");
             if (running.get() && !isInvalidTokenReason(reason)) {
                 scheduleReconnect(slotIndex);
             } else if (running.get() && isInvalidTokenReason(reason)) {

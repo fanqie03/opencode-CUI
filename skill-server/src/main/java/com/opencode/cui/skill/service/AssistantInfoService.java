@@ -3,8 +3,11 @@ package com.opencode.cui.skill.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.config.AssistantInfoProperties;
+import com.opencode.cui.skill.logging.MdcHelper;
 import com.opencode.cui.skill.model.AssistantInstanceInfo;
 import com.opencode.cui.skill.model.AssistantInfo;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
+import com.opencode.cui.skill.telemetry.metrics.MetricServiceEnum;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -40,23 +43,28 @@ public class AssistantInfoService {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final AssistantInstanceInfoService assistantInstanceInfoService;
+    private final ApiCallMetricsService apiCallMetricsService;
 
     @Autowired
     public AssistantInfoService(AssistantInfoProperties properties,
                                 StringRedisTemplate redisTemplate,
-                                AssistantInstanceInfoService assistantInstanceInfoService) {
+                                AssistantInstanceInfoService assistantInstanceInfoService,
+                                ApiCallMetricsService apiCallMetricsService) {
         this.properties = properties;
         this.redisTemplate = redisTemplate;
         this.objectMapper = new ObjectMapper();
         this.assistantInstanceInfoService = assistantInstanceInfoService;
+        this.apiCallMetricsService = apiCallMetricsService;
     }
 
     public AssistantInfoService(AssistantInfoProperties properties,
-                                StringRedisTemplate redisTemplate) {
+                                StringRedisTemplate redisTemplate,
+                                ApiCallMetricsService apiCallMetricsService) {
         this.properties = properties;
         this.redisTemplate = redisTemplate;
         this.objectMapper = new ObjectMapper();
         this.assistantInstanceInfoService = null;
+        this.apiCallMetricsService = apiCallMetricsService;
     }
 
     /**
@@ -184,10 +192,14 @@ public class AssistantInfoService {
      * @return AssistantInfo，解析失败时返回 null
      */
     protected AssistantInfo fetchFromUpstream(String ak) {
+        String urlTemplate = "/appstore/wecodeapi/open/ak/info";
+        MetricServiceEnum metricService = MetricServiceEnum.BUSINESS_CENTER_ASSISTANT_INFO;
+        boolean success = false;
+        long start = System.currentTimeMillis();
         String url = properties.getApiUrl();
-        long start = System.nanoTime();
 
         try {
+            MdcHelper.putBusinessDomain(metricService.getId());
             // 上游接口要求 GET + JSON body，Spring RestTemplate GET 不支持 body，
             // 使用 Java HttpClient 的 method("GET", body) 实现。
             java.net.http.HttpRequest.Builder reqBuilder = java.net.http.HttpRequest.newBuilder()
@@ -203,7 +215,7 @@ public class AssistantInfoService {
                     .connectTimeout(java.time.Duration.ofSeconds(5)).build();
             java.net.http.HttpResponse<String> response = client.send(
                     reqBuilder.build(), java.net.http.HttpResponse.BodyHandlers.ofString());
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
 
             if (response.statusCode() != 200 || response.body() == null) {
                 log.warn("[AssistantInfoService] upstream non-success: ak={}, status={}, durationMs={}",
@@ -214,13 +226,17 @@ public class AssistantInfoService {
             AssistantInfo info = parseApiResponse(response.body());
             log.info("[AssistantInfoService] upstream success: ak={}, scope={}, durationMs={}",
                     ak, info != null ? info.getAssistantScope() : null, elapsedMs);
+            success = true;
             return info;
 
         } catch (Exception e) {
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
             log.warn("[AssistantInfoService] upstream error: ak={}, durationMs={}, error={}",
                     ak, elapsedMs, e.getMessage());
             throw new RuntimeException("AssistantInfo upstream fetch failed: " + e.getMessage(), e);
+        } finally {
+            apiCallMetricsService.recordApiCall(metricService, urlTemplate, success, System.currentTimeMillis() - start);
+            MdcHelper.putBusinessDomain(null);
         }
     }
 

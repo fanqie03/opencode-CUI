@@ -3,6 +3,8 @@ package com.opencode.cui.skill.ws;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.SessionRouteService;
+import com.opencode.cui.skill.telemetry.metrics.WsConnectionMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -22,7 +24,8 @@ class GatewayWSClientTest {
         return new GatewayWSClient(
                 Mockito.mock(GatewayRelayService.class),
                 new ObjectMapper(),
-                Mockito.mock(SessionRouteService.class));
+                Mockito.mock(SessionRouteService.class),
+                new WsConnectionMetrics(new SimpleMeterRegistry()));
     }
 
     @Test

@@ -20,6 +20,7 @@ import com.opencode.cui.skill.service.InboundProcessingService.InboundResult;
 import com.opencode.cui.skill.service.delivery.StreamMessageEmitter;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -86,6 +87,8 @@ class InboundProcessingServiceTest {
     private DefaultAssistantRuleService ruleService;
     @Mock
     private AllowedSlashCommandsResolver allowedSlashCommandsResolver;
+    @Mock
+    private MessageTurnLifecycle messageTurnLifecycle;
 
     private AssistantIdProperties assistantIdProperties;
     private DeliveryProperties deliveryProperties;
@@ -128,7 +131,8 @@ class InboundProcessingServiceTest {
                 channelLookupService,
                 channelSuppressReplyWhitelistService,
                 ruleService,
-                allowedSlashCommandsResolver);
+                allowedSlashCommandsResolver,
+                messageTurnLifecycle);
 
         // 默认 scope 策略：personal（requiresOnlineCheck=true）
         AssistantScopeStrategy personalStrategy = mock(AssistantScopeStrategy.class);

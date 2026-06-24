@@ -7,6 +7,8 @@ import com.opencode.cui.skill.logging.MdcHelper;
 import com.opencode.cui.skill.service.ExternalWsRegistry;
 import com.opencode.cui.skill.service.RedisMessageBroker;
 import com.opencode.cui.skill.service.SkillInstanceRegistry;
+import com.opencode.cui.skill.telemetry.metrics.WsConnectionMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -56,7 +58,8 @@ class ExternalStreamHandlerTest {
     void setUp() {
         when(instanceRegistry.getInstanceId()).thenReturn("test-instance-1");
         handler = new ExternalStreamHandler(objectMapper, redisMessageBroker, "test-token",
-                wsRegistry, instanceRegistry, deliveryProperties);
+                wsRegistry, instanceRegistry, deliveryProperties,
+                new WsConnectionMetrics(new SimpleMeterRegistry()));
         // 模拟 Spring ApplicationReadyEvent 触发后的订阅注册（生产路径）
         handler.subscribeRelayChannel(mock(ApplicationReadyEvent.class));
     }
@@ -75,7 +78,8 @@ class ExternalStreamHandlerTest {
         when(freshRegistry.getInstanceId()).thenReturn("fresh-instance");
         ExternalStreamHandler freshHandler = new ExternalStreamHandler(
                 objectMapper, freshBroker, "test-token",
-                wsRegistry, freshRegistry, deliveryProperties);
+                wsRegistry, freshRegistry, deliveryProperties,
+                new WsConnectionMetrics(new SimpleMeterRegistry()));
 
         // 事件触发前：broker 没收到任何 subscribe 调用
         verifyNoInteractions(freshBroker);

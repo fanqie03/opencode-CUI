@@ -15,6 +15,8 @@ import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
 import com.opencode.cui.skill.telemetry.chat.ChatRequestTelemetryEvent;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnContext;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -46,6 +48,7 @@ public class SkillMessageFlowService {
     private final AllowedSlashCommandsResolver allowedSlashCommandsResolver;
     private final ApplicationEventPublisher eventPublisher;
     private final MessagePersistenceService persistenceService;
+    private final MessageTurnLifecycle messageTurnLifecycle;
 
     public SkillMessageFlowService(SkillMessageService messageService,
                                    GatewayRelayService gatewayRelayService,
@@ -59,7 +62,8 @@ public class SkillMessageFlowService {
                                    DefaultAssistantRuleService ruleService,
                                    AllowedSlashCommandsResolver allowedSlashCommandsResolver,
                                    ApplicationEventPublisher eventPublisher,
-                                   MessagePersistenceService persistenceService) {
+                                   MessagePersistenceService persistenceService,
+                                   MessageTurnLifecycle messageTurnLifecycle) {
         this.messageService = messageService;
         this.gatewayRelayService = gatewayRelayService;
         this.objectMapper = objectMapper;
@@ -73,13 +77,14 @@ public class SkillMessageFlowService {
         this.allowedSlashCommandsResolver = allowedSlashCommandsResolver;
         this.eventPublisher = eventPublisher;
         this.persistenceService = persistenceService;
+        this.messageTurnLifecycle = messageTurnLifecycle;
     }
 
     public ApiResponse<ProtocolMessageView> sendMessage(SkillSession session,
-                                                        String sessionId,
-                                                        Long numericSessionId,
-                                                        SendMessageCommand request,
-                                                        String userIdCookie) {
+                                                         String sessionId,
+                                                         Long numericSessionId,
+                                                         SendMessageCommand request,
+                                                         String userIdCookie) {
         if (!isDefaultAssistant(session)) {
             ApiResponse<ProtocolMessageView> deletionBlock = checkAssistantDeletion(
                     session.getAssistantAccount(), sessionId, "sendMessage");
@@ -99,6 +104,19 @@ public class SkillMessageFlowService {
                         message.getSeq(),
                         message.getContent(),
                         sessionId));
+
+        // Get businessTag from assistant info if available
+        String brainTag = null;
+        if (!isDefaultAssistant(session)) {
+            AssistantInfo scopeInfo = getAssistantInfo(session);
+            if (scopeInfo != null) {
+                brainTag = scopeInfo.getBusinessTag();
+            }
+        }
+        String effectiveUserId = effectiveUserId(userIdCookie, session);
+        messageTurnLifecycle.onTurnStart(
+                new MessageTurnContext(message.getMessageId(), brainTag, sessionId, null, effectiveUserId, brainTag, true)
+        );
 
         routeToGateway(session, sessionId, numericSessionId, request, userIdCookie);
         return ApiResponse.ok(ProtocolMessageMapper.toProtocolMessage(message, List.of(), objectMapper));

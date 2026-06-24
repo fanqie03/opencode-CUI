@@ -3,6 +3,7 @@ package com.opencode.cui.skill.service;
 import com.opencode.cui.skill.config.AssistantInfoProperties;
 import com.opencode.cui.skill.model.AssistantInstanceInfo;
 import com.opencode.cui.skill.model.AssistantInfo;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,9 @@ class AssistantInfoServiceTest {
     @Mock
     private AssistantInstanceInfoService assistantInstanceInfoService;
 
+    @Mock
+    private ApiCallMetricsService apiCallMetricsService;
+
     private AssistantInfoProperties properties;
 
     /** 用于覆盖 fetchFromUpstream 的子类，避免真实 HTTP 调用 */
@@ -44,16 +48,18 @@ class AssistantInfoServiceTest {
         private AssistantInfo stubbedResult;
         private boolean shouldThrow = false;
 
-        TestableAssistantInfoService(AssistantInfoProperties properties,
-                                     StringRedisTemplate redisTemplate) {
-            super(properties, redisTemplate);
-        }
-
-        TestableAssistantInfoService(AssistantInfoProperties properties,
+         TestableAssistantInfoService(AssistantInfoProperties properties,
                                      StringRedisTemplate redisTemplate,
-                                     AssistantInstanceInfoService assistantInstanceInfoService) {
-            super(properties, redisTemplate, assistantInstanceInfoService);
-        }
+                                     ApiCallMetricsService apiCallMetricsService) {
+             super(properties, redisTemplate, apiCallMetricsService);
+         }
+
+         TestableAssistantInfoService(AssistantInfoProperties properties,
+                                      StringRedisTemplate redisTemplate,
+                                      AssistantInstanceInfoService assistantInstanceInfoService,
+                                      ApiCallMetricsService apiCallMetricsService) {
+             super(properties, redisTemplate, assistantInstanceInfoService, apiCallMetricsService);
+         }
 
         void stubFetch(AssistantInfo result) {
             this.stubbedResult = result;
@@ -85,7 +91,7 @@ class AssistantInfoServiceTest {
         properties.setApiToken("test-token");
         properties.setCacheTtlSeconds(300);
 
-        service = new TestableAssistantInfoService(properties, redisTemplate);
+        service = new TestableAssistantInfoService(properties, redisTemplate, apiCallMetricsService);
     }
 
     // ------------------------------------------------------------------ //
@@ -179,13 +185,13 @@ class AssistantInfoServiceTest {
                         "\"protocol\":\"sse\",\"authType\":\"soa\"}}",
                 identityType);
 
-        // 使用匿名子类让 fetchFromUpstream 解析给定 JSON
-        AssistantInfoService parseService = new AssistantInfoService(properties, redisTemplate) {
-            @Override
-            protected AssistantInfo fetchFromUpstream(String ak) {
-                return parseApiResponse(json);
-            }
-        };
+         // 使用匿名子类让 fetchFromUpstream 解析给定 JSON
+         AssistantInfoService parseService = new AssistantInfoService(properties, redisTemplate, apiCallMetricsService) {
+             @Override
+             protected AssistantInfo fetchFromUpstream(String ak) {
+                 return parseApiResponse(json);
+             }
+         };
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get(any())).thenReturn(null);
@@ -303,7 +309,7 @@ class AssistantInfoServiceTest {
         when(assistantInstanceInfoService.getInstanceInfo("assist-001")).thenReturn(instance);
 
         AssistantInfoService instanceAwareService = new AssistantInfoService(
-                properties, redisTemplate, assistantInstanceInfoService);
+                properties, redisTemplate, assistantInstanceInfoService, apiCallMetricsService);
 
         AssistantInfo info = instanceAwareService.getAssistantInfo(null, "assist-001");
 
@@ -326,7 +332,7 @@ class AssistantInfoServiceTest {
         when(assistantInstanceInfoService.getInstanceInfo("assist-001")).thenReturn(instance);
 
         AssistantInfoService instanceAwareService = new AssistantInfoService(
-                properties, redisTemplate, assistantInstanceInfoService);
+                properties, redisTemplate, assistantInstanceInfoService, apiCallMetricsService);
 
         AssistantInfo info = instanceAwareService.getAssistantInfo(null, "assist-001");
 
@@ -352,13 +358,13 @@ class AssistantInfoServiceTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get("ss:assistant:info:ak-local")).thenReturn(null);
 
-        TestableAssistantInfoService instanceAwareService = new TestableAssistantInfoService(
-                properties, redisTemplate, assistantInstanceInfoService);
-        AssistantInfo upstream = new AssistantInfo();
-        upstream.setId("robot-upstream");
-        upstream.setAssistantScope("personal");
-        upstream.setBusinessTag(null);
-        instanceAwareService.stubFetch(upstream);
+         TestableAssistantInfoService instanceAwareService = new TestableAssistantInfoService(
+                 properties, redisTemplate, assistantInstanceInfoService, apiCallMetricsService);
+         AssistantInfo upstream = new AssistantInfo();
+         upstream.setId("robot-upstream");
+         upstream.setAssistantScope("personal");
+         upstream.setBusinessTag(null);
+         instanceAwareService.stubFetch(upstream);
 
         AssistantInfo info = instanceAwareService.getAssistantInfo(null, "assist-local");
 
@@ -375,12 +381,12 @@ class AssistantInfoServiceTest {
         instance.setPartnerAccount("assist-001");
         instance.setOwnerWelinkId("owner-001");
         instance.setRemoteType(AssistantInstanceInfo.REMOTE_TYPE_LOCAL);
-        when(assistantInstanceInfoService.getInstanceInfo("assist-001")).thenReturn(instance);
+         when(assistantInstanceInfoService.getInstanceInfo("assist-001")).thenReturn(instance);
 
-        AssistantInfoService instanceAwareService = new AssistantInfoService(
-                properties, redisTemplate, assistantInstanceInfoService);
+         AssistantInfoService instanceAwareService = new AssistantInfoService(
+                 properties, redisTemplate, assistantInstanceInfoService, apiCallMetricsService);
 
-        AssistantInfo info = instanceAwareService.getAssistantInfo(null, "assist-001");
+         AssistantInfo info = instanceAwareService.getAssistantInfo(null, "assist-001");
 
         assertNull(info);
         verify(redisTemplate, never()).opsForValue();

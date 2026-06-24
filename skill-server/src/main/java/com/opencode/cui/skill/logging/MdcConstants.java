@@ -29,8 +29,11 @@ public final class MdcConstants {
     /** 场景标识（ws-gateway, rest-im, rest-miniapp 等） */
     public static final String SCENARIO = "scenario";
 
-    /** 所有自定义 MDC key 列表，用于批量清理 */
+    /** 业务域标识（接口级 serviceId，如 im_group_chat、gateway_ws_invoke）— 慧眼告警用 */
+    public static final String BUSINESS_DOMAIN = "businessDomain";
+
+/** 所有自定义 MDC key 列表，用于批量清理 */
     public static final List<String> ALL_KEYS = List.of(
-            TRACE_ID, SESSION_ID, AK, USER_ID, SCENARIO
+            TRACE_ID, SESSION_ID, AK, USER_ID, SCENARIO, BUSINESS_DOMAIN
     );
 }

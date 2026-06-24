@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.model.AssistantResolveResult;
 import com.opencode.cui.skill.model.ExistenceStatus;
 import com.opencode.cui.skill.model.ResolveOutcome;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,8 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
+
+import static org.mockito.Mockito.mock;
 
 import java.net.SocketTimeoutException;
 import java.time.Duration;
@@ -45,6 +48,9 @@ class AssistantAccountResolverServiceTest {
     @Mock
     private ValueOperations<String, String> valueOperations;
 
+    @Mock
+    private ApiCallMetricsService apiCallMetricsService;
+
     private AssistantAccountResolverService service;
 
     private static final String RESOLVE_URL = "http://localhost:8080/assistant-api/integration/v4-1/we-crew/instance/query";
@@ -58,6 +64,7 @@ class AssistantAccountResolverServiceTest {
         service = new AssistantAccountResolverService(
                 restTemplate,
                 redisTemplate,
+                apiCallMetricsService,
                 RESOLVE_URL,
                 "resolve-token-123",
                 true,

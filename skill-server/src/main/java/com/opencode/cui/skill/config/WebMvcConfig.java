@@ -3,6 +3,7 @@ package com.opencode.cui.skill.config;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import com.opencode.cui.skill.telemetry.metrics.ApiMetricsInterceptor;
 
 /**
  * Spring MVC 拦截器注册配置。
@@ -17,11 +18,14 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     private final ImTokenAuthInterceptor imTokenAuthInterceptor;
     private final MdcRequestInterceptor mdcRequestInterceptor;
+    private final ApiMetricsInterceptor apiMetricsInterceptor;
 
     public WebMvcConfig(ImTokenAuthInterceptor imTokenAuthInterceptor,
-            MdcRequestInterceptor mdcRequestInterceptor) {
+            MdcRequestInterceptor mdcRequestInterceptor,
+            ApiMetricsInterceptor apiMetricsInterceptor) {
         this.imTokenAuthInterceptor = imTokenAuthInterceptor;
         this.mdcRequestInterceptor = mdcRequestInterceptor;
+        this.apiMetricsInterceptor = apiMetricsInterceptor;
     }
 
     /**
@@ -32,6 +36,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         // MDC 拦截器在认证之前执行，确保认证日志也带有 traceId
         registry.addInterceptor(mdcRequestInterceptor)
+                .addPathPatterns("/api/**");
+        registry.addInterceptor(apiMetricsInterceptor)
                 .addPathPatterns("/api/**");
         registry.addInterceptor(imTokenAuthInterceptor)
                 .addPathPatterns("/api/inbound/**", "/api/external/**");

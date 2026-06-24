@@ -5,9 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.skill.config.AssistantIdProperties;
+import com.opencode.cui.skill.logging.MdcHelper;
 import com.opencode.cui.skill.model.AgentSummary;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.repository.SkillSessionRepository;
+import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
+import com.opencode.cui.skill.telemetry.metrics.MetricServiceEnum;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpEntity;
@@ -41,6 +44,7 @@ public class AssistantIdResolverService {
     private final RestTemplate restTemplate;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final ApiCallMetricsService apiCallMetricsService;
 
     /** L1: sessionId → assistantAccount */
     private final Cache<String, String> sessionCache = Caffeine.newBuilder()
@@ -64,13 +68,15 @@ public class AssistantIdResolverService {
             GatewayApiClient gatewayApiClient,
             RestTemplate restTemplate,
             StringRedisTemplate redisTemplate,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            ApiCallMetricsService apiCallMetricsService) {
         this.properties = properties;
         this.sessionRepository = sessionRepository;
         this.gatewayApiClient = gatewayApiClient;
         this.restTemplate = restTemplate;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
+        this.apiCallMetricsService = apiCallMetricsService;
     }
 
     /**
@@ -201,17 +207,21 @@ public class AssistantIdResolverService {
      * 调用 persona 接口获取 assistantId。
      */
     private String fetchFromPersonaApi(String assistantAccount, String ak) {
+        String urlTemplate = "/welink-persona-settings/persona-new";
+        MetricServiceEnum metricService = MetricServiceEnum.BUSINESS_CENTER_PERSONA_QUERY;
+        boolean success = false;
+        long start = System.currentTimeMillis();
         String url = properties.getPersonaBaseUrl()
-                + "/welink-persona-settings/persona-new?personaWelinkId=" + assistantAccount;
+                + urlTemplate + "?personaWelinkId=" + assistantAccount;
 
-        long start = System.nanoTime();
         try {
+            MdcHelper.putBusinessDomain(metricService.getId());
             HttpHeaders headers = new HttpHeaders();
             HttpEntity<Void> request = new HttpEntity<>(headers);
 
             ResponseEntity<String> response = restTemplate.exchange(
                     url, HttpMethod.GET, request, String.class);
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
 
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
                 log.warn("[EXT_CALL] PersonaAPI.getPersona non-success: assistantAccount={}, status={}, durationMs={}",
@@ -251,13 +261,17 @@ public class AssistantIdResolverService {
                 log.info("[EXT_CALL] PersonaAPI.getPersona success: assistantAccount={}, assistantId={}, durationMs={}",
                         assistantAccount, id, elapsedMs);
             }
+            success = true;
             return id;
 
         } catch (Exception e) {
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            long elapsedMs = (System.currentTimeMillis() - start);
             log.warn("[EXT_CALL] PersonaAPI.getPersona failed: assistantAccount={}, durationMs={}, error={}",
                     assistantAccount, elapsedMs, e.getMessage());
             return null;
+        } finally {
+            apiCallMetricsService.recordApiCall(metricService, urlTemplate, success, System.currentTimeMillis() - start);
+            MdcHelper.putBusinessDomain(null);
         }
     }
 

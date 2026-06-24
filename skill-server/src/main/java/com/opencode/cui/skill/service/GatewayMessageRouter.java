@@ -15,8 +15,11 @@ import com.opencode.cui.skill.logging.MdcHelper;
 import com.opencode.cui.skill.service.delivery.OutboundDeliveryDispatcher;
 import com.opencode.cui.skill.model.AssistantInfo;
 import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnContext;
+import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import com.opencode.cui.skill.service.scope.AssistantScopeStrategy;
 import com.opencode.cui.skill.service.scope.DefaultAssistantScopeStrategy;
+import com.opencode.cui.skill.service.DefaultAssistantRuleService;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -80,6 +83,8 @@ public class GatewayMessageRouter {
     private final AssistantScopeDispatcher scopeDispatcher;
     private final ChannelLookupService channelLookupService;
     private final ChannelSuppressReplyWhitelistService channelSuppressReplyWhitelistService;
+    private final DefaultAssistantRuleService ruleService;
+    private final MessageTurnLifecycle messageTurnLifecycle;
     /** 已完成轮次的短期缓存，用于抑制同一 trace 在 tool_done 后的残余事件 */
     private final Cache<String, Instant> completedSessions = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofSeconds(5))
@@ -232,6 +237,8 @@ public class GatewayMessageRouter {
             OutboundDeliveryDispatcher outboundDeliveryDispatcher,
             com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter,
             AssistantAvailabilityService availabilityService,
+            DefaultAssistantRuleService ruleService,
+            MessageTurnLifecycle messageTurnLifecycle,
             @Value("${skill.relay.owner-dead-threshold-seconds:120}") int ownerDeadThresholdSeconds,
             @Value("${skill.relay.confirm-dedup.enabled:true}") boolean confirmDedupEnabled,
             @Value("${skill.relay.confirm-dedup.cache-expire-minutes:25}") int confirmCacheExpireMinutes,
@@ -256,49 +263,14 @@ public class GatewayMessageRouter {
         this.channelSuppressReplyWhitelistService = channelSuppressReplyWhitelistService;
         this.scopeDispatcher = scopeDispatcher;
         this.availabilityService = availabilityService;
+        this.ruleService = ruleService;
+        this.messageTurnLifecycle = messageTurnLifecycle;
         this.instanceId = skillInstanceRegistry.getInstanceId();
         this.ownerDeadThresholdSeconds = ownerDeadThresholdSeconds;
         this.confirmDedupEnabled = confirmDedupEnabled;
         this.confirmCacheExpireMinutes = confirmCacheExpireMinutes;
         this.clock = clock;
         this.ticker = ticker;
-    }
-
-    /**
-     * 简化构造：兼容现有测试入口。使用默认 confirm-dedup 配置（enabled=true, 25min）
-     * 与系统默认 Clock/Ticker，避免在测试 setup 中显式传入。
-     *
-     * <p>该构造已主动初始化 {@link #confirmedToolSessions} cache（无需依赖
-     * {@code @PostConstruct} 时机）。</p>
-     */
-    public GatewayMessageRouter(ObjectMapper objectMapper,
-            SkillMessageService messageService,
-            SkillSessionService sessionService,
-            RedisMessageBroker redisMessageBroker,
-            OpenCodeEventTranslator translator,
-            MessagePersistenceService persistenceService,
-            StreamBufferService bufferService,
-            SessionRebuildService rebuildService,
-            ImInteractionStateService interactionStateService,
-            ImOutboundService imOutboundService,
-            SessionRouteService sessionRouteService,
-            SkillInstanceRegistry skillInstanceRegistry,
-            AssistantInfoService assistantInfoService,
-            ChannelLookupService channelLookupService,
-            ChannelSuppressReplyWhitelistService channelSuppressReplyWhitelistService,
-            AssistantScopeDispatcher scopeDispatcher,
-            OutboundDeliveryDispatcher outboundDeliveryDispatcher,
-            com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter,
-            int ownerDeadThresholdSeconds) {
-        this(objectMapper, messageService, sessionService, redisMessageBroker, translator,
-                persistenceService, bufferService, rebuildService, interactionStateService,
-                imOutboundService, sessionRouteService, skillInstanceRegistry,
-                assistantInfoService, channelLookupService, channelSuppressReplyWhitelistService,
-                scopeDispatcher, outboundDeliveryDispatcher, emitter,
-                null, // availabilityService — tests inject via mock where needed
-                ownerDeadThresholdSeconds, true, 25, Clock.systemUTC(), Ticker.systemTicker());
-        // 主动初始化 cache，避免测试场景下 @PostConstruct 未触发导致 NPE
-        initConfirmDedupCache();
     }
 
     // ==================== SS relay subscription (启动时订阅本实例的中转 channel) ====================
@@ -332,7 +304,7 @@ public class GatewayMessageRouter {
      * 默认 25 分钟（必须 < GW UpstreamRoutingTable 30min 才能保证 GW 失忆前自愈）。</p>
      */
     @PostConstruct
-    void initConfirmDedupCache() {
+    public void initConfirmDedupCache() {
         this.confirmedToolSessions = Caffeine.newBuilder()
                 .expireAfterWrite(Duration.ofMinutes(confirmCacheExpireMinutes))
                 .maximumSize(DEDUP_CACHE_MAX_SIZE)
@@ -778,6 +750,28 @@ public class GatewayMessageRouter {
         // IM 非流式渠道：累积 text.delta，兼容上游不发 text.done 的场景（业务/个人助手通用）
         accumulateCloudImText(sessionId, msg, session, traceId);
 
+        // Track TEXT_DELTA token metrics
+        if (StreamMessage.Types.TEXT_DELTA.equals(msg.getType())) {
+            String messageId = ProtocolUtils.firstNonBlank(msg.getSourceMessageId(), msg.getMessageId());
+            if (messageId != null) {
+                // Get brainTag from assistant info if available
+                String brainTag = null;
+                String assistantAccount = null;
+                if (session != null) {
+                    assistantAccount = session.getAssistantAccount();
+                    if (!isDefaultAssistant(session)) {
+                        AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
+                        if (info != null) {
+                            brainTag = info.getBusinessTag();
+                        }
+                    }
+                }
+                int contentLength = msg.getContent() != null ? msg.getContent().length() : 0;
+                // Delegate first-token tracking + token counting to MessageTurnLifecycle
+                messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, userId, null, true), contentLength);
+            }
+        }
+
         // 统一投递（enrich + deliver）
         prepareStableMessageContext(sessionId, msg, session, numericId);
         emitter.emitToSession(session, sessionId, userId, msg);
@@ -947,6 +941,44 @@ public class GatewayMessageRouter {
         }
     }
 
+    /**
+     * 通知 MessageTurnLifecycle 轮次结束。从 session 解析 brainTag/assistantAccount，
+     * messageId 缺失或 brainTag 为 null 时记录 warn 日志。
+     *
+     * @param session  会话（可能为 null）
+     * @param sessionId 会话 ID
+     * @param messageId 消息 ID
+     * @param success  是否成功（tool_done=true, tool_error=false）
+     */
+    private void notifyTurnEnd(SkillSession session, String sessionId, String messageId, boolean success) {
+        if (messageId == null || messageId.isBlank()) {
+            log.warn("[SKIP] onTurnEnd: messageId is null or blank, sessionId={}, skipping lifecycle cleanup", sessionId);
+            return;
+        }
+        String brainTag = null;
+        String assistantAccount = null;
+        if (session != null) {
+            assistantAccount = session.getAssistantAccount();
+            if (!isDefaultAssistant(session)) {
+                AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
+                if (info != null) {
+                    brainTag = info.getBusinessTag();
+                } else {
+                    log.warn("[SKIP] onTurnEnd brainTag: assistant info not found, ak={}, sessionId={}, messageId={}, using UNKNOWN",
+                        session.getAk(), sessionId, messageId);
+                }
+            } else {
+                log.warn("[SKIP] onTurnEnd brainTag: default assistant, sessionId={}, messageId={}, using UNKNOWN",
+                    sessionId, messageId);
+            }
+        } else {
+            log.warn("[SKIP] onTurnEnd brainTag: session is null, sessionId={}, messageId={}, using UNKNOWN",
+                sessionId, messageId);
+        }
+        String senderUserAccount = session != null ? session.getUserId() : null;
+        messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, senderUserAccount, null, success));
+    }
+
     /** 处理 tool_done：标记会话完成、统一投递 idle 状态、持久化最终消息。 */
     private void handleToolDone(String sessionId, String userId, JsonNode node) {
         if (sessionId == null) {
@@ -956,11 +988,15 @@ public class GatewayMessageRouter {
 
         log.info("handleToolDone: sessionId={}", sessionId);
         String traceId = node.path("traceId").asText(null);
+        String messageId = node.path("messageId").asText(null);
         completedSessions.put(completionKey(sessionId, traceId), Instant.now());
 
         // 刷出累积的 text.delta 内容（上游未发 text.done 时，用累积内容合成 text.done）
         SkillSession session = resolveSession(sessionId);
         flushAccumulatedCloudImTextDone(sessionId, userId, session, traceId);
+
+        // Call onTurnEnd when stream completes
+        notifyTurnEnd(session, sessionId, messageId, true);
 
         StreamMessage msg = StreamMessage.sessionStatus("idle");
         Long numericId = ProtocolUtils.parseSessionId(sessionId);
@@ -1028,6 +1064,11 @@ public class GatewayMessageRouter {
 
         SkillSession session = resolveSession(sessionId);
         Long numericId = ProtocolUtils.parseSessionId(sessionId);
+
+        // === Call onTurnEnd on error (same as handleToolDone) ===
+        String messageId = node.path("messageId").asText(null);
+        notifyTurnEnd(session, sessionId, messageId, false);
+        // === END ===
 
         if (numericId != null) {
             try {
@@ -1535,6 +1576,11 @@ public class GatewayMessageRouter {
     private SkillSession resolveSession(String sessionId) {
         Long numericId = ProtocolUtils.parseSessionId(sessionId);
         return numericId != null ? sessionService.findByIdSafe(numericId) : null;
+    }
+
+    /** Check if session uses default assistant rule (no specific business assistant). */
+    private boolean isDefaultAssistant(SkillSession session) {
+        return ruleService.lookup(session.getBusinessSessionDomain(), session.getBusinessSessionType()).isPresent();
     }
 
     /** 判断是否为 MiniApp 会话（null 也视为 MiniApp）。 */
