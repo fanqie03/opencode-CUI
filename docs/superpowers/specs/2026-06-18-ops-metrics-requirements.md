@@ -48,9 +48,9 @@ recordApiCall内部实现为
 
 ### 3.流式对话效率指标
 
-根据大脑来区分，即往普罗上报时，tag要加上大脑标签，不存在则使用 UNKNOWN 值兜底 
+根据大脑来区分，即往普罗上报时，tag要加上大脑标签，不存在则使用 UNKNOWN 值兜底
 
-效率指标： 
+效率指标：
 - TTFT： 首token延迟，从输入到输出第一个token的延迟
 - TPOT: 第二个token开始每个输出token的延迟
 - Latency：延迟，从输入到输出最后一个token的时间
