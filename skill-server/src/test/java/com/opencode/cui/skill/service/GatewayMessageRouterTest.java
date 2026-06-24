@@ -14,8 +14,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+
 
 import java.time.Clock;
 import java.time.Instant;
@@ -104,8 +107,10 @@ class GatewayMessageRouterTest {
     com.opencode.cui.skill.service.delivery.StreamMessageEmitter emitter;
     @Mock
     GatewayMessageRouter.RouteResponseSender routeResponseSender;
-     @Mock
-     private AssistantAvailabilityService availabilityService;
+    @Mock
+    private AssistantAvailabilityService availabilityService;
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
 
      @Mock
      private DefaultAssistantRuleService defaultAssistantRuleService;
@@ -169,6 +174,7 @@ class GatewayMessageRouterTest {
                 ticker);
         r.initConfirmDedupCache();
         r.setRouteResponseSender(routeResponseSender);
+        ReflectionTestUtils.setField(r, "eventPublisher", applicationEventPublisher);
         return r;
     }
 
@@ -738,6 +744,7 @@ class GatewayMessageRouterTest {
                  ticker);
         r.initConfirmDedupCache();
         r.setRouteResponseSender(routeResponseSender);
+        ReflectionTestUtils.setField(r, "eventPublisher", applicationEventPublisher);
         return r;
     }
 

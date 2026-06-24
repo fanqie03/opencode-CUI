@@ -52,6 +52,7 @@ documents/ss-gw-architecture/
 
 # Trellis per-user workspace scratch
 .trellis/workspace/*/tmp/
+.trellis/workspace/feison/
 /plugins/
 
 # OpenCode runtime

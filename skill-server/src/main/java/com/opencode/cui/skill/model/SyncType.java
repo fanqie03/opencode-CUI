@@ -1,8 +1,9 @@
 package com.opencode.cui.skill.model;
 
 public enum SyncType {
+    SESSION_DELETED("session.deleted"),
     SESSION_UNREAD("session.unread"),
-    SESSION_DELETED("session.deleted");
+    SESSION_READ("session.read");
 
     private final String type;
 

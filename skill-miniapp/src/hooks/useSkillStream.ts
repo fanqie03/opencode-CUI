@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Message, MessagePart, MessageRole, StreamMessage, StreamMessageType } from '../protocol/types';
+import type { Message, MessagePart, MessageRole, StreamMessage, StreamMessageType, UnreadPushMessage } from '../protocol/types';
 import { StreamAssembler } from '../protocol/StreamAssembler';
 import { normalizeHistoryMessage, normalizeHistoryMessages } from '../protocol/history';
 import * as api from '../utils/api';
@@ -298,6 +298,8 @@ function isKnownStreamType(type: unknown): type is StreamMessageType {
     'error',
     'snapshot',
     'streaming',
+    'session.unread',
+    'session.read',
   ].includes(type);
 }
 
@@ -473,7 +475,11 @@ function shouldWaitForHistory(msg: StreamMessage): boolean {
 
 export interface UseSkillStreamOptions {
   onSessionTitleUpdate?: (sessionId: string, title: string) => void;
+  /** session.unread / session.read 推送回调（不区分当前会话，总是触发） */
+  onUnreadPush?: (msg: UnreadPushMessage) => void;
   onSessionDeleted?: (sessionId: string) => void;
+  /** 会话进入 idle 时回调，携带当前已渲染的最大 messageSeq */
+  onSessionIdle?: (maxMessageSeq: number) => void;
 }
 
 function parseSessionDeletedContent(content: string | null | undefined): string | null {
@@ -487,7 +493,14 @@ function parseSessionDeletedContent(content: string | null | undefined): string 
 }
 
 export function useSkillStream(sessionId: string | null, options?: UseSkillStreamOptions): UseSkillStreamReturn {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, rawSetMessages] = useState<Message[]>([]);
+  const setMessages: React.Dispatch<React.SetStateAction<Message[]>> = useCallback((action) => {
+    rawSetMessages((prev) => {
+      const next = typeof action === 'function' ? (action as (prev: Message[]) => Message[])(prev) : action;
+      messagesRef.current = next;
+      return next;
+    });
+  }, []);
   const [isStreaming, setIsStreaming] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>('unknown');
   const [socketReady, setSocketReady] = useState(false);
@@ -504,8 +517,11 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
   const historyReadySessionRef = useRef<string | null>(null);
   const pendingStreamMessagesRef = useRef<StreamMessage[]>([]);
   const sessionIdRef = useRef<string | null>(sessionId);
+  const messagesRef = useRef<Message[]>([]);
   const onSessionTitleUpdateRef = useRef(options?.onSessionTitleUpdate);
+  const onUnreadPushRef = useRef(options?.onUnreadPush);
   const onSessionDeletedRef = useRef(options?.onSessionDeleted);
+  const onSessionIdleRef = useRef(options?.onSessionIdle);
 
   const clearHeartbeatTimer = useCallback(() => {
     if (heartbeatTimerRef.current) {
@@ -560,8 +576,16 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
   }, [options?.onSessionTitleUpdate]);
 
   useEffect(() => {
+    onUnreadPushRef.current = options?.onUnreadPush;
+  }, [options?.onUnreadPush]);
+
+  useEffect(() => {
     onSessionDeletedRef.current = options?.onSessionDeleted;
   }, [options?.onSessionDeleted]);
+
+  useEffect(() => {
+    onSessionIdleRef.current = options?.onSessionIdle;
+  }, [options?.onSessionIdle]);
 
   useEffect(() => {
     knownUserMessageIdsRef.current = new Set(
@@ -1071,6 +1095,15 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
       case 'session.status':
         if (msg.sessionStatus === 'idle' || msg.sessionStatus === 'completed') {
           finalizeAllStreamingMessages();
+          const maxSeq = Math.max(
+            0,
+            ...messagesRef.current
+              .filter((m) => !m.isStreaming && m.messageSeq != null)
+              .map((m) => m.messageSeq!),
+          );
+          if (maxSeq > 0) {
+            onSessionIdleRef.current?.(maxSeq);
+          }
         } else if (msg.sessionStatus === 'busy' || msg.sessionStatus === 'retry') {
           setIsStreaming(true);
         }
@@ -1120,6 +1153,15 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
       case 'streaming': {
         if (isIdleSessionStatus(msg.sessionStatus) && (!Array.isArray(msg.parts) || msg.parts.length === 0)) {
           finalizeAllStreamingMessages();
+          const maxSeq = Math.max(
+            0,
+            ...messagesRef.current
+              .filter((m) => !m.isStreaming && m.messageSeq != null)
+              .map((m) => m.messageSeq!),
+          );
+          if (maxSeq > 0) {
+            onSessionIdleRef.current?.(maxSeq);
+          }
         } else {
           restoreStreamingMessage(msg);
         }
@@ -1147,17 +1189,36 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
   }, [processStreamMessage]);
 
   const handleStreamMessage = useCallback((msg: StreamMessage) => {
-    // session.deleted 无论当前会话都必须处理，确保多端同步
-    if (msg.type !== 'session.deleted') {
-      const currentSessionId = sessionIdRef.current;
-      const messageSessionId = getStreamMessageSessionId(msg);
-      if (messageSessionId && (!currentSessionId || messageSessionId !== currentSessionId)) {
-        return;
+    // session.unread / session.read 推送不受当前会话限制，立刻转发给回调
+    if (msg.type === 'session.unread' || msg.type === 'session.read') {
+      let contentObj: Record<string, unknown> = {};
+      if (typeof msg.content === 'string') {
+        try {
+          contentObj = JSON.parse(msg.content);
+        } catch { /* ignore parse errors, fields default to 0/undefined */ }
       }
+      const sid = msg.welinkSessionId != null ? String(msg.welinkSessionId)
+        : (contentObj.welinkSessionId != null ? String(contentObj.welinkSessionId) : '');
+      const pushMsg: UnreadPushMessage = {
+        type: msg.type,
+        welinkSessionId: sid,
+        maxSeq: typeof contentObj.maxSeq === 'number' ? contentObj.maxSeq : Number(contentObj.maxSeq) || 0,
+        readSeq: contentObj.readSeq != null ? Number(contentObj.readSeq) : undefined,
+        assistantAccount: typeof contentObj.assistantAccount === 'string' ? contentObj.assistantAccount : undefined,
+      };
+      onUnreadPushRef.current?.(pushMsg);
+      return;
     }
 
     const currentSessionId = sessionIdRef.current;
     const messageSessionId = getStreamMessageSessionId(msg);
+
+    // session.deleted 无论当前会话都必须处理，确保多端同步
+    if (msg.type !== 'session.deleted') {
+      if (messageSessionId && (!currentSessionId || messageSessionId !== currentSessionId)) {
+        return;
+      }
+    }
     if (
       currentSessionId
       && messageSessionId === currentSessionId
@@ -1202,6 +1263,16 @@ export function useSkillStream(sessionId: string | null, options?: UseSkillStrea
           );
           historyReadySessionRef.current = sessionId;
           setMessages((prev) => mergeHistoryMessages(prev, normalized));
+          // 历史加载完成后上报已读（覆盖 resume idle 先于历史到达的竞态）
+          const historyMaxSeq = Math.max(
+            0,
+            ...normalized
+              .filter((m) => !m.isStreaming && m.messageSeq != null)
+              .map((m) => m.messageSeq!),
+          );
+          if (historyMaxSeq > 0) {
+            onSessionIdleRef.current?.(historyMaxSeq);
+          }
           flushPendingStreamMessages(sessionId);
           requestResume();
         }

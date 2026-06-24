@@ -1,5 +1,6 @@
 package com.opencode.cui.skill.service.sync;
 
+import com.opencode.cui.skill.config.MultiSyncProperties;
 import com.opencode.cui.skill.model.SyncMode;
 import com.opencode.cui.skill.model.SyncRequest;
 import com.opencode.cui.skill.model.SyncType;
@@ -25,7 +26,9 @@ class CompositeMultiDeviceSyncServiceTest {
     void setUp() {
         wsService = new StubSyncService(SyncMode.WS);
         imService = new StubSyncService(SyncMode.IM);
-        composite = new CompositeMultiDeviceSyncService(List.of(wsService, imService));
+        MultiSyncProperties props = new MultiSyncProperties();
+        props.setMode("ws");
+        composite = new CompositeMultiDeviceSyncService(List.of(wsService, imService), props);
     }
 
     @Test
@@ -55,13 +58,15 @@ class CompositeMultiDeviceSyncServiceTest {
     @Test
     @DisplayName("unknown mode does not throw")
     void unknownModeDoesNotThrow() {
-        // Register only WS; IM request routes to unknown mode -> no-op
+        // Register only WS; IM request falls back to default WS mode
+        MultiSyncProperties props = new MultiSyncProperties();
+        props.setMode("ws");
         CompositeMultiDeviceSyncService c = new CompositeMultiDeviceSyncService(
-                List.of(wsService));
+                List.of(wsService), props);
         SyncRequest request = new SyncRequest(SyncMode.IM, SyncType.SESSION_UNREAD,
                 Map.of(), "user-1");
         assertDoesNotThrow(() -> c.push(request));
-        assertEquals(0, wsService.callCount(), "WS should not be called for IM request");
+        assertTrue(wsService.wasCalled(), "WS should be called as fallback for unknown mode");
     }
 
     @Test
@@ -73,8 +78,12 @@ class CompositeMultiDeviceSyncServiceTest {
     @Test
     @DisplayName("filters out self during construction")
     void filtersOutSelfDuringConstruction() {
+        MultiSyncProperties props1 = new MultiSyncProperties();
+        props1.setMode("ws");
         CompositeMultiDeviceSyncService c = new CompositeMultiDeviceSyncService(
-                List.of(wsService, imService, new CompositeMultiDeviceSyncService(List.of())));
+                List.of(wsService, imService,
+                        new CompositeMultiDeviceSyncService(List.of(), new MultiSyncProperties())),
+                props1);
         assertDoesNotThrow(() -> c.push(
                 new SyncRequest(SyncMode.WS, SyncType.SESSION_UNREAD, Map.of(), "user-1")));
         assertTrue(wsService.wasCalled(), "Self should have been filtered, WS should be called");
@@ -83,7 +92,8 @@ class CompositeMultiDeviceSyncServiceTest {
     @Test
     @DisplayName("empty service list does not throw")
     void emptyServiceListDoesNotThrow() {
-        CompositeMultiDeviceSyncService c = new CompositeMultiDeviceSyncService(List.of());
+        CompositeMultiDeviceSyncService c = new CompositeMultiDeviceSyncService(
+                List.of(), new MultiSyncProperties());
         assertDoesNotThrow(() -> c.push(
                 new SyncRequest(SyncMode.WS, SyncType.SESSION_UNREAD, Map.of(), "user-1")));
     }

@@ -70,6 +70,8 @@ class SkillSessionControllerTest {
     private ApplicationEventPublisher eventPublisher;
     @Mock
     private AsyncTaskService asyncTaskService;
+    @Mock
+    private com.opencode.cui.skill.config.UnreadProperties unreadProperties;
 
     private SkillSessionController controller;
 
@@ -99,7 +101,7 @@ class SkillSessionControllerTest {
                 assistantInfoService, scopeDispatcher, assistantAccountResolverService,
                 ruleService, defaultAssistantScopeStrategy, persistenceService, bufferService,
                 messageRepository, asyncTaskService, eventPublisher);
-        controller = new SkillSessionController(sessionService, accessControlService, flowService);
+        controller = new SkillSessionController(sessionService, accessControlService, flowService, unreadProperties);
     }
 
     @Test

@@ -1,4 +1,4 @@
-import type { Session, Message, MessageHistoryPage } from '../protocol/types';
+import type { Session, Message, MessageHistoryPage, UnreadResponse, ReadReportResponse } from '../protocol/types';
 import { ensureDevUserIdCookie } from './devAuth';
 
 // ---------------------------------------------------------------------------
@@ -368,5 +368,37 @@ export function sendToIm(
   return request<void>(`/api/skill/sessions/${sessionId}/send-to-im`, {
     method: 'POST',
     body: JSON.stringify({ content }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Unread badge
+// ---------------------------------------------------------------------------
+
+/** POST /api/skill/sessions/unread
+ *
+ * 查询未读会话信息。不传 sessionIds 返回全部未读会话，传入则仅返回指定会话详情。
+ */
+export function fetchUnreadSessions(
+  assistantAccount: string,
+  sessionIds?: string[],
+): Promise<UnreadResponse> {
+  return request<UnreadResponse>('/api/skill/sessions/unread', {
+    method: 'POST',
+    body: JSON.stringify({ assistantAccount, sessionIds }),
+  });
+}
+
+/** POST /api/skill/sessions/{id}/read
+ *
+ * 前端已读上报：将已渲染的最大 message_seq 上报给服务端。
+ */
+export function reportRead(
+  sessionId: string | number,
+  readSeq: number,
+): Promise<ReadReportResponse> {
+  return request<ReadReportResponse>(`/api/skill/sessions/${sessionId}/read`, {
+    method: 'POST',
+    body: JSON.stringify({ readSeq }),
   });
 }

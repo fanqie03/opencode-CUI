@@ -23,16 +23,23 @@
 | 1 | 范围 | 仅 miniapp 场景 |
 | 2 | 已读触发 | 前端上报（已渲染的最大 message_seq 变化时上报，含节流） |
 | 3 | 已读粒度 | 前端自行追踪 `readMessageSeq`，服务端 Redis Hash 维护 `maxSeq`，Lua 原子比较 |
-| 4 | 已读/未读存储 | 纯 Redis Hash `ss:unread:{userId}`（sessionId→maxSeq，TTL 7d），Lua 自愈无需 DB 兜底 |
+| 4 | 已读/未读存储 | 纯 Redis Hash `ss:unread:{userId}:{assistantAccount}`（sessionId→maxSeq），按助手隔离，Lua 自愈无需 DB 兜底 |
 | 5 | 多端同步 | `MultiDeviceSyncService` 接口 + 复合实现，按 `unread.sync-mode`（ws/im）路由 |
 | 6 | 同步实现（cloud） | Redis pub/sub `user-stream:{userId}` → WS 广播 `session.unread` |
 | 7 | 同步实现（inner） | IM API `/v1/app-notify` 广播 |
 | 8 | 活跃会话追踪 | **不做**，服务端一律推送，前端自行判断是否显示角标 |
 | 9 | 免打扰判断 | 前端判断：若正在看某会话则不显示角标 |
-| 10 | UI 形式 | 数字角标（超过 99 显示 `99+`） |
+| 10 | UI 形式 | 红点（二态：有未读显示红点，无未读不显示） |
 | 11 | 推送时机 | 消息落库后推送（tool_done 处理链中） |
 | 12 | 流式渲染期间的已读 | 消息未完全渲染（流式进行中）不更新 `readMessageSeq`；单个消息渲染完成后才更新 |
-| 13 | 未读查询 | 单一 `POST /unread`（sessionIds 可选）：不传→总数，传入→详情列表 |
+| 13 | 未读查询 | 单一 `POST /unread`（assistantAccount + sessionIds 可选）：不传 sessionIds→全部未读会话详情；传入→指定会话详情 |
+| 14 | 存储策略 | 纯 Redis Hash `ss:unread:{userId}:{assistantAccount}`，按助手隔离，无 MySQL 持久化，接受 Redis 故障后自愈重建 |
+| 15 | IM 乱序保护 | 推送消息携带 `maxSeq`，前端单调校验（仅当 `maxSeq >= 当前已知maxSeq` 时应用），防止 IM 通道消息乱序导致红点错误闪烁 |
+| 16 | 硬删除清理 | `SessionDeletedEvent` 监听 → `HDEL ss:unread:{userId} {sessionId}`，清理已删除会话的残留 Hash field |
+| 17 | 前端架构 | `useReadTracking`（readMessageSeq 追踪 + debounce + REST 上报 + 流式保护）+ `useUnreadBadge`（拉取 + 推送处理 + 角标状态）|
+| 18 | Lua 简化 | `updateMaxSeq` 仅返回 0/1（1=需同步）；`markRead` 仅返回 0/1（1=需同步+HDEL）；去掉了 return 2 中间态 |
+| 19 | Domain 白名单 | `skill.unread.session-domain-whitelist` 配置（默认 `miniapp`），仅白名单 domain 的会话触发未读/已读逻辑 |
+| 20 | IM 重试补偿 | Spring Retry 注解驱动，`@Retryable(maxAttempts=5, delay=1s, multiplier=2)`，参数由 `skill.sync.im.retry.*` 配置注入 |
 
 ## 需求
 
@@ -59,20 +66,14 @@
 → 服务端 Lua markRead → 条件发布 ReadReportedEvent → 广播
 ```
 
-### 未读查询（两步拉取，离线后进入应用时用）
+### 未读查询（离线后进入应用时用）
 
 ```
-1. 前端进入应用 / 回到前台 / WS 重连
-   → POST /api/skill/sessions/unread（不传 sessionIds）
-   → 服务端 HLEN 返回有未读的会话总数
-   → 返回 { unreadSessionCount: N }
-   → 前端决定是否显示全局红点
-
-2. 侧边栏渲染可见会话列表
-   → POST /api/skill/sessions/unread { sessionIds: [...] }
-   → 服务端 HLEN + HMGET 返回总数+详情
-   → 返回 { unreadSessionCount, unreadSessionList }
-   → 前端更新各会话角标
+前端进入应用 / 回到前台 / WS 重连 / 侧边栏渲染
+  → POST /api/skill/sessions/unread { assistantAccount }
+  → 服务端 HGETALL 返回所有未读会话
+  → 返回 { unreadSessionCount, unreadSessionList }
+  → 前端更新各会话红点
 ```
 
 ### 未读推送（事件驱动，零侵入现有逻辑）
@@ -96,15 +97,16 @@ SkillSessionService.reportRead → 发布 ReadReportedEvent
 
 ## 验收标准
 
-1. 非活跃会话收到新消息后，会话列表出现数字角标
-2. 前端渲染完成消息后上报已读，角标消失
+1. 非活跃会话收到新消息后，会话列表出现红点角标
+2. 前端渲染完成消息后上报已读，红点消失
 3. 流式输出进行中切换会话，不推进 `readMessageSeq`
-4. 设备 A 上报已读，设备 B 上角标同步消失
+4. 设备 A 上报已读，设备 B 上红点同步消失（推送携带 maxSeq，前端单调校验防乱序）
 5. im 模式：IM API `/v1/app-notify` 正确调用
 6. ws 模式：WS `session.unread` 正常广播
-7. `POST /unread`（sessionIds 可选/传入）返回未读信息与实际一致
+7. `POST /unread`（不传 sessionIds 返回全部未读详情，传入返回指定详情）与实际一致
 8. Hash `ss:unread:{userId}` TTL 7d，Lua 自愈无 DB 依赖
-9. 离线后打开应用，未读角标正确显示
+9. 离线后打开应用，红点正确显示
+10. 会话硬删除后，对应 Hash field 被清理
 
 ## 范围外
 

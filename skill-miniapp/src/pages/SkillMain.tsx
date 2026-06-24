@@ -8,7 +8,10 @@ import { useSkillSession } from '../hooks/useSkillSession';
 import { useSkillStream } from '../hooks/useSkillStream';
 import { useSendToIm } from '../hooks/useSendToIm';
 import { useAgentSelector } from '../hooks/useAgentSelector';
+import { useReadTracking } from '../hooks/useReadTracking';
+import { useUnreadBadge } from '../hooks/useUnreadBadge';
 import { MINIAPP_SESSION_DOMAIN, MINIAPP_SESSION_TYPE } from '../constants/session';
+import type { UnreadPushMessage } from '../protocol/types';
 
 interface SkillMainProps {
   onCollapse: () => void;
@@ -141,9 +144,13 @@ export const SkillMain: React.FC<SkillMainProps> = ({
     }
   }, [initialSessionId, currentSession, sessions, switchSession]);
 
+  // 桥接：onSessionIdle 回调在 useReadTracking 之前需要用到 reportReadNow
+  const reportReadNowRef = useRef<(seq: number) => void>(undefined);
+
   // Streaming
   const {
     messages,
+    isStreaming,
     agentStatus,
     socketReady,
     sendMessage,
@@ -151,7 +158,9 @@ export const SkillMain: React.FC<SkillMainProps> = ({
     error: streamError,
   } = useSkillStream(activeSessionId, {
     onSessionTitleUpdate: updateSessionTitle,
+    onUnreadPush: (msg) => setUnreadPush(msg),
     onSessionDeleted: removeSessionLocally,
+    onSessionIdle: (maxSeq) => reportReadNowRef.current?.(maxSeq),
   });
 
   // Send to IM
@@ -169,6 +178,42 @@ export const SkillMain: React.FC<SkillMainProps> = ({
     selectAgent,
     loading: agentsLoading,
   } = useAgentSelector();
+
+  // 未读推送状态（WS → useUnreadBadge 的桥接）
+  const [unreadPush, setUnreadPush] = useState<UnreadPushMessage | null>(null);
+
+  // 会话 ID 列表（供 useUnreadBadge 使用）
+  const sessionIds = sessions.map((s) => s.id);
+
+  // 当前活跃会话的 assistantAccount
+  const activeAssistantAccount = sessions.find((s) => s.id === activeSessionId)?.assistantAccount;
+
+  // 未读角标
+  const { unreadMap } = useUnreadBadge(
+    activeAssistantAccount,
+    sessionIds,
+    unreadPush,
+    undefined,
+    activeSessionId,
+  );
+
+  // 已读上报追踪
+  const { trackMessageRendered, reportReadNow } = useReadTracking(activeSessionId, isStreaming);
+  reportReadNowRef.current = reportReadNow;
+
+  // 当流式结束时，上报当前最大已渲染 messageSeq
+  useEffect(() => {
+    if (isStreaming || !activeSessionId) return;
+    const maxSeq = Math.max(
+      0,
+      ...messages
+        .filter((m) => !m.isStreaming && m.messageSeq != null)
+        .map((m) => m.messageSeq!),
+    );
+    if (maxSeq > 0) {
+      trackMessageRendered(maxSeq);
+    }
+  }, [messages, isStreaming, activeSessionId, trackMessageRendered]);
 
   const handleNewSession = useCallback(async () => {
     if (!selectedAgent) return;
@@ -294,6 +339,7 @@ export const SkillMain: React.FC<SkillMainProps> = ({
             activeSessionId={activeSessionId}
             onSelect={(id) => switchSession(id)}
             onNewSession={handleNewSession}
+            unreadMap={unreadMap}
             onDelete={(id) => deleteSession(id)}
           />
         )}

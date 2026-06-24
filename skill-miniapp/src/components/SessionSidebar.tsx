@@ -6,7 +6,8 @@ interface SessionSidebarProps {
   activeSessionId: string | null;
   onSelect: (sessionId: string) => void;
   onNewSession: () => void;
-  onDelete?: (sessionId: string) => void;
+  unreadMap?: Record<string, number>;
+  onDelete?: (sessionId: string) => Promise<void>;
 }
 
 const statusColors: Record<string, string> = {
@@ -38,6 +39,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   activeSessionId,
   onSelect,
   onNewSession,
+  unreadMap,
   onDelete,
 }) => {
   return (
@@ -67,6 +69,9 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
               >
                 <div className="session-title">
                   <span className="session-title-text">{session.title || '未命名会话'}</span>
+                  {unreadMap && unreadMap[session.id] > 0 && (
+                    <span className="session-badge" />
+                  )}
                   {onDelete && (
                     <button
                       type="button"

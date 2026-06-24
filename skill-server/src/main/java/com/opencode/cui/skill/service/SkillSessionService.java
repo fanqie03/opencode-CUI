@@ -3,9 +3,12 @@ package com.opencode.cui.skill.service;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.SessionListQuery;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.model.UnreadSessionItem;
+import com.opencode.cui.skill.model.event.ReadReportedEvent;
 import com.opencode.cui.skill.repository.SkillSessionRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +34,8 @@ public class SkillSessionService {
     private final SnowflakeIdGenerator snowflakeIdGenerator;
     private final SessionRouteService sessionRouteService;
     private final RedisMessageBroker redisMessageBroker;
+    private final UnreadRedisService unreadRedisService;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     @Value("${skill.session.idle-timeout-minutes:30}")
     private int idleTimeoutMinutes;
@@ -38,11 +43,15 @@ public class SkillSessionService {
     public SkillSessionService(SkillSessionRepository sessionRepository,
             SnowflakeIdGenerator snowflakeIdGenerator,
             SessionRouteService sessionRouteService,
-            RedisMessageBroker redisMessageBroker) {
+            RedisMessageBroker redisMessageBroker,
+            UnreadRedisService unreadRedisService,
+            ApplicationEventPublisher applicationEventPublisher) {
         this.sessionRepository = sessionRepository;
         this.snowflakeIdGenerator = snowflakeIdGenerator;
         this.sessionRouteService = sessionRouteService;
         this.redisMessageBroker = redisMessageBroker;
+        this.unreadRedisService = unreadRedisService;
+        this.applicationEventPublisher = applicationEventPublisher;
     }
 
     /** 创建新的 Skill 会话。 */
@@ -395,6 +404,48 @@ public class SkillSessionService {
         log.info("Marked {} sessions as IDLE (inactive since before {})", count, cutoff);
 
         // Note: session_route MySQL cleanup removed — ownership now uses Redis TTL expiry.
+    }
+
+    /**
+     * Get unread state for one or more sessions from the Redis Hash.
+     * If {@code sessionIds} is null or empty, returns all unread sessions via HGETALL.
+     * Otherwise, returns requested sessions via HMGET (only fields with values are included).
+     */
+    public List<UnreadSessionItem> getUnreadSessions(String userId, String assistantAccount,
+            List<String> sessionIds) {
+        return unreadRedisService.getUnread(userId, assistantAccount, sessionIds);
+    }
+
+    /**
+     * Process a read report from the frontend.
+     * Atomically compares {@code readSeq} against the stored maxSeq via Lua.
+     * If the session is fully read (or was never tracked), publishes a
+     * {@code ReadReportedEvent} so other devices can clear the badge.
+     * Domain-whitelist gating is handled in {@code UnreadManageListener.onToolDone},
+     * not here — this method is a pure delegation layer.
+     */
+    public void reportRead(Long sessionId, int readSeq, String userId) {
+        SkillSession session = sessionRepository.findById(sessionId);
+        if (session == null) {
+            log.warn("reportRead: session not found sessionId={}", sessionId);
+            return;
+        }
+
+        String assistantAccount = session.getAssistantAccount();
+        Long result = unreadRedisService.markRead(userId, assistantAccount,
+                String.valueOf(sessionId), readSeq);
+
+        if (result != null && result == -1) {
+            throw new ProtocolException(400,
+                    "readSeq " + readSeq + " exceeds maxSeq for sessionId=" + sessionId);
+        }
+
+        if (result != null && result == 1) {
+            applicationEventPublisher.publishEvent(
+                    new ReadReportedEvent(sessionId, readSeq, userId, assistantAccount));
+            log.debug("reportRead: markRead=1, published ReadReportedEvent sessionId={} readSeq={}",
+                    sessionId, readSeq);
+        }
     }
 
     /**

@@ -66,10 +66,11 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
-        <!-- Redisson 分布式锁 -->
+        <!-- Redisson 分布式锁。只用 RedissonClient，不引入 starter 避免
+             RedissonConnectionFactory 覆盖 Lettuce 导致 pub/sub 失效 -->
         <dependency>
             <groupId>org.redisson</groupId>
-            <artifactId>redisson-spring-boot-starter</artifactId>
+            <artifactId>redisson</artifactId>
             <version>3.40.2</version>
         </dependency>
 
@@ -91,6 +92,12 @@
             <groupId>org.java-websocket</groupId>
             <artifactId>Java-WebSocket</artifactId>
             <version>1.5.6</version>
+        </dependency>
+
+        <!-- Spring Retry (IM multi-device sync retry support) -->
+        <dependency>
+            <groupId>org.springframework.retry</groupId>
+            <artifactId>spring-retry</artifactId>
         </dependency>
 
         <!-- Caffeine Cache (替换无界 ConcurrentHashMap，防止内存泄漏) -->

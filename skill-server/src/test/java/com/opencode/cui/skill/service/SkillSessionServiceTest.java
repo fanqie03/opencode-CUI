@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
 
@@ -33,13 +34,19 @@ class SkillSessionServiceTest {
     @Mock
     private RedisMessageBroker redisMessageBroker;
 
+    @Mock
+    private UnreadRedisService unreadRedisService;
+
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
+
     private SkillSessionService service;
 
     @BeforeEach
     void setUp() {
         lenient().when(snowflakeIdGenerator.nextId()).thenReturn(42L);
         service = new SkillSessionService(sessionRepository, snowflakeIdGenerator, sessionRouteService,
-                redisMessageBroker);
+                redisMessageBroker, unreadRedisService, applicationEventPublisher);
     }
 
     @Test

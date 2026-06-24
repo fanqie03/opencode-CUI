@@ -2,8 +2,14 @@ package com.opencode.cui.skill.controller;
 
 import com.opencode.cui.skill.model.ApiResponse;
 import com.opencode.cui.skill.model.PageResult;
+import com.opencode.cui.skill.model.ReadReportRequest;
+import com.opencode.cui.skill.model.ReadReportResponse;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.model.UnreadRequest;
+import com.opencode.cui.skill.model.UnreadResponse;
+import com.opencode.cui.skill.model.UnreadSessionItem;
 import com.opencode.cui.skill.service.ProtocolUtils;
+import com.opencode.cui.skill.config.UnreadProperties;
 import com.opencode.cui.skill.service.SessionAccessControlService;
 import com.opencode.cui.skill.service.SkillSessionFlowService;
 import com.opencode.cui.skill.service.SkillSessionService;
@@ -20,7 +26,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
+
 
 /**
  * 会话管理控制器。
@@ -35,13 +43,16 @@ public class SkillSessionController {
     private final SkillSessionService sessionService;
     private final SessionAccessControlService accessControlService;
     private final SkillSessionFlowService flowService;
+    private final UnreadProperties unreadProperties;
 
     public SkillSessionController(SkillSessionService sessionService,
                                   SessionAccessControlService accessControlService,
-                                  SkillSessionFlowService flowService) {
+                                  SkillSessionFlowService flowService,
+                                  UnreadProperties unreadProperties) {
         this.sessionService = sessionService;
         this.accessControlService = accessControlService;
         this.flowService = flowService;
+        this.unreadProperties = unreadProperties;
     }
 
     /**
@@ -178,6 +189,59 @@ public class SkillSessionController {
         log.info("[EXIT] abortSession: sessionId={}", id);
         return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "aborted", "welinkSessionId", id)));
     }
+
+    /**
+     * POST /api/skill/sessions/unread
+     * Query unread message state. If {@code sessionIds} is omitted, returns all
+     * sessions with unread messages. If provided, returns only the requested sessions.
+     */
+    @PostMapping("/unread")
+    public ResponseEntity<ApiResponse<UnreadResponse>> getUnreadSessions(
+            @CookieValue(value = "userId", required = false) String userIdCookie,
+            @RequestBody UnreadRequest request) {
+        String resolvedUserId = accessControlService.requireUserId(userIdCookie);
+        if (request == null || request.getAssistantAccount() == null || request.getAssistantAccount().isBlank()) {
+            return ResponseEntity.ok(ApiResponse.error(400, "assistantAccount is required"));
+        }
+        if (request.getSessionIds() != null
+                && request.getSessionIds().size() > unreadProperties.getMaxQuerySessionIds()) {
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "sessionIds exceeds max " + unreadProperties.getMaxQuerySessionIds()));
+        }
+
+        List<UnreadSessionItem> items = sessionService.getUnreadSessions(
+                resolvedUserId, request.getAssistantAccount(), request.getSessionIds());
+
+        UnreadResponse response = new UnreadResponse(items.size(), items);
+        return ResponseEntity.ok(ApiResponse.ok(response));
+    }
+
+    /**
+     * POST /api/skill/sessions/{id}/read
+     * Report that the frontend has rendered up to {@code readSeq}.
+     */
+    @PostMapping("/{id}/read")
+    public ResponseEntity<ApiResponse<ReadReportResponse>> reportRead(
+            @CookieValue(value = "userId", required = false) String userIdCookie,
+            @PathVariable String id,
+            @RequestBody ReadReportRequest request) {
+        Long sessionId = ProtocolUtils.parseSessionId(id);
+        if (sessionId == null) {
+            return ResponseEntity.ok(ApiResponse.error(400, "Invalid session ID"));
+        }
+        if (request == null || request.getReadSeq() <= 0) {
+            return ResponseEntity.ok(ApiResponse.error(400, "readSeq is required and must be positive"));
+        }
+
+        String resolvedUserId = accessControlService.requireUserId(userIdCookie);
+        accessControlService.requireSessionAccess(sessionId, userIdCookie);
+
+        sessionService.reportRead(sessionId, request.getReadSeq(), resolvedUserId);
+
+        return ResponseEntity.ok(ApiResponse.ok(new ReadReportResponse(id, 0)));
+    }
+
+    // ==================== Request / Response DTOs ====================
 
     /** 创建会话请求体。 */
     @Data

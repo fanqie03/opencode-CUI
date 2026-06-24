@@ -46,7 +46,9 @@ export type StreamMessageType =
   | 'ask_more'
   | 'error'
   | 'snapshot'
-  | 'streaming';
+  | 'streaming'
+  | 'session.unread'
+  | 'session.read';
 
 export interface StreamTokenUsage {
   input?: number;
@@ -103,6 +105,11 @@ export interface StreamMessage {
 
   subagentSessionId?: string;
   subagentName?: string;
+
+  // 未读推送专用字段 (session.unread / session.read)
+  maxSeq?: number;
+  readSeq?: number;
+  assistantAccount?: string;
 
   // 云端扩展
   keywords?: string[];
@@ -205,3 +212,29 @@ export interface ToolUseInfo {
 export type OpenCodeEventType = string;
 export type OpenCodeEvent = Record<string, unknown>;
 export type ParsedEvent = Record<string, unknown>;
+
+// 未读信息查询响应
+export interface UnreadSessionItem {
+  sessionId: string;
+  maxSeq: number;
+}
+
+export interface UnreadResponse {
+  unreadSessionCount: number;
+  unreadSessionList: UnreadSessionItem[];
+}
+
+// 已读上报响应
+export interface ReadReportResponse {
+  welinkSessionId: string;
+  unreadCount: number;
+}
+
+// WS 未读推送消息 (session.unread / session.read)
+export interface UnreadPushMessage {
+  type: 'session.unread' | 'session.read';
+  welinkSessionId: string;
+  maxSeq: number;
+  readSeq?: number;
+  assistantAccount?: string;
+}

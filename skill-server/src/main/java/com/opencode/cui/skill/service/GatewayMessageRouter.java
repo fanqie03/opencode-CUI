@@ -11,6 +11,8 @@ import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.PendingChatRequest;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.model.event.ToolDoneEvent;
+import com.opencode.cui.skill.model.event.ToolErrorEvent;
 import com.opencode.cui.skill.logging.MdcHelper;
 import com.opencode.cui.skill.service.delivery.OutboundDeliveryDispatcher;
 import com.opencode.cui.skill.model.AssistantInfo;
@@ -24,6 +26,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
@@ -213,6 +216,9 @@ public class GatewayMessageRouter {
             StreamMessage.Types.REFERENCE, StreamMessage.Types.ASK_MORE);
 
     private static final String MISSING_MESSAGE_ID_BUFFER_KEY = "__missing_message_id__";
+
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
 
     /**
      * Spring 主构造：自动注入 Clock / Ticker（生产默认 systemUTC / systemTicker）。
@@ -1001,6 +1007,9 @@ public class GatewayMessageRouter {
         StreamMessage msg = StreamMessage.sessionStatus("idle");
         Long numericId = ProtocolUtils.parseSessionId(sessionId);
 
+        // 先更新未读缓存（同步），再推送 idle 到前端，消除 readSeq 上报时 maxSeq 未写入的竞态窗口
+        eventPublisher.publishEvent(new ToolDoneEvent(numericId, userId, session));
+
         emitter.emitToSession(session, sessionId, userId, msg);
 
         if (session == null || session.isMiniappDomain()) {
@@ -1076,6 +1085,12 @@ public class GatewayMessageRouter {
             } catch (Exception e) {
                 log.error("Failed to persist tool_error for session {}: {}", sessionId, e.getMessage());
             }
+        }
+
+        // 先更新未读缓存（同步），再推送 error 到前端
+        if (numericId != null) {
+            eventPublisher.publishEvent(
+                    new ToolErrorEvent(numericId, userId, session));
         }
 
         StreamMessage errorMsg = StreamMessage.builder()
