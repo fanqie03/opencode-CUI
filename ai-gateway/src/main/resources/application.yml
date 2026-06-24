@@ -178,6 +178,8 @@ management:
       prometheus:
         enabled: true
     distribution:
-      percentiles-histogram: true
+      percentiles-histogram:
+        external_api_call_duration_seconds: true
+        common_interface_duration_seconds: true
     tags:
       application: ai-gateway

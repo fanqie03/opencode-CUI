@@ -9,13 +9,56 @@ management:
       prometheus:
         enabled: true
     distribution:
-      percentiles-histogram: true
+      percentiles-histogram:
+        external_api_call_duration_seconds: true
+        common_interface_duration_seconds: true
+        chat_stream_ttft_seconds: true
+        chat_stream_latency_seconds: true
+        chat_stream_tpot_seconds: true
       slo:
-        external_api_call_duration_seconds: 50ms,100ms,200ms,500ms,1s,2s,5s,10s
-        common_interface_duration_seconds: 10ms,50ms,100ms,200ms,500ms,1s,2s,5s
-        chat_stream_ttft_seconds: 100ms,200ms,500ms,1s,2s,5s,10s
-        chat_stream_latency_seconds: 500ms,1s,2s,5s,10s,30s,60s,120s
-        chat_stream_tpot_seconds: 10ms,20ms,50ms,100ms,200ms,500ms,1s
+        external_api_call_duration_seconds:
+          - 50ms
+          - 100ms
+          - 200ms
+          - 500ms
+          - 1s
+          - 2s
+          - 5s
+          - 10s
+        common_interface_duration_seconds:
+          - 10ms
+          - 50ms
+          - 100ms
+          - 200ms
+          - 500ms
+          - 1s
+          - 2s
+          - 5s
+        chat_stream_ttft_seconds:
+          - 100ms
+          - 200ms
+          - 500ms
+          - 1s
+          - 2s
+          - 5s
+          - 10s
+        chat_stream_latency_seconds:
+          - 500ms
+          - 1s
+          - 2s
+          - 5s
+          - 10s
+          - 30s
+          - 60s
+          - 120s
+        chat_stream_tpot_seconds:
+          - 10ms
+          - 20ms
+          - 50ms
+          - 100ms
+          - 200ms
+          - 500ms
+          - 1s
     tags:
       application: skill-server
 
