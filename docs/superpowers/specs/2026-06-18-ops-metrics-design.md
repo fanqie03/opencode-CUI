@@ -420,17 +420,19 @@ rate(chat_stream_tokens_per_second_sum[5m]) / rate(chat_stream_tokens_per_second
 
 | 指标名 | 类型 | 说明 |
 |--------|------|------|
-| `gateway_ws_current_connections` | Gauge | 当前已连接的 gateway 数 |
-| `gateway_ws_total_connections` | Counter | 总共连接次数（累计） |
+| `websocket_connections_current` | Gauge | 当前活跃 WS 连接数（tag: `url`, `business`, `direction`） |
+| `websocket_connections_total` | Counter | 累计 WS 连接次数（tag: `url`, `business`, `direction`） |
+
+统一指标名，通过 tag 区分不同端点和业务：
+- `url`: WS 端点路径（如 `ws://gateway:8081/ws/skill`、`/ws/skill/stream` 等）
+- `business`: 业务标识（如 `ss-to-gateway`、`miniapp-stream`、`external-module`、`skill-server-relay`、`pcagent`）
+- `direction`: `inbound`（接受连接）或 `outbound`（发起连接）
 
 #### 4.6.2 实现方式
 
-在 `GatewayWSClient` 中注入 `MeterRegistry`：
-- `AtomicInteger currentConnections`: 当前连接数
-- `Counter totalConnections`: 累计连接次数
-- `Gauge` 绑定 `currentConnections` 到 `gateway_ws_current_connections`
-- 在 `onOpen` 回调中 `currentConnections++`、`totalConnections++`
-- 在 `onClose` 回调中 `currentConnections--`
+在 `GatewayWSClient` 中注入 `WsConnectionMetrics`：
+- `onOpen` 回调中调用 `wsConnectionMetrics.connectionOpened(url, business, direction)`
+- `onClose` 回调中调用 `wsConnectionMetrics.connectionClosed(url, business, direction)`
 
 #### 4.6.3 流程图
 
@@ -444,7 +446,7 @@ graph TD
 
     D[AtomicInteger<br/>currentConnections]
     E[Counter<br/>totalConnections]
-    F[Gauge<br/>gateway_ws_current_connections]
+    F[Gauge<br/>websocket_connections_current]
     G[MeterRegistry]
 
     A --> D
@@ -625,17 +627,16 @@ public record ChatFirstTokenTelemetryEvent(
 
 | 指标名 | 类型 | 说明 |
 |--------|------|------|
-| `gateway_ws_skill_current_connections` | Gauge | 当前被多少个 skill 连接 |
-| `gateway_ws_skill_total_connections` | Counter | 总共被 skill 连接次数（累计） |
+| `websocket_connections_current` | Gauge | 当前活跃 WS 连接数（tag: `url`, `business`, `direction`） |
+| `websocket_connections_total` | Counter | 累计 WS 连接次数（tag: `url`, `business`, `direction`） |
+
+统一指标名，通过 tag 区分不同端点和业务，与 skill-server 侧 `GatewayWSClient` 使用相同的 `WsConnectionMetrics` 组件。
 
 #### 5.3.2 实现方式
 
-在 `SkillRelayService` 中注入 `MeterRegistry`：
-- `AtomicInteger currentSkillConnections`: 当前 skill 连接数
-- `Counter totalSkillConnections`: 累计 skill 连接次数
-- `Gauge` 绑定 `currentSkillConnections` 到 `gateway_ws_skill_current_connections`
-- 在 `registerSourceSession()` 中 `currentSkillConnections++`、`totalSkillConnections++`
-- 在 `removeSourceSession()` 中 `currentSkillConnections--`
+在 `SkillRelayService` 和 `EventRelayService` 中注入 `WsConnectionMetrics`：
+- `registerSourceSession()` / `registerAgentSession()` 中调用 `wsConnectionMetrics.connectionOpened(url, business, direction)`
+- `removeSourceSession()` / `removeAgentSession()` 中调用 `wsConnectionMetrics.connectionClosed(url, business, direction)`
 
 #### 5.3.3 流程图
 
@@ -652,7 +653,7 @@ graph TD
 
     D[AtomicInteger<br/>currentSkillConnections]
     E[Counter<br/>totalSkillConnections]
-    F[Gauge<br/>gateway_ws_skill_current_connections]
+    F[Gauge<br/>websocket_connections_current]
     G[MeterRegistry]
 
     A --> B
