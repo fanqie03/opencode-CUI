@@ -763,18 +763,20 @@ public class GatewayMessageRouter {
                 // Get brainTag from assistant info if available
                 String brainTag = null;
                 String assistantAccount = null;
+                String robotId = null;
                 if (session != null) {
                     assistantAccount = session.getAssistantAccount();
                     if (!isDefaultAssistant(session)) {
                         AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
                         if (info != null) {
                             brainTag = info.getBusinessTag();
+                            robotId = info.getId();
                         }
                     }
                 }
                 int contentLength = msg.getContent() != null ? msg.getContent().length() : 0;
                 // Delegate first-token tracking + token counting to MessageTurnLifecycle
-                messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, userId, null, true), contentLength);
+                messageTurnLifecycle.onToken(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, userId, null, robotId, true), contentLength);
             }
         }
 
@@ -963,12 +965,14 @@ public class GatewayMessageRouter {
         }
         String brainTag = null;
         String assistantAccount = null;
+        String robotId = null;
         if (session != null) {
             assistantAccount = session.getAssistantAccount();
             if (!isDefaultAssistant(session)) {
                 AssistantInfo info = resolveAssistantInfoForEvent(session.getAk(), session);
                 if (info != null) {
                     brainTag = info.getBusinessTag();
+                    robotId = info.getId();
                 } else {
                     log.warn("[SKIP] onTurnEnd brainTag: assistant info not found, ak={}, sessionId={}, messageId={}, using UNKNOWN",
                         session.getAk(), sessionId, messageId);
@@ -982,7 +986,7 @@ public class GatewayMessageRouter {
                 sessionId, messageId);
         }
         String senderUserAccount = session != null ? session.getUserId() : null;
-        messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, senderUserAccount, null, success));
+        messageTurnLifecycle.onTurnEnd(new MessageTurnContext(messageId, brainTag, sessionId, assistantAccount, senderUserAccount, null, robotId, success));
     }
 
     /** 处理 tool_done：标记会话完成、统一投递 idle 状态、持久化最终消息。 */
