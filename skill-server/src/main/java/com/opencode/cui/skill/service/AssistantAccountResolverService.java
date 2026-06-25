@@ -12,7 +12,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
 
@@ -64,25 +63,6 @@ public class AssistantAccountResolverService {
         this.statusCacheTtlExistsSeconds = statusCacheTtlExistsSeconds;
         this.statusCacheTtlNotExistsSeconds = statusCacheTtlNotExistsSeconds;
         this.deletionMessage = deletionMessage;
-    }
-
-    public AssistantAccountResolverService(
-            RestTemplate restTemplate,
-            StringRedisTemplate redisTemplate,
-            com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService apiCallMetricsService,
-            @org.springframework.beans.factory.annotation.Value("${skill.assistant.resolve-url:}") String resolveUrl,
-            @org.springframework.beans.factory.annotation.Value("${skill.assistant.resolve-token:}") String resolveToken,
-            @org.springframework.beans.factory.annotation.Value("${skill.assistant.existence-check.skip-on-null-assistant-account:true}") boolean skipOnNullAssistantAccount,
-            @org.springframework.beans.factory.annotation.Value("${skill.assistant.status-cache-ttl-exists-seconds:300}") int statusCacheTtlExistsSeconds,
-            @org.springframework.beans.factory.annotation.Value("${skill.assistant.status-cache-ttl-not-exists-seconds:60}") int statusCacheTtlNotExistsSeconds,
-            @org.springframework.beans.factory.annotation.Value("${skill.assistant.deletion-message:该助理已被删除}") String deletionMessage) {
-        this(new AssistantInstanceInfoService(restTemplate, redisTemplate, MAPPER,
-                        resolveUrl, resolveToken, statusCacheTtlExistsSeconds, apiCallMetricsService),
-                redisTemplate,
-                skipOnNullAssistantAccount,
-                statusCacheTtlExistsSeconds,
-                statusCacheTtlNotExistsSeconds,
-                deletionMessage);
     }
 
     /**

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/skill-server/backend/type-safety.md", "reason": "校验 ImAppNotifyResponse record 字段 @JsonProperty 正确性"}
+{"file": ".trellis/spec/skill-server/backend/design-and-refactoring.md", "reason": "校验构造函数 DI 重构符合设计规范"}
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "校验测试 mock 层次正确、构造函数注入规范"}
+{"file": ".trellis/tasks/06-25-06-25-fix-service-constructor-di/prd.md", "reason": "对照 PRD 逐项核验变更完整性"}

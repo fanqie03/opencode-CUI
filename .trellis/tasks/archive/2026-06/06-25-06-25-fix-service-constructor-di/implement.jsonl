@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/skill-server/backend/type-safety.md", "reason": "ImAppNotifyResponse record 字段补全需遵循外部 API 模型 @JsonProperty 规范"}
+{"file": ".trellis/spec/skill-server/backend/design-and-refactoring.md", "reason": "构造函数反模式重构需遵循 DI 设计原则和重构阈值"}
+{"file": ".trellis/spec/skill-server/backend/conventions.md", "reason": "构造注入是约定之一，测试 mock 不能跨过抽象层"}
+{"file": ".trellis/tasks/06-25-06-25-fix-service-constructor-di/prd.md", "reason": "本次任务 PRD"}
