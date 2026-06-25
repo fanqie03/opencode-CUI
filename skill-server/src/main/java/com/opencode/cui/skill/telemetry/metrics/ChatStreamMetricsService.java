@@ -26,15 +26,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 按 messageId 维护每轮问答状态，记录 TTFT / Latency / TPS / TPOT。
  * messageId 为 null 时直接 return。brainTag 不存在则用 UNKNOWN 兜底。
  *
- * <p>多 pod 部署说明：
- * <ul>
- *   <li>{@code sessionStartTimes} — 存储在 Redis 中，因为 turnStart 可能来自 HTTP 入口（pod1），
- *       而 firstToken / turnEnd 通过 WS sticky routing 落在另一个 pod 上。
- *       Redis Key: {@code skill:metrics:stream:start:{messageId}}，TTL = session-ttl</li>
- *   <li>{@code firstTokenTimestamps} — 本地 Caffeine cache，因为 firstToken 和 turnEnd
- *       走同一 WS 连接，sticky routing 保证落在同一 pod</li>
- *   <li>{@code tokenCounts} — 同上，token 和 turnEnd 走同一 WS 连接</li>
- * </ul>
+ * <p>
+ * 多 pod 部署说明：
+ * sessionStartTimes 存储在 Redis 中，因为 turnStart 可能来自 HTTP 入口（pod1），
+ * 而 firstToken / turnEnd 通过 WS sticky routing 落在另一个 pod 上。
+ * Redis Key: {@code skill:metrics:stream:start:{messageId}}，TTL = session-ttl
+ * </p>
+ *
+ * <p>
+ * firstTokenTimestamps 和 tokenCounts 使用本地 Caffeine cache，
+ * 因为 firstToken / token / turnEnd 走同一 WS 连接，sticky routing 保证落在同一 pod。
+ * </p>
  */
 @Slf4j
 @Service
