@@ -36,7 +36,9 @@ class ChatStreamMetricsServiceTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
 
         service = new ChatStreamMetricsService(registry, welinkProvider, redisTemplate,
-                10000, Duration.ofMinutes(30));
+                10000, Duration.ofMinutes(30),
+                "openplatform_service_chat_first_token",
+                "openplatform_service_chat_turn_end");
     }
 
     @Test

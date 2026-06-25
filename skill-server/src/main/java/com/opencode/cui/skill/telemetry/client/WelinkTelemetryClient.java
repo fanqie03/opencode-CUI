@@ -19,14 +19,16 @@ import org.springframework.web.client.RestTemplate;
 /**
  * WeLink 上报 HTTP 客户端：POST {url}，body=加密信封 {@code {key, content}}。
  *
- * <p>请求头：
- * <ul>
- *   <li>{@code Authorization: Bearer <token>}</li>
- *   <li>{@code x-wlk-hwa: 1}</li>
- *   <li>{@code Content-Type: application/json}</li>
- * </ul>
+ * <p>
+ * 请求头：
+ * Authorization: Bearer token
+ * x-wlk-hwa: 1
+ * Content-Type: application/json
+ * </p>
  *
- * <p>所有异常都 catch + WARN，不抛回业务线程。
+ * <p>
+ * 所有异常都 catch + WARN，不抛回业务线程。
+ * </p>
  */
 @Slf4j
 public class WelinkTelemetryClient {
@@ -54,6 +56,7 @@ public class WelinkTelemetryClient {
      * @param payload   明文 {@link TelemetryPayload}
      */
     public void send(String eventId, String sessionId, TelemetryPayload payload) {
+        log.info("[WelinkTelemetry] send entry: eventId={}, sessionId={}", eventId, sessionId);
         String urlTemplate = "{telemetry.welink.url}";
         MetricServiceEnum metricService = MetricServiceEnum.TELEMETRY_WELINK_UPLOAD;
         boolean success = false;

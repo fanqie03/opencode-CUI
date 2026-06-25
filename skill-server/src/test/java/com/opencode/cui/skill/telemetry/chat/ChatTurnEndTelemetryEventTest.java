@@ -9,11 +9,11 @@ import static org.junit.jupiter.api.Assertions.*;
 class ChatTurnEndTelemetryEventTest {
 
     private final ChatTurnEndTelemetryEvent event = new ChatTurnEndTelemetryEvent(
-            "sess-1", "user-1", "assistant-1", "brain-A", "msg-1", 42, 3500L, true);
+            "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", "brain-A", "msg-1", 42, 3500L, true);
 
     @Test
-    void eventId_isSkillChatTurnEnd() {
-        assertEquals("skill_chat_turn_end", event.eventId());
+    void eventId_returnsConfiguredValue() {
+        assertEquals("openplatform_service_chat_turn_end", event.eventId());
     }
 
     @Test
@@ -47,14 +47,14 @@ class ChatTurnEndTelemetryEventTest {
     @Test
     void nullBusinessTag_usesUnknownFallback() {
         ChatTurnEndTelemetryEvent e = new ChatTurnEndTelemetryEvent(
-                "sess-1", "user-1", "assistant-1", null, "msg-1", 0, 100L, false);
+                "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", null, "msg-1", 0, 100L, false);
         assertEquals("UNKNOWN", e.extendData().get("businessTag"));
     }
 
     @Test
     void failedTurn_successIsFalse() {
         ChatTurnEndTelemetryEvent e = new ChatTurnEndTelemetryEvent(
-                "sess-1", "user-1", "assistant-1", "brain-A", "msg-fail", 0, 500L, false);
+                "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", "brain-A", "msg-fail", 0, 500L, false);
         assertEquals(false, e.extendData().get("success"));
     }
 }

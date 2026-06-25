@@ -6,20 +6,23 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 对话轮次结束事件（skill_chat_turn_end）。
+ * 对话轮次结束事件。
  * 在 {@code ChatStreamMetricsService.turnEnd()} 中上报到 WelinkTelemetryReporter。
  *
- * <p>携带三个核心指标：
- * <ul>
- *   <li>contentLength — 内容长度（本轮输出 token 总数）</li>
- *   <li>durationMs — 对话时长（从 turnStart 到 turnEnd 的总耗时）</li>
- *   <li>success — 本轮对话是否成功</li>
- * </ul>
+ * <p>
+ * 携带三个核心指标：
+ * contentLength — 内容长度（本轮输出 token 总数）
+ * durationMs — 对话时长（从 turnStart 到 turnEnd 的总耗时）
+ * success — 本轮对话是否成功
+ * </p>
  *
- * <p>上报维度：messageId、userId（senderUserAccount）、assistantId（assistantAccount）、sessionId。
- * {@link #userId()} 返回 {@code senderUserAccount}，助手账号作为独立维度放在 {@link #extendData()} 中。</p>
+ * <p>
+ * 上报维度：messageId、userId（senderUserAccount）、assistantId（assistantAccount）、sessionId。
+ * {@link #userId()} 返回 {@code senderUserAccount}，助手账号作为独立维度放在 {@link #extendData()} 中。
+ * </p>
  */
 public record ChatTurnEndTelemetryEvent(
+        String eventId,
         String sessionId,
         String senderUserAccount,
         String assistantAccount,
@@ -32,7 +35,7 @@ public record ChatTurnEndTelemetryEvent(
 
     @Override
     public String eventId() {
-        return "skill_chat_turn_end";
+        return eventId;
     }
 
     @Override

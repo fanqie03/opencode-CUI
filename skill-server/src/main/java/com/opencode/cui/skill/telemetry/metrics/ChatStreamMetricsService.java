@@ -49,6 +49,8 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
     private final WelinkTelemetryReporter welinkReporter;
     private final StringRedisTemplate redisTemplate;
     private final Duration sessionTtl;
+    private final String firstTokenEventId;
+    private final String turnEndEventId;
 
     /** 首 token 时间戳 — 本地 cache，WS sticky routing 保证同 pod */
     private final Cache<String, Long> firstTokenTimestamps;
@@ -59,11 +61,15 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
                                    ObjectProvider<WelinkTelemetryReporter> welinkReporterProvider,
                                    StringRedisTemplate redisTemplate,
                                    @Value("${skill.metrics.stream.max-sessions:10000}") long maxSessions,
-                                   @Value("${skill.metrics.stream.session-ttl:30m}") Duration sessionTtl) {
+                                   @Value("${skill.metrics.stream.session-ttl:30m}") Duration sessionTtl,
+                                   @Value("${skill.metrics.stream.event-id.first-token:openplatform_service_chat_first_token}") String firstTokenEventId,
+                                   @Value("${skill.metrics.stream.event-id.turn-end:openplatform_service_chat_turn_end}") String turnEndEventId) {
         this.meterRegistry = meterRegistry;
         this.welinkReporter = welinkReporterProvider.getIfAvailable();
         this.redisTemplate = redisTemplate;
         this.sessionTtl = sessionTtl;
+        this.firstTokenEventId = firstTokenEventId;
+        this.turnEndEventId = turnEndEventId;
 
         this.firstTokenTimestamps = Caffeine.newBuilder()
                 .recordStats()
@@ -114,7 +120,9 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
         // Report TTFT to Welink if reporter is available
         if (welinkReporter != null) {
             try {
+                log.info("[ChatStreamMetricsService] Welink firstToken report: eventId={}, messageId={}, sessionId={}", firstTokenEventId, messageId, ctx.sessionId());
                 welinkReporter.report(new ChatFirstTokenTelemetryEvent(
+                        firstTokenEventId,
                         ctx.sessionId(), ctx.senderUserAccount(), ctx.assistantAccount(),
                         ctx.brainTag(), ctx.messageId(), ttft));
             } catch (Throwable t) {
@@ -184,7 +192,9 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
         // Report turn-end metrics to Welink: content length, duration, success/failure
         if (welinkReporter != null) {
             try {
+                log.info("[ChatStreamMetricsService] Welink turnEnd report: eventId={}, messageId={}, sessionId={}, tokens={}, latency={}", turnEndEventId, messageId, ctx.sessionId(), tokens, latency);
                 welinkReporter.report(new ChatTurnEndTelemetryEvent(
+                        turnEndEventId,
                         ctx.sessionId(), ctx.senderUserAccount(), ctx.assistantAccount(),
                         ctx.brainTag(), ctx.messageId(), tokens, latency, ctx.success()));
             } catch (Throwable t) {
