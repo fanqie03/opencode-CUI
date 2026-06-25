@@ -199,8 +199,6 @@ skill:
     persona-base-url: ${SKILL_ASSISTANT_ID_PERSONA_BASE_URL:}
     cache-ttl-minutes: ${SKILL_ASSISTANT_ID_CACHE_TTL_MINUTES:30}
     match-ak: ${SKILL_ASSISTANT_ID_MATCH_AK:false}
-  content-convert:
-    max-content-length: ${SKILL_CONTENT_CONVERT_MAX_CONTENT_LENGTH:10000}
   delivery:
     mode: ${SKILL_DELIVERY_MODE:rest}
     invoke-source-ttl-seconds: ${SKILL_DELIVERY_INVOKE_SOURCE_TTL_SECONDS:300}
