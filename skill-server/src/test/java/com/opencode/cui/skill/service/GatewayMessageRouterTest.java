@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -23,11 +24,13 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -1324,6 +1327,225 @@ class GatewayMessageRouterTest {
         assertTrue(platformExt.has("businessSessionId"));
         assertTrue(platformExt.has("bizRobotTag"));
         assertTrue(platformExt.path("bizRobotTag").isNull());
+    }
+
+    // ==================== handleSlashCommandsResult tests ====================
+
+    /** 构造一条 slash_commands_result 消息。 */
+    private ObjectNode buildSlashCommandsResult(String sessionId, String... commandNames) {
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("type", "slash_commands_result");
+        node.put("welinkSessionId", sessionId);
+        ObjectNode payload = objectMapper.createObjectNode();
+        var arr = payload.putArray("slashCommands");
+        for (String name : commandNames) {
+            ObjectNode item = arr.addObject();
+            item.put("commands", name);
+            item.put("description", "Description for " + name);
+        }
+        node.set("payload", payload);
+        return node;
+    }
+
+    private ObjectNode buildSlashCommandsResultWithDescriptions(String sessionId,
+            String[][] commandsWithDescriptions) {
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("type", "slash_commands_result");
+        node.put("welinkSessionId", sessionId);
+        ObjectNode payload = objectMapper.createObjectNode();
+        var arr = payload.putArray("slashCommands");
+        for (String[] pair : commandsWithDescriptions) {
+            ObjectNode item = arr.addObject();
+            item.put("commands", pair[0]);
+            item.put("description", pair[1]);
+        }
+        node.set("payload", payload);
+        return node;
+    }
+
+    @Test
+    @DisplayName("slash_commands_result: commands are sorted alphabetically and emitted to client")
+    void slashCommandsResult_sortsAlphabeticallyAndEmits() {
+        router = buildRouter(true);
+
+        ObjectNode node = buildSlashCommandsResultWithDescriptions(WELINK_SESSION_ID,
+                new String[][] {
+                        { "/zebra", "Z command" },
+                        { "/alpha", "A command" },
+                        { "/mike", "M command" },
+                });
+
+        router.route("slash_commands_result", null, "user-1", node);
+
+        ArgumentCaptor<StreamMessage> msgCaptor = ArgumentCaptor.forClass(StreamMessage.class);
+        verify(emitter).emitToClient(eq(WELINK_SESSION_ID), eq("user-1"), msgCaptor.capture());
+        StreamMessage msg = msgCaptor.getValue();
+        assertEquals(StreamMessage.Types.SLASH_COMMANDS_RESULT, msg.getType());
+        assertEquals("assistant", msg.getRole());
+        assertEquals("running", msg.getStatus());
+        assertNotNull(msg.getSlashCommands());
+        assertEquals(3, msg.getSlashCommands().size());
+        assertEquals("/alpha", msg.getSlashCommands().get(0).getCommands());
+        assertEquals("/mike", msg.getSlashCommands().get(1).getCommands());
+        assertEquals("/zebra", msg.getSlashCommands().get(2).getCommands());
+    }
+
+    @Test
+    @DisplayName("slash_commands_result: items with blank commands are filtered out")
+    void slashCommandsResult_filtersBlankCommands() {
+        router = buildRouter(true);
+
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("type", "slash_commands_result");
+        node.put("welinkSessionId", WELINK_SESSION_ID);
+        ObjectNode payload = objectMapper.createObjectNode();
+        var arr = payload.putArray("slashCommands");
+        ObjectNode valid = arr.addObject();
+        valid.put("commands", "/valid");
+        valid.put("description", "Valid command");
+        ObjectNode blank = arr.addObject();
+        blank.put("commands", "");
+        blank.put("description", "Blank command");
+        ObjectNode nullCmd = arr.addObject();
+        nullCmd.putNull("commands");
+        nullCmd.put("description", "Null command");
+        node.set("payload", payload);
+
+        router.route("slash_commands_result", null, "user-1", node);
+
+        ArgumentCaptor<StreamMessage> msgCaptor = ArgumentCaptor.forClass(StreamMessage.class);
+        verify(emitter).emitToClient(eq(WELINK_SESSION_ID), eq("user-1"), msgCaptor.capture());
+        assertEquals(1, msgCaptor.getValue().getSlashCommands().size());
+        assertEquals("/valid", msgCaptor.getValue().getSlashCommands().get(0).getCommands());
+    }
+
+    @Test
+    @DisplayName("slash_commands_result: more than 100 commands are truncated to 100")
+    void slashCommandsResult_truncatesTo100() {
+        router = buildRouter(true);
+
+        String[][] commands = new String[150][2];
+        for (int i = 0; i < 150; i++) {
+            commands[i] = new String[] { "/cmd" + String.format("%03d", i), "Cmd " + i };
+        }
+        ObjectNode node = buildSlashCommandsResultWithDescriptions(WELINK_SESSION_ID, commands);
+
+        router.route("slash_commands_result", null, "user-1", node);
+
+        ArgumentCaptor<StreamMessage> msgCaptor = ArgumentCaptor.forClass(StreamMessage.class);
+        verify(emitter).emitToClient(eq(WELINK_SESSION_ID), eq("user-1"), msgCaptor.capture());
+        assertEquals(100, msgCaptor.getValue().getSlashCommands().size());
+    }
+
+    @Test
+    @DisplayName("slash_commands_result: truncation preserves sorted order")
+    void slashCommandsResult_truncationPreservesSortedOrder() {
+        router = buildRouter(true);
+
+        // Create 150 commands with reverse names to ensure sorting happens before truncation
+        String[][] commands = new String[150][2];
+        for (int i = 0; i < 150; i++) {
+            // Name them so that reverse order is different from sorted order
+            String name = "/z" + String.format("%03d", 149 - i);
+            commands[i] = new String[] { name, "Cmd " + name };
+        }
+        ObjectNode node = buildSlashCommandsResultWithDescriptions(WELINK_SESSION_ID, commands);
+
+        router.route("slash_commands_result", null, "user-1", node);
+
+        ArgumentCaptor<StreamMessage> msgCaptor = ArgumentCaptor.forClass(StreamMessage.class);
+        verify(emitter).emitToClient(eq(WELINK_SESSION_ID), eq("user-1"), msgCaptor.capture());
+        List<StreamMessage.SlashCommandItem> result = msgCaptor.getValue().getSlashCommands();
+        assertEquals(100, result.size());
+        // Verify sorted: first should be /z000, last should be /z099
+        assertEquals("/z000", result.get(0).getCommands());
+        assertEquals("/z099", result.get(99).getCommands());
+    }
+
+    @Test
+    @DisplayName("slash_commands_result: sorting is case-insensitive")
+    void slashCommandsResult_caseInsensitiveSorting() {
+        router = buildRouter(true);
+
+        ObjectNode node = buildSlashCommandsResultWithDescriptions(WELINK_SESSION_ID,
+                new String[][] {
+                        { "/Zebra", "Z" },
+                        { "/alpha", "A" },
+                        { "/Beta", "B" },
+                });
+
+        router.route("slash_commands_result", null, "user-1", node);
+
+        ArgumentCaptor<StreamMessage> msgCaptor = ArgumentCaptor.forClass(StreamMessage.class);
+        verify(emitter).emitToClient(eq(WELINK_SESSION_ID), eq("user-1"), msgCaptor.capture());
+        List<StreamMessage.SlashCommandItem> result = msgCaptor.getValue().getSlashCommands();
+        assertEquals(3, result.size());
+        // Case-insensitive: /alpha, /Beta, /Zebra
+        assertEquals("/alpha", result.get(0).getCommands());
+        assertEquals("/Beta", result.get(1).getCommands());
+        assertEquals("/Zebra", result.get(2).getCommands());
+    }
+
+    @Test
+    @DisplayName("slash_commands_result: empty slashCommands array is valid (no commands configured)")
+    void slashCommandsResult_emptyArrayIsValid() {
+        router = buildRouter(true);
+
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("type", "slash_commands_result");
+        node.put("welinkSessionId", WELINK_SESSION_ID);
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.putArray("slashCommands");
+        node.set("payload", payload);
+
+        router.route("slash_commands_result", null, "user-1", node);
+
+        ArgumentCaptor<StreamMessage> msgCaptor = ArgumentCaptor.forClass(StreamMessage.class);
+        verify(emitter).emitToClient(eq(WELINK_SESSION_ID), eq("user-1"), msgCaptor.capture());
+        assertNotNull(msgCaptor.getValue().getSlashCommands());
+        assertTrue(msgCaptor.getValue().getSlashCommands().isEmpty());
+    }
+
+    @Test
+    @DisplayName("slash_commands_result: missing sessionId is skipped")
+    void slashCommandsResult_missingSessionIdIsSkipped() {
+        router = buildRouter(true);
+
+        ObjectNode node = buildSlashCommandsResult("", "/test");
+        node.remove("welinkSessionId");
+
+        router.route("slash_commands_result", null, null, node);
+
+        verify(emitter, never()).emitToClient(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("slash_commands_result: missing slashCommands field is skipped")
+    void slashCommandsResult_missingSlashCommandsIsSkipped() {
+        router = buildRouter(true);
+
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("type", "slash_commands_result");
+        node.put("welinkSessionId", WELINK_SESSION_ID);
+        // payload missing slashCommands
+        node.putObject("payload");
+
+        router.route("slash_commands_result", null, "user-1", node);
+
+        verify(emitter, never()).emitToClient(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("slash_commands_result: null userId is passed through to emitToClient")
+    void slashCommandsResult_nullUserIdIsPassedThrough() {
+        router = buildRouter(true);
+
+        ObjectNode node = buildSlashCommandsResult(WELINK_SESSION_ID, "/test");
+
+        router.route("slash_commands_result", null, null, node);
+
+        // userId is null, emitter.emitToClient will try to resolve it
+        verify(emitter).emitToClient(eq(WELINK_SESSION_ID), eq(null), any(StreamMessage.class));
     }
 
     /** 测试专用 Caffeine Ticker，可推进虚拟纳秒时间。 */

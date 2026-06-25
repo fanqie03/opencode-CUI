@@ -16,4 +16,5 @@ public final class GatewayActions {
     public static final String ABORT_SESSION = "abort_session";
     public static final String QUESTION_REPLY = "question_reply";
     public static final String PERMISSION_REPLY = "permission_reply";
+    public static final String QUERY_SLASH_COMMANDS = "query_slash_commands";
 }

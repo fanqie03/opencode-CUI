@@ -866,6 +866,145 @@ class GatewayRelayServiceTest {
                 assertEquals("biz-42", platform.get("businessSessionId").asText());
         }
 
+        // ==================== sendQuerySlashCommandsToGateway tests ====================
+
+        @Test
+        @DisplayName("sendQuerySlashCommandsToGateway: sends minimal invoke with correct structure")
+        void sendQuerySlashCommandsToGateway_sendsMinimalInvoke() throws Exception {
+                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
+
+                InvokeCommand cmd = new InvokeCommand("ak-001", "user-1", "42",
+                                GatewayActions.QUERY_SLASH_COMMANDS, null);
+                boolean sent = service.sendQuerySlashCommandsToGateway(cmd, "tool-session-001");
+
+                assertTrue(sent);
+                ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
+                verify(gatewayRelayTarget).sendToGateway(msgCaptor.capture());
+
+                JsonNode sentJson = objectMapper.readTree(msgCaptor.getValue());
+                assertEquals("invoke", sentJson.path("type").asText());
+                assertEquals("ak-001", sentJson.path("ak").asText());
+                assertEquals("skill-server", sentJson.path("source").asText());
+                assertEquals("tool-session-001", sentJson.path("toolSessionId").asText());
+                assertEquals("query_slash_commands", sentJson.path("action").asText());
+                assertTrue(sentJson.has("traceId"));
+                assertFalse(sentJson.path("traceId").asText().isBlank());
+
+                // Verify extParameters envelope
+                JsonNode payload = sentJson.path("payload");
+                assertTrue(payload.has("extParameters"));
+                JsonNode extParams = payload.path("extParameters");
+                assertTrue(extParams.has("businessExtParam"));
+                assertTrue(extParams.path("businessExtParam").isObject());
+                assertTrue(extParams.has("platformExtParam"));
+                JsonNode platform = extParams.path("platformExtParam");
+                assertTrue(platform.has("businessSessionDomain"));
+                assertTrue(platform.has("businessSessionType"));
+                assertTrue(platform.has("businessSessionId"));
+                assertTrue(platform.has("bizRobotTag"));
+        }
+
+        @Test
+        @DisplayName("sendQuerySlashCommandsToGateway: includes assistantAccount when present")
+        void sendQuerySlashCommandsToGateway_includesAssistantAccount() throws Exception {
+                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
+
+                InvokeCommand cmd = new InvokeCommand("ak-001", "user-1", "42",
+                                GatewayActions.QUERY_SLASH_COMMANDS, null, null, "miniapp", "direct",
+                                "biz-001", null, "assist-001", null);
+                service.sendQuerySlashCommandsToGateway(cmd, "tool-001");
+
+                ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
+                verify(gatewayRelayTarget).sendToGateway(msgCaptor.capture());
+                JsonNode sentJson = objectMapper.readTree(msgCaptor.getValue());
+                assertEquals("assist-001", sentJson.path("assistantAccount").asText());
+        }
+
+        @Test
+        @DisplayName("sendQuerySlashCommandsToGateway: platformExtParam populated from command domain/type/bizId")
+        void sendQuerySlashCommandsToGateway_platformExtParamFromCommand() throws Exception {
+                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
+
+                InvokeCommand cmd = new InvokeCommand("ak-001", "user-1", "42",
+                                GatewayActions.QUERY_SLASH_COMMANDS, null, null, "im", "group",
+                                "biz-group-001");
+                service.sendQuerySlashCommandsToGateway(cmd, "tool-001");
+
+                ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
+                verify(gatewayRelayTarget).sendToGateway(msgCaptor.capture());
+                JsonNode sentJson = objectMapper.readTree(msgCaptor.getValue());
+                JsonNode platform = sentJson.path("payload").path("extParameters").path("platformExtParam");
+                assertEquals("im", platform.path("businessSessionDomain").asText());
+                assertEquals("group", platform.path("businessSessionType").asText());
+                assertEquals("biz-group-001", platform.path("businessSessionId").asText());
+                assertTrue(platform.path("bizRobotTag").isNull());
+        }
+
+        @Test
+        @DisplayName("sendQuerySlashCommandsToGateway: returns false when no active connection")
+        void sendQuerySlashCommandsToGateway_noActiveConnectionReturnsFalse() {
+                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(false);
+
+                InvokeCommand cmd = new InvokeCommand("ak-001", "user-1", "42",
+                                GatewayActions.QUERY_SLASH_COMMANDS, null);
+                boolean sent = service.sendQuerySlashCommandsToGateway(cmd, "tool-001");
+
+                assertFalse(sent);
+                verify(gatewayRelayTarget, never()).sendToGateway(any());
+        }
+
+        @Test
+        @DisplayName("sendQuerySlashCommandsToGateway: returns false when relayTarget is null")
+        void sendQuerySlashCommandsToGateway_nullRelayTargetReturnsFalse() {
+                // Temporarily unset the relay target
+                service.setGatewayRelayTarget(null);
+
+                InvokeCommand cmd = new InvokeCommand("ak-001", "user-1", "42",
+                                GatewayActions.QUERY_SLASH_COMMANDS, null);
+                boolean sent = service.sendQuerySlashCommandsToGateway(cmd, "tool-001");
+
+                assertFalse(sent);
+
+                // Restore for other tests
+                service.setGatewayRelayTarget(gatewayRelayTarget);
+        }
+
+        @Test
+        @DisplayName("sendQuerySlashCommandsToGateway: returns false when send fails")
+        void sendQuerySlashCommandsToGateway_sendFailsReturnsFalse() {
+                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(false);
+
+                InvokeCommand cmd = new InvokeCommand("ak-001", "user-1", "42",
+                                GatewayActions.QUERY_SLASH_COMMANDS, null);
+                boolean sent = service.sendQuerySlashCommandsToGateway(cmd, "tool-001");
+
+                assertFalse(sent);
+        }
+
+        @Test
+        @DisplayName("sendQuerySlashCommandsToGateway: null domain/domainType produce JSON null in platformExtParam")
+        void sendQuerySlashCommandsToGateway_nullDomainFieldsProduceNullNodes() throws Exception {
+                when(gatewayRelayTarget.hasActiveConnection()).thenReturn(true);
+                when(gatewayRelayTarget.sendToGateway(any())).thenReturn(true);
+
+                // 5-arg constructor: domain/domainType/businessSessionId all null
+                InvokeCommand cmd = new InvokeCommand("ak-001", "user-1", "42",
+                                GatewayActions.QUERY_SLASH_COMMANDS, null);
+                service.sendQuerySlashCommandsToGateway(cmd, "tool-001");
+
+                ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
+                verify(gatewayRelayTarget).sendToGateway(msgCaptor.capture());
+                JsonNode sentJson = objectMapper.readTree(msgCaptor.getValue());
+                JsonNode platform = sentJson.path("payload").path("extParameters").path("platformExtParam");
+                assertTrue(platform.path("businessSessionDomain").isNull());
+                assertTrue(platform.path("businessSessionType").isNull());
+                assertTrue(platform.path("businessSessionId").isNull());
+        }
+
         private JsonNode readPublishedMessage(String payload) {
                 try {
                         return objectMapper.readTree(payload);
