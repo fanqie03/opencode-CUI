@@ -76,16 +76,11 @@ public class WelinkTelemetryClient {
             ResponseEntity<String> response = restTemplate.exchange(
                     properties.getUrl(), HttpMethod.POST, entity, String.class);
 
-            success = true; // Any response (even non-2xx) counts as success for our metrics - only exceptions count as failure
+            success = true;
             long elapsedMs = (System.currentTimeMillis() - start);
             int code = response.getStatusCode().value();
-            if (code >= 200 && code < 300) {
-                log.debug("[EXT_CALL] WelinkTelemetry.send completed: eventId={}, sessionId={}, httpCode={}, durationMs={}",
-                        eventId, sessionId, code, elapsedMs);
-            } else {
-                log.warn("[EXT_CALL] WelinkTelemetry.send non-2xx: eventId={}, sessionId={}, httpCode={}, durationMs={}",
-                        eventId, sessionId, code, elapsedMs);
-            }
+            log.info("[EXT_CALL] WelinkTelemetry.send completed: eventId={}, sessionId={}, httpCode={}, body={}, durationMs={}",
+                    eventId, sessionId, code, response.getBody(), elapsedMs);
         } catch (WelinkCipherUtil.CipherException e) {
             long elapsedMs = (System.currentTimeMillis() - start);
             log.warn("[EXT_CALL] WelinkTelemetry.send cipher_failed: eventId={}, sessionId={}, durationMs={}, error={}",
