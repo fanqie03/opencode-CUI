@@ -49,6 +49,8 @@ public class WelinkTelemetryReporter {
         if (event == null) {
             return;
         }
+        log.info("[WelinkTelemetry] report entry: eventId={}, sessionId={}, userId={}",
+                event.eventId(), event.sessionId(), event.userId());
         try {
             String traceId = MDC.get(MdcConstants.TRACE_ID);
             if (traceId == null) {

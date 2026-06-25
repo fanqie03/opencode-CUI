@@ -6,12 +6,15 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 首 token 到达事件（skill_chat_first_token）。
+ * 首 token 到达事件。
  * 实现 TelemetryEvent 接口，供 MessageTurnLifecycle.onFirstToken 上报到 WelinkTelemetryReporter。
  *
- * <p>维度：messageId、sessionId、userId（发送者账号）、assistantAccount（助手账号）。
+ * <p>
+ * 维度：messageId、sessionId、userId（发送者账号）、assistantAccount（助手账号）。
+ * </p>
  */
 public record ChatFirstTokenTelemetryEvent(
+        String eventId,
         String sessionId,
         String senderUserAccount,
         String assistantAccount,
@@ -22,7 +25,7 @@ public record ChatFirstTokenTelemetryEvent(
 
     @Override
     public String eventId() {
-        return "skill_chat_first_token";
+        return eventId;
     }
 
     @Override

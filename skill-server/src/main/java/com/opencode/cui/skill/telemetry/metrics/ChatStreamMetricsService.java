@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.Order;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -22,34 +23,59 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 流式对话效率指标服务。
- * 按 messageId 维护每轮问答状态（Caffeine Cache），记录 TTFT / Latency / TPS。
+ * 按 messageId 维护每轮问答状态，记录 TTFT / Latency / TPS / TPOT。
  * messageId 为 null 时直接 return。brainTag 不存在则用 UNKNOWN 兜底。
+ *
+ * <p>
+ * 多 pod 部署说明：
+ * sessionStartTimes 存储在 Redis 中，因为 turnStart 可能来自 HTTP 入口（pod1），
+ * 而 firstToken / turnEnd 通过 WS sticky routing 落在另一个 pod 上。
+ * Redis Key: {@code skill:metrics:stream:start:{messageId}}，TTL = session-ttl
+ * </p>
+ *
+ * <p>
+ * firstTokenTimestamps 和 tokenCounts 使用本地 Caffeine cache，
+ * 因为 firstToken / token / turnEnd 走同一 WS 连接，sticky routing 保证落在同一 pod。
+ * </p>
  */
 @Slf4j
 @Service
 @Order(10)
 public class ChatStreamMetricsService implements MessageTurnHandler {
 
+    private static final String REDIS_KEY_PREFIX_START = "skill:metrics:stream:start:";
+
     private final MeterRegistry meterRegistry;
     private final WelinkTelemetryReporter welinkReporter;
-    private final Cache<String, Long> sessionStartTimes;
+    private final StringRedisTemplate redisTemplate;
+    private final Duration sessionTtl;
+    private final String firstTokenEventId;
+    private final String turnEndEventId;
+
+    /** 首 token 时间戳 — 本地 cache，WS sticky routing 保证同 pod */
     private final Cache<String, Long> firstTokenTimestamps;
+    /** token 计数 — 本地 cache，WS sticky routing 保证同 pod */
     private final Cache<String, AtomicInteger> tokenCounts;
 
     public ChatStreamMetricsService(MeterRegistry meterRegistry,
                                    ObjectProvider<WelinkTelemetryReporter> welinkReporterProvider,
+                                   StringRedisTemplate redisTemplate,
                                    @Value("${skill.metrics.stream.max-sessions:10000}") long maxSessions,
-                                   @Value("${skill.metrics.stream.session-ttl:30m}") Duration sessionTtl) {
+                                   @Value("${skill.metrics.stream.session-ttl:30m}") Duration sessionTtl,
+                                   @Value("${skill.metrics.stream.event-id.first-token:openplatform_service_chat_first_token}") String firstTokenEventId,
+                                   @Value("${skill.metrics.stream.event-id.turn-end:openplatform_service_chat_turn_end}") String turnEndEventId) {
         this.meterRegistry = meterRegistry;
         this.welinkReporter = welinkReporterProvider.getIfAvailable();
-        this.sessionStartTimes = Caffeine.newBuilder()
-                .recordStats()
-                .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
-        CaffeineCacheMetrics.monitor(meterRegistry, sessionStartTimes, "sessionStartTimes");
+        this.redisTemplate = redisTemplate;
+        this.sessionTtl = sessionTtl;
+        this.firstTokenEventId = firstTokenEventId;
+        this.turnEndEventId = turnEndEventId;
+
         this.firstTokenTimestamps = Caffeine.newBuilder()
                 .recordStats()
                 .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
         CaffeineCacheMetrics.monitor(meterRegistry, firstTokenTimestamps, "firstTokenTimestamps");
+
         this.tokenCounts = Caffeine.newBuilder()
                 .recordStats()
                 .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
@@ -63,7 +89,14 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             log.warn("turnStart: messageId is null, skipping");
             return;
         }
-        sessionStartTimes.put(messageId, System.currentTimeMillis());
+        try {
+            redisTemplate.opsForValue().set(
+                    REDIS_KEY_PREFIX_START + messageId,
+                    String.valueOf(System.currentTimeMillis()),
+                    sessionTtl);
+        } catch (Exception e) {
+            log.warn("[ChatStreamMetricsService] turnStart: failed to write start time to Redis: messageId={}, error={}", messageId, e.getMessage());
+        }
     }
 
     @Override
@@ -73,7 +106,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             log.warn("firstToken: messageId is null, skipping");
             return;
         }
-        Long startTime = sessionStartTimes.getIfPresent(messageId);
+        Long startTime = getStartTimeFromRedis(messageId);
         if (startTime == null) {
             log.warn("firstToken: startTime not found for messageId={}, skipping", messageId);
             return;
@@ -87,7 +120,9 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
         // Report TTFT to Welink if reporter is available
         if (welinkReporter != null) {
             try {
+                log.info("[ChatStreamMetricsService] Welink firstToken report: eventId={}, messageId={}, sessionId={}", firstTokenEventId, messageId, ctx.sessionId());
                 welinkReporter.report(new ChatFirstTokenTelemetryEvent(
+                        firstTokenEventId,
                         ctx.sessionId(), ctx.senderUserAccount(), ctx.assistantAccount(),
                         ctx.brainTag(), ctx.messageId(), ttft));
             } catch (Throwable t) {
@@ -111,7 +146,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             log.warn("turnEnd: messageId is null, skipping");
             return;
         }
-        Long startTime = sessionStartTimes.getIfPresent(messageId);
+        Long startTime = getStartTimeFromRedis(messageId);
         if (startTime == null) {
             log.warn("turnEnd: startTime not found for messageId={}, skipping", messageId);
             return;
@@ -157,7 +192,9 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
         // Report turn-end metrics to Welink: content length, duration, success/failure
         if (welinkReporter != null) {
             try {
+                log.info("[ChatStreamMetricsService] Welink turnEnd report: eventId={}, messageId={}, sessionId={}, tokens={}, latency={}", turnEndEventId, messageId, ctx.sessionId(), tokens, latency);
                 welinkReporter.report(new ChatTurnEndTelemetryEvent(
+                        turnEndEventId,
                         ctx.sessionId(), ctx.senderUserAccount(), ctx.assistantAccount(),
                         ctx.brainTag(), ctx.messageId(), tokens, latency, ctx.success()));
             } catch (Throwable t) {
@@ -165,9 +202,35 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             }
         }
 
-        sessionStartTimes.invalidate(messageId);
+        // Cleanup: Redis key + local caches
+        cleanupRedis(messageId);
         firstTokenTimestamps.invalidate(messageId);
         tokenCounts.invalidate(messageId);
+    }
+
+    /**
+     * 从 Redis 读取 turnStart 写入的开始时间戳。
+     * 多 pod 场景下 turnStart 可能落在不同 pod，必须走 Redis。
+     */
+    private Long getStartTimeFromRedis(String messageId) {
+        try {
+            String value = redisTemplate.opsForValue().get(REDIS_KEY_PREFIX_START + messageId);
+            return value != null ? Long.parseLong(value) : null;
+        } catch (NumberFormatException e) {
+            log.warn("[ChatStreamMetricsService] failed to parse startTime from Redis: messageId={}, error={}", messageId, e.getMessage());
+            return null;
+        } catch (Exception e) {
+            log.warn("[ChatStreamMetricsService] failed to get startTime from Redis: messageId={}, error={}", messageId, e.getMessage());
+            return null;
+        }
+    }
+
+    private void cleanupRedis(String messageId) {
+        try {
+            redisTemplate.delete(REDIS_KEY_PREFIX_START + messageId);
+        } catch (Exception e) {
+            log.warn("[ChatStreamMetricsService] cleanup failed for messageId={}, error={}", messageId, e.getMessage());
+        }
     }
 
     private String resolveBrainTag(String brainTag) {
