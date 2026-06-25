@@ -6,7 +6,6 @@ import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -56,8 +55,6 @@ class ChatStreamMetricsServiceTest {
     void turnEnd_recordsLatencyAndTps() {
         long start = System.currentTimeMillis();
         when(valueOps.get("skill:metrics:stream:start:msg-2")).thenReturn(String.valueOf(start));
-        when(valueOps.get("skill:metrics:stream:ftok:msg-2")).thenReturn(String.valueOf(start + 5));
-        when(valueOps.get("skill:metrics:stream:tokens:msg-2")).thenReturn("8");
 
         service.turnStart(MessageTurnContext.of("msg-2", "brain-B"));
         sleep(5);
@@ -102,8 +99,6 @@ class ChatStreamMetricsServiceTest {
     @Test
     void turnEnd_recordsSuccessCounters() {
         when(valueOps.get("skill:metrics:stream:start:msg-success")).thenReturn(String.valueOf(System.currentTimeMillis()));
-        when(valueOps.get("skill:metrics:stream:ftok:msg-success")).thenReturn(String.valueOf(System.currentTimeMillis()));
-        when(valueOps.get("skill:metrics:stream:tokens:msg-success")).thenReturn("4");
 
         service.turnStart(MessageTurnContext.of("msg-success", "brain-S"));
         sleep(5);
@@ -142,22 +137,13 @@ class ChatStreamMetricsServiceTest {
     }
 
     @Test
-    void token_usesIncrbyForAtomicCounting() {
-        service.token(MessageTurnContext.of("msg-incr", "brain-A"), 5);
-
-        verify(valueOps).increment("skill:metrics:stream:tokens:msg-incr", 5L);
-    }
-
-    @Test
-    void turnEnd_cleansUpRedisKeys() {
+    void turnEnd_cleansUpRedisKey() {
         when(valueOps.get("skill:metrics:stream:start:msg-clean")).thenReturn(String.valueOf(System.currentTimeMillis()));
 
         service.turnStart(MessageTurnContext.of("msg-clean", "brain-A"));
         service.turnEnd(MessageTurnContext.of("msg-clean", "brain-A"));
 
         verify(redisTemplate).delete("skill:metrics:stream:start:msg-clean");
-        verify(redisTemplate).delete("skill:metrics:stream:ftok:msg-clean");
-        verify(redisTemplate).delete("skill:metrics:stream:tokens:msg-clean");
     }
 
     private void sleep(long ms) {

@@ -1,5 +1,7 @@
 package com.opencode.cui.skill.telemetry.metrics;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.opencode.cui.skill.telemetry.chat.ChatFirstTokenTelemetryEvent;
 import com.opencode.cui.skill.telemetry.chat.ChatTurnEndTelemetryEvent;
 import com.opencode.cui.skill.telemetry.core.WelinkTelemetryReporter;
@@ -7,6 +9,7 @@ import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,34 +19,39 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 流式对话效率指标服务。
- * 按 messageId 维护每轮问答状态（Redis），记录 TTFT / Latency / TPS / TPOT。
+ * 按 messageId 维护每轮问答状态，记录 TTFT / Latency / TPS / TPOT。
  * messageId 为 null 时直接 return。brainTag 不存在则用 UNKNOWN 兜底。
  *
- * <p>所有状态存储在 Redis 中，支持多 pod 部署场景下 turnStart / firstToken / token / turnEnd
- * 落在不同 pod 上的情况。Redis Key 模式：
+ * <p>多 pod 部署说明：
  * <ul>
- *   <li>{@code skill:metrics:stream:start:{messageId}} — 轮次开始时间戳</li>
- *   <li>{@code skill:metrics:stream:ftok:{messageId}} — 首 token 时间戳</li>
- *   <li>{@code skill:metrics:stream:tokens:{messageId}} — token 计数（INCRBY 原子递增）</li>
+ *   <li>{@code sessionStartTimes} — 存储在 Redis 中，因为 turnStart 可能来自 HTTP 入口（pod1），
+ *       而 firstToken / turnEnd 通过 WS sticky routing 落在另一个 pod 上。
+ *       Redis Key: {@code skill:metrics:stream:start:{messageId}}，TTL = session-ttl</li>
+ *   <li>{@code firstTokenTimestamps} — 本地 Caffeine cache，因为 firstToken 和 turnEnd
+ *       走同一 WS 连接，sticky routing 保证落在同一 pod</li>
+ *   <li>{@code tokenCounts} — 同上，token 和 turnEnd 走同一 WS 连接</li>
  * </ul>
- * 所有 key 统一使用 {@code session-ttl} 过期时间（默认 30 分钟）。
  */
 @Slf4j
 @Service
 @Order(10)
 public class ChatStreamMetricsService implements MessageTurnHandler {
 
-    private static final String KEY_PREFIX_START = "skill:metrics:stream:start:";
-    private static final String KEY_PREFIX_FTOK = "skill:metrics:stream:ftok:";
-    private static final String KEY_PREFIX_TOKENS = "skill:metrics:stream:tokens:";
+    private static final String REDIS_KEY_PREFIX_START = "skill:metrics:stream:start:";
 
     private final MeterRegistry meterRegistry;
     private final WelinkTelemetryReporter welinkReporter;
     private final StringRedisTemplate redisTemplate;
     private final Duration sessionTtl;
+
+    /** 首 token 时间戳 — 本地 cache，WS sticky routing 保证同 pod */
+    private final Cache<String, Long> firstTokenTimestamps;
+    /** token 计数 — 本地 cache，WS sticky routing 保证同 pod */
+    private final Cache<String, AtomicInteger> tokenCounts;
 
     public ChatStreamMetricsService(MeterRegistry meterRegistry,
                                    ObjectProvider<WelinkTelemetryReporter> welinkReporterProvider,
@@ -54,6 +62,16 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
         this.welinkReporter = welinkReporterProvider.getIfAvailable();
         this.redisTemplate = redisTemplate;
         this.sessionTtl = sessionTtl;
+
+        this.firstTokenTimestamps = Caffeine.newBuilder()
+                .recordStats()
+                .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
+        CaffeineCacheMetrics.monitor(meterRegistry, firstTokenTimestamps, "firstTokenTimestamps");
+
+        this.tokenCounts = Caffeine.newBuilder()
+                .recordStats()
+                .maximumSize(maxSessions).expireAfterWrite(sessionTtl).build();
+        CaffeineCacheMetrics.monitor(meterRegistry, tokenCounts, "tokenCounts");
     }
 
     @Override
@@ -65,7 +83,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
         }
         try {
             redisTemplate.opsForValue().set(
-                    KEY_PREFIX_START + messageId,
+                    REDIS_KEY_PREFIX_START + messageId,
                     String.valueOf(System.currentTimeMillis()),
                     sessionTtl);
         } catch (Exception e) {
@@ -80,13 +98,13 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             log.warn("firstToken: messageId is null, skipping");
             return;
         }
-        Long startTime = getLong(KEY_PREFIX_START + messageId);
+        Long startTime = getStartTimeFromRedis(messageId);
         if (startTime == null) {
             log.warn("firstToken: startTime not found for messageId={}, skipping", messageId);
             return;
         }
         long now = System.currentTimeMillis();
-        setLong(KEY_PREFIX_FTOK + messageId, now);
+        firstTokenTimestamps.put(messageId, now);
         long ttft = now - startTime;
         String tag = resolveBrainTag(ctx.brainTag());
         meterRegistry.timer("chat_stream_ttft_seconds", Tags.of("brain_tag", tag))
@@ -107,12 +125,8 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
     public void token(MessageTurnContext ctx, int contentLength) {
         String messageId = ctx.messageId();
         if (messageId == null) return;
-        try {
-            redisTemplate.opsForValue().increment(KEY_PREFIX_TOKENS + messageId, contentLength);
-            redisTemplate.expire(KEY_PREFIX_TOKENS + messageId, sessionTtl);
-        } catch (Exception e) {
-            log.warn("[ChatStreamMetricsService] token: failed to increment token count in Redis: messageId={}, error={}", messageId, e.getMessage());
-        }
+        AtomicInteger count = tokenCounts.get(messageId, k -> new AtomicInteger(0));
+        count.addAndGet(contentLength);
     }
 
     @Override
@@ -122,7 +136,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             log.warn("turnEnd: messageId is null, skipping");
             return;
         }
-        Long startTime = getLong(KEY_PREFIX_START + messageId);
+        Long startTime = getStartTimeFromRedis(messageId);
         if (startTime == null) {
             log.warn("turnEnd: startTime not found for messageId={}, skipping", messageId);
             return;
@@ -134,7 +148,8 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
         meterRegistry.timer("chat_stream_latency_seconds", Tags.of("brain_tag", tag))
                 .record(latency, TimeUnit.MILLISECONDS);
 
-        int tokens = getInt(KEY_PREFIX_TOKENS + messageId);
+        AtomicInteger tokenCount = tokenCounts.getIfPresent(messageId);
+        int tokens = tokenCount != null ? tokenCount.get() : 0;
         if (latency > 0 && tokens > 0) {
             double tps = (tokens * 1000.0) / latency;
             meterRegistry.summary("chat_stream_tokens_per_second", Tags.of("brain_tag", tag))
@@ -142,7 +157,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
 
             // TPOT: time per output token = (latency - ttft) / (tokens - 1)
             // Only meaningful when there are tokens after the first one (tokens > 1)
-            Long firstTokenTs = getLong(KEY_PREFIX_FTOK + messageId);
+            Long firstTokenTs = firstTokenTimestamps.getIfPresent(messageId);
             if (firstTokenTs != null && tokens > 1) {
                 long generationTime = now - firstTokenTs;
                 if (generationTime > 0) {
@@ -175,49 +190,32 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             }
         }
 
-        // Cleanup Redis keys for this message turn
-        cleanup(messageId);
+        // Cleanup: Redis key + local caches
+        cleanupRedis(messageId);
+        firstTokenTimestamps.invalidate(messageId);
+        tokenCounts.invalidate(messageId);
     }
 
-    private Long getLong(String key) {
+    /**
+     * 从 Redis 读取 turnStart 写入的开始时间戳。
+     * 多 pod 场景下 turnStart 可能落在不同 pod，必须走 Redis。
+     */
+    private Long getStartTimeFromRedis(String messageId) {
         try {
-            String value = redisTemplate.opsForValue().get(key);
+            String value = redisTemplate.opsForValue().get(REDIS_KEY_PREFIX_START + messageId);
             return value != null ? Long.parseLong(value) : null;
         } catch (NumberFormatException e) {
-            log.warn("[ChatStreamMetricsService] failed to parse long from Redis: key={}, value={}", key, e.getMessage());
+            log.warn("[ChatStreamMetricsService] failed to parse startTime from Redis: messageId={}, error={}", messageId, e.getMessage());
             return null;
         } catch (Exception e) {
-            log.warn("[ChatStreamMetricsService] failed to get long from Redis: key={}, error={}", key, e.getMessage());
+            log.warn("[ChatStreamMetricsService] failed to get startTime from Redis: messageId={}, error={}", messageId, e.getMessage());
             return null;
         }
     }
 
-    private int getInt(String key) {
+    private void cleanupRedis(String messageId) {
         try {
-            String value = redisTemplate.opsForValue().get(key);
-            return value != null ? Integer.parseInt(value) : 0;
-        } catch (NumberFormatException e) {
-            log.warn("[ChatStreamMetricsService] failed to parse int from Redis: key={}, value={}", key, e.getMessage());
-            return 0;
-        } catch (Exception e) {
-            log.warn("[ChatStreamMetricsService] failed to get int from Redis: key={}, error={}", key, e.getMessage());
-            return 0;
-        }
-    }
-
-    private void setLong(String key, long value) {
-        try {
-            redisTemplate.opsForValue().set(key, String.valueOf(value), sessionTtl);
-        } catch (Exception e) {
-            log.warn("[ChatStreamMetricsService] failed to set long to Redis: key={}, error={}", key, e.getMessage());
-        }
-    }
-
-    private void cleanup(String messageId) {
-        try {
-            redisTemplate.delete(KEY_PREFIX_START + messageId);
-            redisTemplate.delete(KEY_PREFIX_FTOK + messageId);
-            redisTemplate.delete(KEY_PREFIX_TOKENS + messageId);
+            redisTemplate.delete(REDIS_KEY_PREFIX_START + messageId);
         } catch (Exception e) {
             log.warn("[ChatStreamMetricsService] cleanup failed for messageId={}, error={}", messageId, e.getMessage());
         }
