@@ -65,7 +65,7 @@ class ImMultiDeviceSyncServiceTest {
         when(restTemplate.postForEntity(
                 eq("http://localhost:8080/v1/app-notify"),
                 any(HttpEntity.class), eq(ImAppNotifyResponse.class)))
-                .thenReturn(ResponseEntity.ok(new ImAppNotifyResponse(null)));
+                .thenReturn(ResponseEntity.ok(new ImAppNotifyResponse(null, null, null, null)));
 
         SyncRequest request = new SyncRequest(
                 SyncMode.IM,

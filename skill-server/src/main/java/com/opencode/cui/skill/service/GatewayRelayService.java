@@ -163,6 +163,74 @@ public class GatewayRelayService {
         }
     }
 
+    /**
+     * 通过 WebSocket 发送 query_slash_commands invoke 到 AI Gateway。
+     *
+     * <p>与 {@link #sendInvokeToGateway(InvokeCommand)} 不同，本方法绕过助手解析、
+     * scope 策略分发和 assistantId 注入等重路径，仅构建满足 query_slash_commands 所需
+     * 的最小 invoke 报文（含 extParameters 信封）。</p>
+     *
+     * @param command       调用指令（ak、userId、sessionId、action、domain、domainType、businessSessionId、assistantAccount）
+     * @param toolSessionId OpenCode 侧会话 ID（来自 SkillSession.toolSessionId）
+     * @return true 表示已成功投递到 GW；false 表示因序列化失败或无活跃连接而未投递
+     */
+    public boolean sendQuerySlashCommandsToGateway(InvokeCommand command, String toolSessionId) {
+        log.info("[ENTRY] GatewayRelayService.sendQuerySlashCommandsToGateway: ak={}, userId={}, sessionId={}, toolSessionId={}",
+                command.ak(), command.userId(), command.sessionId(), toolSessionId);
+
+        ObjectNode message = objectMapper.createObjectNode();
+        message.put("type", "invoke");
+        message.put("ak", command.ak());
+        message.put("source", SOURCE);
+        if (toolSessionId != null && !toolSessionId.isBlank()) {
+            message.put("toolSessionId", toolSessionId);
+        }
+        message.put("action", command.action());
+        putIfNotBlank(message, "assistantAccount", command.assistantAccount());
+
+        String traceId = MdcHelper.ensureTraceId();
+        message.put("traceId", traceId);
+
+        // 构造 extParameters 信封
+        ObjectNode extParameters = objectMapper.createObjectNode();
+        extParameters.set("businessExtParam", objectMapper.createObjectNode());
+        extParameters.set("platformExtParam",
+                PlatformExtParamBuilder.build(objectMapper,
+                        command.domain(),
+                        command.domainType(),
+                        command.businessSessionId()));
+
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.set("extParameters", extParameters);
+        message.set("payload", payload);
+
+        String messageText;
+        try {
+            messageText = objectMapper.writeValueAsString(message);
+        } catch (JsonProcessingException e) {
+            log.error("[ERROR] GatewayRelayService.sendQuerySlashCommandsToGateway: serialize_failed, ak={}", command.ak(), e);
+            return false;
+        }
+
+        GatewayRelayTarget relayTarget = gatewayRelayTarget;
+        if (relayTarget == null || !relayTarget.hasActiveConnection()) {
+            log.warn("[SKIP] GatewayRelayService.sendQuerySlashCommandsToGateway: reason=no_connection, ak={}",
+                    command.ak());
+            return false;
+        }
+
+        boolean sent = relayTarget.sendToGateway(messageText);
+        if (!sent) {
+            log.warn("[ERROR] GatewayRelayService.sendQuerySlashCommandsToGateway: reason=send_failed, ak={}",
+                    command.ak());
+            return false;
+        }
+
+        log.info("[EXIT->GW] GatewayRelayService.sendQuerySlashCommandsToGateway: action={}, ak={}",
+                command.action(), command.ak());
+        return sent;
+    }
+
     private AssistantInfo getAssistantInfo(InvokeCommand command) {
         String assistantAccount = firstNonBlank(
                 command.assistantAccount(),

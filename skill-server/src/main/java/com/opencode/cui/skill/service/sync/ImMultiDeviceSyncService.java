@@ -96,20 +96,18 @@ public class ImMultiDeviceSyncService implements MultiDeviceSyncService {
                 return;
             }
             ImAppNotifyResponse respBody = response.getBody();
-            if (respBody != null && respBody.error() != null) {
-                String errorCode = respBody.error().errorCode();
-                if (errorCode != null && !errorCode.isBlank()) {
-                    log.warn("[EXT_CALL] ImMultiDeviceSync.push business error: type={}, errorCode={}, errorMsg={}, durationMs={}",
-                            request.syncType().getType(),
-                            errorCode,
-                            respBody.error().errorMsg(),
-                            elapsedMs);
-                    return;
-                }
+            if (respBody == null) {
+                log.warn("[EXT_CALL] ImMultiDeviceSync.push empty body: type={}, durationMs={}",
+                        request.syncType().getType(), elapsedMs);
+                return;
             }
-            log.info("[EXT_CALL] ImMultiDeviceSync.push success: type={}, clientNotifyId={}, durationMs={}",
+            log.info("[EXT_CALL] ImMultiDeviceSync.push: type={}, clientNotifyId={}, serverNotifyId={}, errorCode={}, errorMsg={}, invalidAccount={}, durationMs={}",
                     request.syncType().getType(),
-                    body.clientNotifyId(),
+                    respBody.clientNotifyId(),
+                    respBody.serverNotifyId(),
+                    respBody.error() != null ? respBody.error().errorCode() : null,
+                    respBody.error() != null ? respBody.error().errorMsg() : null,
+                    respBody.invalidAccount(),
                     elapsedMs);
         } catch (Exception e) {
             long elapsedMs = (System.nanoTime() - start) / 1_000_000;

@@ -7,30 +7,14 @@ import com.opencode.cui.skill.model.MessageHistoryResult;
 import com.opencode.cui.skill.model.PageResult;
 import com.opencode.cui.skill.model.ProtocolMessageView;
 import com.opencode.cui.skill.model.SkillSession;
-import com.opencode.cui.skill.config.AssistantIdProperties;
-import com.opencode.cui.skill.service.AllowedSlashCommandsResolver;
-import com.opencode.cui.skill.service.AssistantAccountResolverService;
-import com.opencode.cui.skill.service.DefaultAssistantRuleService;
-import com.opencode.cui.skill.service.GatewayApiClient;
-import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ImMessageService;
-
-import com.opencode.cui.skill.service.AssistantInfoService;
-import com.opencode.cui.skill.service.AssistantAvailabilityService;
-import com.opencode.cui.skill.service.AssistantOfflineMessageProvider;
 import com.opencode.cui.skill.service.ProtocolUtils;
 import com.opencode.cui.skill.service.SessionAccessControlService;
-import com.opencode.cui.skill.service.MessagePersistenceService;
 import com.opencode.cui.skill.service.SkillMessageService;
-import com.opencode.cui.skill.service.GatewayMessageRouter;
 import com.opencode.cui.skill.service.SkillMessageFlowService;
-import com.opencode.cui.skill.service.SkillSessionService;
 import com.opencode.cui.skill.service.SysConfigService;
-import com.opencode.cui.skill.service.scope.AssistantScopeDispatcher;
-import com.opencode.cui.skill.telemetry.metrics.MessageTurnLifecycle;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
@@ -79,34 +63,6 @@ public class SkillMessageController {
         this.accessControlService = accessControlService;
         this.flowService = flowService;
         this.sysConfigService = sysConfigService;
-    }
-
-    public SkillMessageController(SkillMessageService messageService,
-            SkillSessionService sessionService,
-            GatewayRelayService gatewayRelayService,
-            GatewayApiClient gatewayApiClient,
-            AssistantIdProperties assistantIdProperties,
-            ImMessageService imMessageService,
-            ObjectMapper objectMapper,
-            SessionAccessControlService accessControlService,
-            GatewayMessageRouter messageRouter,
-            AssistantInfoService assistantInfoService,
-            AssistantScopeDispatcher scopeDispatcher,
-            AssistantOfflineMessageProvider offlineMessageProvider,
-            AssistantAvailabilityService availabilityService,
-            AssistantAccountResolverService assistantAccountResolverService,
-            DefaultAssistantRuleService ruleService,
-            AllowedSlashCommandsResolver allowedSlashCommandsResolver,
-            MessagePersistenceService persistenceService,
-            ApplicationEventPublisher eventPublisher,
-            SysConfigService sysConfigService,
-            MessageTurnLifecycle messageTurnLifecycle) {
-        this(messageService, imMessageService, objectMapper, accessControlService,
-                new SkillMessageFlowService(
-                        messageService, gatewayRelayService, objectMapper, messageRouter, assistantIdProperties,
-                        assistantInfoService, scopeDispatcher, availabilityService, assistantAccountResolverService,
-                        ruleService, allowedSlashCommandsResolver, eventPublisher, persistenceService, messageTurnLifecycle),
-                sysConfigService);
     }
 
     /**

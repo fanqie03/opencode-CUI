@@ -81,6 +81,7 @@ public class GatewayMessage {
         String ROUTE_CONFIRM = "route_confirm";
         String ROUTE_REJECT = "route_reject";
         String IM_PUSH = "im_push";
+        String SLASH_COMMANDS_RESULT = "slash_commands_result";
     }
 
     // ==================== 通用字段 ====================

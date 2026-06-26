@@ -79,8 +79,8 @@ public class WelinkTelemetryClient {
             success = true;
             long elapsedMs = (System.currentTimeMillis() - start);
             int code = response.getStatusCode().value();
-            log.info("[EXT_CALL] WelinkTelemetry.send completed: eventId={}, sessionId={}, httpCode={}, body={}, durationMs={}",
-                    eventId, sessionId, code, response.getBody(), elapsedMs);
+            log.info("[EXT_CALL] WelinkTelemetry.send completed: eventId={}, sessionId={}, httpCode={}, durationMs={}",
+                    eventId, sessionId, code, elapsedMs);
         } catch (WelinkCipherUtil.CipherException e) {
             long elapsedMs = (System.currentTimeMillis() - start);
             log.warn("[EXT_CALL] WelinkTelemetry.send cipher_failed: eventId={}, sessionId={}, durationMs={}, error={}",

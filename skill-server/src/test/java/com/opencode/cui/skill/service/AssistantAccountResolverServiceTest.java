@@ -1,10 +1,9 @@
 package com.opencode.cui.skill.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.AssistantInstanceInfo;
 import com.opencode.cui.skill.model.AssistantResolveResult;
 import com.opencode.cui.skill.model.ExistenceStatus;
 import com.opencode.cui.skill.model.ResolveOutcome;
-import com.opencode.cui.skill.telemetry.metrics.ApiCallMetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,14 +13,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.RestTemplate;
 
-import static org.mockito.Mockito.mock;
-
-import java.net.SocketTimeoutException;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -40,7 +32,7 @@ import static org.mockito.Mockito.when;
 class AssistantAccountResolverServiceTest {
 
     @Mock
-    private RestTemplate restTemplate;
+    private AssistantInstanceInfoService assistantInstanceInfoService;
 
     @Mock
     private StringRedisTemplate redisTemplate;
@@ -48,13 +40,8 @@ class AssistantAccountResolverServiceTest {
     @Mock
     private ValueOperations<String, String> valueOperations;
 
-    @Mock
-    private ApiCallMetricsService apiCallMetricsService;
-
     private AssistantAccountResolverService service;
 
-    private static final String RESOLVE_URL = "http://localhost:8080/assistant-api/integration/v4-1/we-crew/instance/query";
-    private static final String REQUEST_URL = RESOLVE_URL + "?partnerAccount=assist-001";
     private static final String STATUS_KEY = "assistantAccount:status:assist-001";
     private static final int EXISTS_TTL = 300;
     private static final int NOT_EXISTS_TTL = 60;
@@ -62,11 +49,8 @@ class AssistantAccountResolverServiceTest {
     @BeforeEach
     void setUp() {
         service = new AssistantAccountResolverService(
-                restTemplate,
+                assistantInstanceInfoService,
                 redisTemplate,
-                apiCallMetricsService,
-                RESOLVE_URL,
-                "resolve-token-123",
                 true,
                 EXISTS_TTL,
                 NOT_EXISTS_TTL,
@@ -74,15 +58,39 @@ class AssistantAccountResolverServiceTest {
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     }
 
+    private static AssistantInstanceInfo localAssistant(String appKey, String createdBy) {
+        AssistantInstanceInfo info = new AssistantInstanceInfo();
+        info.setAppKey(appKey);
+        info.setCreatedBy(createdBy);
+        info.setRemoteType(0);
+        return info;
+    }
+
+    private static AssistantInstanceInfo remoteAssistant(int remoteType) {
+        AssistantInstanceInfo info = new AssistantInstanceInfo();
+        info.setRemoteType(remoteType);
+        return info;
+    }
+
+    private static AssistantInstanceInfoService.LookupResult exists(AssistantInstanceInfo info) {
+        return new AssistantInstanceInfoService.LookupResult(ExistenceStatus.EXISTS, info);
+    }
+
+    private static AssistantInstanceInfoService.LookupResult notExists() {
+        return new AssistantInstanceInfoService.LookupResult(ExistenceStatus.NOT_EXISTS, null);
+    }
+
+    private static AssistantInstanceInfoService.LookupResult unknown() {
+        return AssistantInstanceInfoService.LookupResult.unknown();
+    }
+
     // ==================== 远端判定三态 ====================
 
     @Test
-    void remoteExistsWritesStatusCacheExistsTtl() throws Exception {
+    void remoteExistsWritesStatusCacheExistsTtl() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(eq(REQUEST_URL), eq(HttpMethod.GET),
-                any(HttpEntity.class), eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":200,\"data\":{\"appKey\":\"ak-001\",\"createdBy\":\"owner-001\"}}")));
+        when(assistantInstanceInfoService.lookup("assist-001"))
+                .thenReturn(exists(localAssistant("ak-001", "owner-001")));
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
@@ -92,18 +100,14 @@ class AssistantAccountResolverServiceTest {
         ArgumentCaptor<String> valueCap = ArgumentCaptor.forClass(String.class);
         verify(valueOperations).set(eq(STATUS_KEY), valueCap.capture(), eq(Duration.ofSeconds(EXISTS_TTL)));
         String written = valueCap.getValue();
-        // JSON 里应包含 EXISTS + ak + owner
         assert written.contains("EXISTS") && written.contains("ak-001") && written.contains("owner-001");
     }
 
     @Test
-    @DisplayName("remote: body.code != 200 → UNKNOWN, 不写缓存")
-    void remoteBusinessCodeNonSuccessReturnsUnknownNoCache() throws Exception {
+    @DisplayName("upstream: UNKNOWN → UNKNOWN, 不写缓存")
+    void upstreamUnknownReturnsUnknownNoCache() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":500,\"errormsg\":\"upstream error\"}")));
+        when(assistantInstanceInfoService.lookup("assist-001")).thenReturn(unknown());
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
@@ -114,13 +118,10 @@ class AssistantAccountResolverServiceTest {
     }
 
     @Test
-    @DisplayName("remote: body.code=200 + data=null → NOT_EXISTS, 写缓存 TTL=60s")
-    void remoteDataNullReturnsNotExistsWritesShortTtl() throws Exception {
+    @DisplayName("upstream: NOT_EXISTS → NOT_EXISTS, 写缓存 TTL=60s")
+    void upstreamNotExistsWritesShortTtl() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":200,\"data\":null}")));
+        when(assistantInstanceInfoService.lookup("assist-001")).thenReturn(notExists());
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
@@ -131,13 +132,11 @@ class AssistantAccountResolverServiceTest {
     }
 
     @Test
-    @DisplayName("remote: body.code=200 + data.remoteType=1 + appKey missing -> EXISTS")
-    void remoteAppKeyMissingReturnsExists() throws Exception {
+    @DisplayName("remote: remoteType=1 + appKey missing -> EXISTS")
+    void remoteAppKeyMissingReturnsExists() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":200,\"data\":{\"remoteType\":1}}")));
+        when(assistantInstanceInfoService.lookup("assist-001"))
+                .thenReturn(exists(remoteAssistant(1)));
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
@@ -148,13 +147,11 @@ class AssistantAccountResolverServiceTest {
     }
 
     @Test
-    @DisplayName("remote: body.code=200 + data.remoteType=2 + appKey missing -> EXISTS")
-    void defaultProtocolRemoteAppKeyMissingReturnsExists() throws Exception {
+    @DisplayName("remote: remoteType=2 + appKey missing -> EXISTS")
+    void defaultProtocolRemoteAppKeyMissingReturnsExists() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":200,\"data\":{\"remoteType\":2}}")));
+        when(assistantInstanceInfoService.lookup("assist-001"))
+                .thenReturn(exists(remoteAssistant(2)));
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
@@ -165,13 +162,13 @@ class AssistantAccountResolverServiceTest {
     }
 
     @Test
-    @DisplayName("local: body.code=200 + remoteType=0 + appKey missing -> UNKNOWN")
-    void localAssistantWithoutAkReturnsUnknown() throws Exception {
+    @DisplayName("local: remoteType=0 + appKey missing -> UNKNOWN")
+    void localAssistantWithoutAkReturnsUnknown() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":200,\"data\":{\"createdBy\":\"owner-only\",\"remoteType\":0}}")));
+        AssistantInstanceInfo info = new AssistantInstanceInfo();
+        info.setCreatedBy("owner-only");
+        info.setRemoteType(0);
+        when(assistantInstanceInfoService.lookup("assist-001")).thenReturn(exists(info));
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
@@ -183,14 +180,11 @@ class AssistantAccountResolverServiceTest {
 
     @Test
     @DisplayName("local: remoteType=0 overrides legacy remoteProperty")
-    void localRemoteTypeOverridesRemoteProperty() throws Exception {
+    void localRemoteTypeOverridesRemoteProperty() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":200,\"data\":{\"remoteType\":0,"
-                                + "\"remoteProperty\":[{\"type\":\"chat\",\"commProtocol\":\"sse\","
-                                + "\"url\":\"https://remote.example.com/chat\"}]}}")));
+        AssistantInstanceInfo info = new AssistantInstanceInfo();
+        info.setRemoteType(0);
+        when(assistantInstanceInfoService.lookup("assist-001")).thenReturn(exists(info));
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
@@ -201,14 +195,12 @@ class AssistantAccountResolverServiceTest {
     }
 
     @Test
-    @DisplayName("local: remoteProperty without remoteType no longer implies remote")
-    void remotePropertyWithoutRemoteTypeReturnsUnknown() throws Exception {
+    @DisplayName("local: no remoteType set → UNKNOWN")
+    void remotePropertyWithoutRemoteTypeReturnsUnknown() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":200,\"data\":{\"remoteProperty\":[{\"type\":\"chat\","
-                                + "\"commProtocol\":\"sse\",\"url\":\"https://remote.example.com/chat\"}]}}")));
+        AssistantInstanceInfo info = new AssistantInstanceInfo();
+        // remoteType defaults to 0, so remoteAssistant() returns false
+        when(assistantInstanceInfoService.lookup("assist-001")).thenReturn(exists(info));
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
@@ -220,12 +212,12 @@ class AssistantAccountResolverServiceTest {
 
     @Test
     @DisplayName("local: ownerWelinkId missing does not fall back to assistantAccount")
-    void localOwnerMissingReturnsUnknownNoCache() throws Exception {
+    void localOwnerMissingReturnsUnknownNoCache() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":200,\"data\":{\"appKey\":\"ak-only\"}}")));
+        AssistantInstanceInfo info = new AssistantInstanceInfo();
+        info.setAppKey("ak-only");
+        info.setRemoteType(0);
+        when(assistantInstanceInfoService.lookup("assist-001")).thenReturn(exists(info));
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
@@ -237,12 +229,10 @@ class AssistantAccountResolverServiceTest {
 
     @Test
     @DisplayName("remote: ownerWelinkId missing remains null, never assistantAccount")
-    void remoteOwnerMissingDoesNotFallbackToAssistantAccount() throws Exception {
+    void remoteOwnerMissingDoesNotFallbackToAssistantAccount() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":200,\"data\":{\"remoteType\":1}}")));
+        when(assistantInstanceInfoService.lookup("assist-001"))
+                .thenReturn(exists(remoteAssistant(1)));
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
@@ -254,13 +244,10 @@ class AssistantAccountResolverServiceTest {
     }
 
     @Test
-    @DisplayName("remote: HTTP 超时/异常 → UNKNOWN, 不写缓存")
-    void remoteTimeoutReturnsUnknownNoCache() {
+    @DisplayName("upstream: lookup returns null → UNKNOWN, 不写缓存")
+    void upstreamNullReturnsUnknownNoCache() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenThrow(new org.springframework.web.client.ResourceAccessException(
-                        "I/O error", new SocketTimeoutException("timeout")));
+        when(assistantInstanceInfoService.lookup("assist-001")).thenReturn(null);
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
@@ -281,28 +268,24 @@ class AssistantAccountResolverServiceTest {
         assertEquals(ExistenceStatus.EXISTS, outcome.status());
         assertEquals("cached-ak", outcome.ak());
         assertEquals("cached-owner", outcome.ownerWelinkId());
-        verify(restTemplate, never()).exchange(any(String.class), eq(HttpMethod.GET), any(),
-                eq(com.fasterxml.jackson.databind.JsonNode.class));
+        verify(assistantInstanceInfoService, never()).lookup(anyString());
     }
 
     @Test
     @DisplayName("cache hit: legacy owner==assistantAccount is dirty and refreshes")
-    void cacheHitLegacyAssistantOwnerFallbackRefreshes() throws Exception {
+    void cacheHitLegacyAssistantOwnerFallbackRefreshes() {
         when(valueOperations.get(STATUS_KEY))
                 .thenReturn("{\"status\":\"EXISTS\",\"ak\":\"cached-ak\","
                         + "\"ownerWelinkId\":\"assist-001\",\"assistantAccount\":\"assist-001\"}");
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":200,\"data\":{\"appKey\":\"fresh-ak\",\"createdBy\":\"owner-fresh\"}}")));
+        when(assistantInstanceInfoService.lookup("assist-001"))
+                .thenReturn(exists(localAssistant("fresh-ak", "owner-fresh")));
 
         ResolveOutcome outcome = service.resolveWithStatus("assist-001");
 
         assertEquals(ExistenceStatus.EXISTS, outcome.status());
         assertEquals("fresh-ak", outcome.ak());
         assertEquals("owner-fresh", outcome.ownerWelinkId());
-        verify(restTemplate).exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class));
+        verify(assistantInstanceInfoService).lookup("assist-001");
     }
 
     @Test
@@ -316,30 +299,23 @@ class AssistantAccountResolverServiceTest {
         assertEquals(ExistenceStatus.NOT_EXISTS, outcome.status());
         assertNull(outcome.ak());
         assertNull(outcome.ownerWelinkId());
-        verify(restTemplate, never()).exchange(any(String.class), eq(HttpMethod.GET), any(),
-                eq(com.fasterxml.jackson.databind.JsonNode.class));
+        verify(assistantInstanceInfoService, never()).lookup(anyString());
     }
 
     @Test
     @DisplayName("cache flip: 先 EXISTS 缓存命中；TTL 过后远端 NOT_EXISTS 原子覆盖 + TTL 切换为 60s")
-    void cacheFlipExistsToNotExistsSwitchesTtl() throws Exception {
-        // 第一次：EXISTS 缓存命中，不打远端
+    void cacheFlipExistsToNotExistsSwitchesTtl() {
         when(valueOperations.get(STATUS_KEY))
                 .thenReturn("{\"status\":\"EXISTS\",\"ak\":\"cached-ak\",\"ownerWelinkId\":\"cached-owner\"}")
-                // 第二次：缓存过期 → null，远端返 NOT_EXISTS
                 .thenReturn(null);
 
         ResolveOutcome first = service.resolveWithStatus("assist-001");
         assertEquals(ExistenceStatus.EXISTS, first.status());
 
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":200,\"data\":null}")));
+        when(assistantInstanceInfoService.lookup("assist-001")).thenReturn(notExists());
 
         ResolveOutcome second = service.resolveWithStatus("assist-001");
         assertEquals(ExistenceStatus.NOT_EXISTS, second.status());
-        // 切换到 NOT_EXISTS TTL
         verify(valueOperations).set(eq(STATUS_KEY), anyString(), eq(Duration.ofSeconds(NOT_EXISTS_TTL)));
     }
 
@@ -370,12 +346,9 @@ class AssistantAccountResolverServiceTest {
 
     @Test
     @DisplayName("resolve(): UNKNOWN → null（兼容旧调用方）")
-    void resolveReturnsNullOnUnknown() throws Exception {
+    void resolveReturnsNullOnUnknown() {
         when(valueOperations.get(STATUS_KEY)).thenReturn(null);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class),
-                eq(com.fasterxml.jackson.databind.JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(new ObjectMapper().readTree(
-                        "{\"code\":500}")));
+        when(assistantInstanceInfoService.lookup("assist-001")).thenReturn(unknown());
 
         AssistantResolveResult result = service.resolve("assist-001");
 
@@ -391,7 +364,6 @@ class AssistantAccountResolverServiceTest {
         String ak = service.resolveAk("assist-001");
 
         assertEquals("cached-ak", ak);
-        // 关键：不查老 key
         verify(valueOperations, never()).get("assistantAccount:ak:assist-001");
         verify(valueOperations, never()).get("assistantAccount:owner:assist-001");
     }
@@ -401,8 +373,7 @@ class AssistantAccountResolverServiceTest {
     void resolveReturnsNullForBlankInput() {
         assertNull(service.resolve(""));
         assertNull(service.resolve(null));
-        verify(restTemplate, never()).exchange(any(String.class), eq(HttpMethod.GET), any(),
-                eq(com.fasterxml.jackson.databind.JsonNode.class));
+        verify(assistantInstanceInfoService, never()).lookup(anyString());
     }
 
     // ==================== check() 轻量接口 ====================
@@ -414,7 +385,6 @@ class AssistantAccountResolverServiceTest {
                 .thenReturn("{\"status\":\"NOT_EXISTS\"}");
 
         assertEquals(ExistenceStatus.NOT_EXISTS, service.check("assist-001"));
-        verify(restTemplate, never()).exchange(any(String.class), eq(HttpMethod.GET), any(),
-                eq(com.fasterxml.jackson.databind.JsonNode.class));
+        verify(assistantInstanceInfoService, never()).lookup(anyString());
     }
 }

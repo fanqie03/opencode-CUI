@@ -285,7 +285,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
                 }
                 case GatewayMessage.Type.TOOL_DONE,
                         GatewayMessage.Type.TOOL_ERROR, GatewayMessage.Type.SESSION_CREATED,
-                        GatewayMessage.Type.PERMISSION_REQUEST -> {
+                        GatewayMessage.Type.PERMISSION_REQUEST,
+                        GatewayMessage.Type.SLASH_COMMANDS_RESULT -> {
                     GatewayStreamEventLogHelper.inbound(log, "gw.local_agent", "received", payload);
                     handleRelayToSkillServer(session, message);
                 }
@@ -534,7 +535,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler implements Hands
                 || GatewayMessage.Type.TOOL_DONE.equals(type)
                 || GatewayMessage.Type.TOOL_ERROR.equals(type)
                 || GatewayMessage.Type.SESSION_CREATED.equals(type)
-                || GatewayMessage.Type.PERMISSION_REQUEST.equals(type);
+                || GatewayMessage.Type.PERMISSION_REQUEST.equals(type)
+                || GatewayMessage.Type.SLASH_COMMANDS_RESULT.equals(type);
     }
 
     private static boolean isBlank(String value) {

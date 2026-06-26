@@ -6,6 +6,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencode.cui.skill.logging.StreamEventLogHelper;
 import com.opencode.cui.skill.model.SkillSession;
 import com.opencode.cui.skill.model.StreamMessage;
+import com.opencode.cui.skill.model.InvokeCommand;
+import com.opencode.cui.skill.service.GatewayActions;
+import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.ProtocolUtils;
 import com.opencode.cui.skill.service.RedisMessageBroker;
 import com.opencode.cui.skill.service.SkillSessionService;
@@ -48,11 +51,13 @@ public class SkillStreamHandler extends TextWebSocketHandler {
     private static final String ATTR_USER_ID = "userId";
     private static final String ACTION_RESUME = "resume";
     private static final String ACTION_PING = "ping";
+    private static final String ACTION_QUERY_SLASH_COMMANDS = "query_slash_commands";
 
     private final ObjectMapper objectMapper;
     private final SkillSessionService sessionService;
     private final SnapshotService snapshotService;
     private final RedisMessageBroker redisMessageBroker;
+    private final GatewayRelayService gatewayRelayService;
     private final WsConnectionMetrics wsConnectionMetrics;
 
     private static final String WS_URL = "/ws/skill/stream";
@@ -88,11 +93,13 @@ public class SkillStreamHandler extends TextWebSocketHandler {
             SkillSessionService sessionService,
             SnapshotService snapshotService,
             RedisMessageBroker redisMessageBroker,
+            GatewayRelayService gatewayRelayService,
             WsConnectionMetrics wsConnectionMetrics) {
         this.objectMapper = objectMapper;
         this.sessionService = sessionService;
         this.snapshotService = snapshotService;
         this.redisMessageBroker = redisMessageBroker;
+        this.gatewayRelayService = gatewayRelayService;
         this.wsConnectionMetrics = wsConnectionMetrics;
     }
 
@@ -134,12 +141,75 @@ public class SkillStreamHandler extends TextWebSocketHandler {
                 return;
             }
 
+            if (ACTION_QUERY_SLASH_COMMANDS.equals(action)) {
+                handleQuerySlashCommands(session, node);
+                return;
+            }
+
             log.debug("Unknown client action on stream endpoint: wsId={}, action={}",
                     session.getId(), action);
         } catch (Exception e) {
             log.warn("Failed to parse client message on stream endpoint: wsId={}, error={}",
                     session.getId(), e.getMessage());
         }
+    }
+
+    /**
+     * 处理 query_slash_commands 动作。
+     * 从 welinkSessionId 解析会话信息，构建轻量 invoke 发送到 Gateway。
+     */
+    private void handleQuerySlashCommands(WebSocketSession session, JsonNode node) {
+        String welinkSessionId = node.path("welinkSessionId").asText(null);
+        String userId = (String) session.getAttributes().get(ATTR_USER_ID);
+
+        if (welinkSessionId == null || welinkSessionId.isBlank()) {
+            log.warn("[SKIP] handleQuerySlashCommands: reason=missing_welinkSessionId, userId={}", userId);
+            return;
+        }
+
+        Long numericId = ProtocolUtils.parseSessionId(welinkSessionId);
+        if (numericId == null) {
+            log.warn("[SKIP] handleQuerySlashCommands: reason=invalid_welinkSessionId, welinkSessionId={}", welinkSessionId);
+            return;
+        }
+
+        SkillSession skillSession = sessionService.findByIdSafe(numericId);
+        if (skillSession == null || skillSession.getId() == null) {
+            log.warn("[SKIP] handleQuerySlashCommands: reason=session_not_found, welinkSessionId={}", welinkSessionId);
+            return;
+        }
+
+        String toolSessionId = skillSession.getToolSessionId();
+        if (toolSessionId == null || toolSessionId.isBlank()) {
+            log.warn("[SKIP] handleQuerySlashCommands: reason=missing_toolSessionId, welinkSessionId={}", welinkSessionId);
+            return;
+        }
+
+        String ak = skillSession.getAk();
+        if (ak == null || ak.isBlank()) {
+            log.warn("[SKIP] handleQuerySlashCommands: reason=missing_ak, welinkSessionId={}", welinkSessionId);
+            return;
+        }
+
+        log.info("[ENTRY] handleQuerySlashCommands: welinkSessionId={}, ak={}, toolSessionId={}, userId={}",
+                welinkSessionId, ak, toolSessionId, userId);
+
+        InvokeCommand command = new InvokeCommand(
+                ak,
+                userId,
+                welinkSessionId,
+                GatewayActions.QUERY_SLASH_COMMANDS,
+                null, // payload
+                null, // suppressReply
+                skillSession.getBusinessSessionDomain(),
+                skillSession.getBusinessSessionType(),
+                skillSession.getBusinessSessionId(),
+                null, // allowedSlashCommands
+                skillSession.getAssistantAccount(),
+                null  // partnerAccount
+        );
+
+        gatewayRelayService.sendQuerySlashCommandsToGateway(command, toolSessionId);
     }
 
     @Override

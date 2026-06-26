@@ -1,8 +1,11 @@
 package com.opencode.cui.skill.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencode.cui.skill.model.InvokeCommand;
 import com.opencode.cui.skill.model.StreamMessage;
 import com.opencode.cui.skill.model.SkillSession;
+import com.opencode.cui.skill.service.GatewayActions;
+import com.opencode.cui.skill.service.GatewayRelayService;
 import com.opencode.cui.skill.service.RedisMessageBroker;
 import com.opencode.cui.skill.service.SkillSessionService;
 import com.opencode.cui.skill.service.SnapshotService;
@@ -40,6 +43,7 @@ class SkillStreamHandlerTest {
         private SnapshotService snapshotService;
         private SkillSessionService sessionService;
         private RedisMessageBroker redisMessageBroker;
+        private GatewayRelayService gatewayRelayService;
         private ObjectMapper objectMapper = new ObjectMapper();
 
         @BeforeEach
@@ -47,6 +51,7 @@ class SkillStreamHandlerTest {
                 snapshotService = mock(SnapshotService.class);
                 sessionService = mock(SkillSessionService.class);
                 redisMessageBroker = mock(RedisMessageBroker.class);
+                gatewayRelayService = mock(GatewayRelayService.class);
                 // nextStreamSeq 改为 Redis INCR 实现，mock 需显式 stub 以返回合法序号
                 when(redisMessageBroker.nextStreamSeq(any())).thenAnswer(inv -> 1L);
                 handler = new SkillStreamHandler(
@@ -54,6 +59,7 @@ class SkillStreamHandlerTest {
                                 sessionService,
                                 snapshotService,
                                 redisMessageBroker,
+                                gatewayRelayService,
                                 new WsConnectionMetrics(new SimpleMeterRegistry()));
         }
 
@@ -342,6 +348,120 @@ class SkillStreamHandlerTest {
                 Assertions.assertEquals("text.delta", json.path("type").asText());
                 Assertions.assertEquals("42", json.path("welinkSessionId").asText());
                 Assertions.assertTrue(json.path("seq").asLong() > 0);
+        }
+
+        // ==================== query_slash_commands tests ====================
+
+        @Test
+        @DisplayName("query_slash_commands with valid session sends invoke to gateway")
+        void querySlashCommandsValidSessionSendsInvokeToGateway() throws Exception {
+                WebSocketSession session = mockSession("/ws/skill/stream", "userId=10001");
+                session.getAttributes().put("userId", "10001");
+
+                SkillSession skillSession = new SkillSession();
+                skillSession.setId(42L);
+                skillSession.setUserId("10001");
+                skillSession.setAk("ak-test-001");
+                skillSession.setToolSessionId("tool-session-001");
+                skillSession.setBusinessSessionDomain("miniapp");
+                skillSession.setBusinessSessionType("direct");
+                skillSession.setBusinessSessionId("biz-001");
+                skillSession.setAssistantAccount("assist-001");
+                when(sessionService.findByIdSafe(42L)).thenReturn(skillSession);
+
+                handler.handleMessage(session,
+                                new TextMessage("{\"action\":\"query_slash_commands\",\"welinkSessionId\":\"42\"}"));
+
+                ArgumentCaptor<InvokeCommand> cmdCaptor = ArgumentCaptor.forClass(InvokeCommand.class);
+                ArgumentCaptor<String> toolSessionIdCaptor = ArgumentCaptor.forClass(String.class);
+                verify(gatewayRelayService).sendQuerySlashCommandsToGateway(cmdCaptor.capture(),
+                                toolSessionIdCaptor.capture());
+
+                InvokeCommand cmd = cmdCaptor.getValue();
+                Assertions.assertEquals("ak-test-001", cmd.ak());
+                Assertions.assertEquals("10001", cmd.userId());
+                Assertions.assertEquals("42", cmd.sessionId());
+                Assertions.assertEquals(GatewayActions.QUERY_SLASH_COMMANDS, cmd.action());
+                Assertions.assertEquals("miniapp", cmd.domain());
+                Assertions.assertEquals("direct", cmd.domainType());
+                Assertions.assertEquals("biz-001", cmd.businessSessionId());
+                Assertions.assertEquals("assist-001", cmd.assistantAccount());
+                Assertions.assertNull(cmd.payload());
+                Assertions.assertNull(cmd.suppressReply());
+                Assertions.assertEquals("tool-session-001", toolSessionIdCaptor.getValue());
+        }
+
+        @Test
+        @DisplayName("query_slash_commands with missing welinkSessionId is silently skipped")
+        void querySlashCommandsMissingWelinkSessionIdIsSkipped() throws Exception {
+                WebSocketSession session = mockSession("/ws/skill/stream", "userId=10001");
+                session.getAttributes().put("userId", "10001");
+
+                handler.handleMessage(session,
+                                new TextMessage("{\"action\":\"query_slash_commands\"}"));
+
+                verify(gatewayRelayService, never()).sendQuerySlashCommandsToGateway(any(), any());
+        }
+
+        @Test
+        @DisplayName("query_slash_commands with invalid welinkSessionId is silently skipped")
+        void querySlashCommandsInvalidWelinkSessionIdIsSkipped() throws Exception {
+                WebSocketSession session = mockSession("/ws/skill/stream", "userId=10001");
+                session.getAttributes().put("userId", "10001");
+
+                handler.handleMessage(session,
+                                new TextMessage("{\"action\":\"query_slash_commands\",\"welinkSessionId\":\"not-a-number\"}"));
+
+                verify(gatewayRelayService, never()).sendQuerySlashCommandsToGateway(any(), any());
+        }
+
+        @Test
+        @DisplayName("query_slash_commands with session not found is silently skipped")
+        void querySlashCommandsSessionNotFoundIsSkipped() throws Exception {
+                WebSocketSession session = mockSession("/ws/skill/stream", "userId=10001");
+                session.getAttributes().put("userId", "10001");
+                when(sessionService.findByIdSafe(42L)).thenReturn(null);
+
+                handler.handleMessage(session,
+                                new TextMessage("{\"action\":\"query_slash_commands\",\"welinkSessionId\":\"42\"}"));
+
+                verify(gatewayRelayService, never()).sendQuerySlashCommandsToGateway(any(), any());
+        }
+
+        @Test
+        @DisplayName("query_slash_commands with session missing toolSessionId is silently skipped")
+        void querySlashCommandsMissingToolSessionIdIsSkipped() throws Exception {
+                WebSocketSession session = mockSession("/ws/skill/stream", "userId=10001");
+                session.getAttributes().put("userId", "10001");
+
+                SkillSession skillSession = new SkillSession();
+                skillSession.setId(42L);
+                skillSession.setAk("ak-test-001");
+                // toolSessionId is null
+                when(sessionService.findByIdSafe(42L)).thenReturn(skillSession);
+
+                handler.handleMessage(session,
+                                new TextMessage("{\"action\":\"query_slash_commands\",\"welinkSessionId\":\"42\"}"));
+
+                verify(gatewayRelayService, never()).sendQuerySlashCommandsToGateway(any(), any());
+        }
+
+        @Test
+        @DisplayName("query_slash_commands with session missing ak is silently skipped")
+        void querySlashCommandsMissingAkIsSkipped() throws Exception {
+                WebSocketSession session = mockSession("/ws/skill/stream", "userId=10001");
+                session.getAttributes().put("userId", "10001");
+
+                SkillSession skillSession = new SkillSession();
+                skillSession.setId(42L);
+                skillSession.setToolSessionId("tool-session-001");
+                // ak is null
+                when(sessionService.findByIdSafe(42L)).thenReturn(skillSession);
+
+                handler.handleMessage(session,
+                                new TextMessage("{\"action\":\"query_slash_commands\",\"welinkSessionId\":\"42\"}"));
+
+                verify(gatewayRelayService, never()).sendQuerySlashCommandsToGateway(any(), any());
         }
 
         private WebSocketSession mockSession(String uri, String cookieHeader) throws Exception {

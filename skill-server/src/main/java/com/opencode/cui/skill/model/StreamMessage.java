@@ -69,6 +69,7 @@ public class StreamMessage {
     private List<SearchResultItem> searchResults;   // search_result
     private List<ReferenceItem> references;         // reference
     private List<String> askMoreQuestions;           // ask_more
+    private List<SlashCommandItem> slashCommands;    // slash_commands_result
 
     // ==================== 嵌套分组 ====================
 
@@ -203,6 +204,17 @@ public class StreamMessage {
         private String content;
     }
 
+    /** Slash 命令项（slash_commands_result 消息） */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class SlashCommandItem {
+        private String commands;
+        private String description;
+    }
+
     // ==================== 类型常量 ====================
 
     public static final class Types {
@@ -238,6 +250,7 @@ public class StreamMessage {
         public static final String SEARCH_RESULT = "search_result";
         public static final String REFERENCE = "reference";
         public static final String ASK_MORE = "ask_more";
+        public static final String SLASH_COMMANDS_RESULT = "slash_commands_result";
 
         private Types() {
         }

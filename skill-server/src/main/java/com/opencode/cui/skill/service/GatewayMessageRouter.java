@@ -490,6 +490,7 @@ public class GatewayMessageRouter {
             case "session_created" -> handleSessionCreated(ak, userId, node);
             case "permission_request" -> handlePermissionRequest(sessionId, userId, node);
             case "im_push" -> handleImPush(sessionId, node);
+            case "slash_commands_result" -> handleSlashCommandsResult(sessionId, userId, node);
             default -> log.warn("[SKIP] GatewayMessageRouter.route: reason=unknown_type, type={}", type);
         }
     }
@@ -1423,6 +1424,60 @@ public class GatewayMessageRouter {
     }
 
     /**
+     * 处理 plugin 返回的 slash_commands_result。
+     * 对 slash 命令按字母升序排列，超过 100 条时截取前 100，并通过 emitter 推送给前端用户。
+     */
+    private void handleSlashCommandsResult(String sessionId, String userId, JsonNode node) {
+        log.info("[ENTRY] handleSlashCommandsResult: sessionId={}, userId={}", sessionId, userId);
+
+        if (sessionId == null || sessionId.isBlank()) {
+            log.warn("[SKIP] handleSlashCommandsResult: reason=missing_sessionId");
+            return;
+        }
+
+        JsonNode slashCommandsNode = node.path("payload").path("slashCommands");
+        if (!slashCommandsNode.isArray()) {
+            log.warn("[SKIP] handleSlashCommandsResult: reason=missing_or_invalid_slashCommands, sessionId={}", sessionId);
+            return;
+        }
+
+        java.util.List<StreamMessage.SlashCommandItem> items = new java.util.ArrayList<>();
+        for (JsonNode item : slashCommandsNode) {
+            String commands = item.path("commands").asText(null);
+            if (commands == null || commands.isBlank()) {
+                continue;
+            }
+            String description = item.path("description").asText(null);
+            items.add(StreamMessage.SlashCommandItem.builder()
+                    .commands(commands)
+                    .description(description)
+                    .build());
+        }
+
+        // 按 commands 字母升序排列
+        items.sort(java.util.Comparator.comparing(
+                StreamMessage.SlashCommandItem::getCommands, String.CASE_INSENSITIVE_ORDER));
+
+        // 超过 100 条时截取前 100
+        if (items.size() > 100) {
+            log.info("[TRUNCATE] handleSlashCommandsResult: total={}, truncated_to=100, sessionId={}",
+                    items.size(), sessionId);
+            items = new java.util.ArrayList<>(items.subList(0, 100));
+        }
+
+        StreamMessage msg = StreamMessage.builder()
+                .type(StreamMessage.Types.SLASH_COMMANDS_RESULT)
+                .role("assistant")
+                .status("running")
+                .slashCommands(items)
+                .build();
+
+        emitter.emitToClient(sessionId, userId, msg);
+
+        log.info("[EXIT] handleSlashCommandsResult: sessionId={}, commandsCount={}", sessionId, items.size());
+    }
+
+    /**
      * 广播 StreamMessage 到前端。
      * @deprecated 保留以维持外部测试兼容；内部请直接使用 {@link StreamMessageEmitter#emitToClient}。
      */
@@ -1552,7 +1607,7 @@ public class GatewayMessageRouter {
     /** 判断消息类型是否需要会话亲和性（需要 sessionId 才能处理）。 */
     private boolean requiresSessionAffinity(String messageType) {
         return switch (messageType) {
-            case "tool_event", "tool_done", "tool_error", "permission_request", "im_push" -> true;
+            case "tool_event", "tool_done", "tool_error", "permission_request", "im_push", "slash_commands_result" -> true;
             default -> false;
         };
     }
