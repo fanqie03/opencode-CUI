@@ -1340,7 +1340,7 @@ class GatewayMessageRouterTest {
         var arr = payload.putArray("slashCommands");
         for (String name : commandNames) {
             ObjectNode item = arr.addObject();
-            item.put("commands", name);
+            item.put("command", name);
             item.put("description", "Description for " + name);
         }
         node.set("payload", payload);
@@ -1356,7 +1356,7 @@ class GatewayMessageRouterTest {
         var arr = payload.putArray("slashCommands");
         for (String[] pair : commandsWithDescriptions) {
             ObjectNode item = arr.addObject();
-            item.put("commands", pair[0]);
+            item.put("command", pair[0]);
             item.put("description", pair[1]);
         }
         node.set("payload", payload);
@@ -1385,9 +1385,9 @@ class GatewayMessageRouterTest {
         assertEquals("running", msg.getStatus());
         assertNotNull(msg.getSlashCommands());
         assertEquals(3, msg.getSlashCommands().size());
-        assertEquals("/alpha", msg.getSlashCommands().get(0).getCommands());
-        assertEquals("/mike", msg.getSlashCommands().get(1).getCommands());
-        assertEquals("/zebra", msg.getSlashCommands().get(2).getCommands());
+        assertEquals("/alpha", msg.getSlashCommands().get(0).getCommand());
+        assertEquals("/mike", msg.getSlashCommands().get(1).getCommand());
+        assertEquals("/zebra", msg.getSlashCommands().get(2).getCommand());
     }
 
     @Test
@@ -1401,13 +1401,13 @@ class GatewayMessageRouterTest {
         ObjectNode payload = objectMapper.createObjectNode();
         var arr = payload.putArray("slashCommands");
         ObjectNode valid = arr.addObject();
-        valid.put("commands", "/valid");
+        valid.put("command", "/valid");
         valid.put("description", "Valid command");
         ObjectNode blank = arr.addObject();
-        blank.put("commands", "");
+        blank.put("command", "");
         blank.put("description", "Blank command");
         ObjectNode nullCmd = arr.addObject();
-        nullCmd.putNull("commands");
+        nullCmd.putNull("command");
         nullCmd.put("description", "Null command");
         node.set("payload", payload);
 
@@ -1416,7 +1416,7 @@ class GatewayMessageRouterTest {
         ArgumentCaptor<StreamMessage> msgCaptor = ArgumentCaptor.forClass(StreamMessage.class);
         verify(emitter).emitToClient(eq(WELINK_SESSION_ID), eq("user-1"), msgCaptor.capture());
         assertEquals(1, msgCaptor.getValue().getSlashCommands().size());
-        assertEquals("/valid", msgCaptor.getValue().getSlashCommands().get(0).getCommands());
+        assertEquals("/valid", msgCaptor.getValue().getSlashCommands().get(0).getCommand());
     }
 
     @Test
@@ -1458,8 +1458,8 @@ class GatewayMessageRouterTest {
         List<StreamMessage.SlashCommandItem> result = msgCaptor.getValue().getSlashCommands();
         assertEquals(100, result.size());
         // Verify sorted: first should be /z000, last should be /z099
-        assertEquals("/z000", result.get(0).getCommands());
-        assertEquals("/z099", result.get(99).getCommands());
+        assertEquals("/z000", result.get(0).getCommand());
+        assertEquals("/z099", result.get(99).getCommand());
     }
 
     @Test
@@ -1481,9 +1481,9 @@ class GatewayMessageRouterTest {
         List<StreamMessage.SlashCommandItem> result = msgCaptor.getValue().getSlashCommands();
         assertEquals(3, result.size());
         // Case-insensitive: /alpha, /Beta, /Zebra
-        assertEquals("/alpha", result.get(0).getCommands());
-        assertEquals("/Beta", result.get(1).getCommands());
-        assertEquals("/Zebra", result.get(2).getCommands());
+        assertEquals("/alpha", result.get(0).getCommand());
+        assertEquals("/Beta", result.get(1).getCommand());
+        assertEquals("/Zebra", result.get(2).getCommand());
     }
 
     @Test

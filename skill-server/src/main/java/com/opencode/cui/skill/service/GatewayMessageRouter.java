@@ -1439,20 +1439,20 @@ public class GatewayMessageRouter {
 
         java.util.List<StreamMessage.SlashCommandItem> items = new java.util.ArrayList<>();
         for (JsonNode item : slashCommandsNode) {
-            String commands = item.path("commands").asText(null);
-            if (commands == null || commands.isBlank()) {
+            String command = item.path("command").asText(null);
+            if (command == null || command.isBlank()) {
                 continue;
             }
             String description = item.path("description").asText(null);
             items.add(StreamMessage.SlashCommandItem.builder()
-                    .commands(commands)
+                    .command(command)
                     .description(description)
                     .build());
         }
 
         // 按 commands 字母升序排列
         items.sort(java.util.Comparator.comparing(
-                StreamMessage.SlashCommandItem::getCommands, String.CASE_INSENSITIVE_ORDER));
+                StreamMessage.SlashCommandItem::getCommand, String.CASE_INSENSITIVE_ORDER));
 
         // 超过 100 条时截取前 100
         if (items.size() > 100) {

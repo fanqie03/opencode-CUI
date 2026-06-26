@@ -211,7 +211,7 @@ public class StreamMessage {
     @AllArgsConstructor
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static class SlashCommandItem {
-        private String commands;
+        private String command;
         private String description;
     }
 
