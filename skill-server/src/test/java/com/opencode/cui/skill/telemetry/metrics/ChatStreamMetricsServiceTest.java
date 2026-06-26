@@ -120,9 +120,9 @@ class ChatStreamMetricsServiceTest {
     void turnEnd_recordsFailureCounters() {
         when(valueOps.get("skill:metrics:stream:start:msg-fail")).thenReturn(String.valueOf(System.currentTimeMillis()));
 
-        service.turnStart(new MessageTurnContext("msg-fail", "brain-F", null, null, null, null, false));
+        service.turnStart(new MessageTurnContext("msg-fail", "brain-F", null, null, null, null, null, false));
         sleep(5);
-        service.turnEnd(new MessageTurnContext("msg-fail", "brain-F", null, null, null, null, false));
+        service.turnEnd(new MessageTurnContext("msg-fail", "brain-F", null, null, null, null, null, false));
 
         assertNotNull(registry.find("chat_stream_turn_total").tag("brain_tag", "brain-F").counter());
         assertEquals(1.0, registry.find("chat_stream_turn_total").tag("brain_tag", "brain-F").counter().count());

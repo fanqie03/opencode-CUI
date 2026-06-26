@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ChatTurnEndTelemetryEventTest {
 
     private final ChatTurnEndTelemetryEvent event = new ChatTurnEndTelemetryEvent(
-            "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", "brain-A", "msg-1", 42, 3500L, true);
+            "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", "brain-A", "robot-1", "msg-1", 42, 3500L, true);
 
     @Test
     void eventId_returnsConfiguredValue() {
@@ -38,6 +38,7 @@ class ChatTurnEndTelemetryEventTest {
         assertEquals("user-1", data.get("senderUserAccount"));
         assertEquals("assistant-1", data.get("assistantAccount"));
         assertEquals("brain-A", data.get("businessTag"));
+        assertEquals("robot-1", data.get("robotId"));
         assertEquals(42, data.get("contentLength"));
         assertEquals(3500L, data.get("durationMs"));
         assertEquals(true, data.get("success"));
@@ -47,14 +48,14 @@ class ChatTurnEndTelemetryEventTest {
     @Test
     void nullBusinessTag_usesUnknownFallback() {
         ChatTurnEndTelemetryEvent e = new ChatTurnEndTelemetryEvent(
-                "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", null, "msg-1", 0, 100L, false);
+                "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", null, null, "msg-1", 0, 100L, false);
         assertEquals("UNKNOWN", e.extendData().get("businessTag"));
     }
 
     @Test
     void failedTurn_successIsFalse() {
         ChatTurnEndTelemetryEvent e = new ChatTurnEndTelemetryEvent(
-                "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", "brain-A", "msg-fail", 0, 500L, false);
+                "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", "brain-A", "robot-1", "msg-fail", 0, 500L, false);
         assertEquals(false, e.extendData().get("success"));
     }
 }

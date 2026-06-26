@@ -27,6 +27,7 @@ public record ChatTurnEndTelemetryEvent(
         String senderUserAccount,
         String assistantAccount,
         String businessTag,
+        String robotId,
         String messageId,
         int contentLength,
         long durationMs,
@@ -55,6 +56,7 @@ public record ChatTurnEndTelemetryEvent(
         data.put("senderUserAccount", nullToEmpty(senderUserAccount));
         data.put("assistantAccount", nullToEmpty(assistantAccount));
         data.put("businessTag", businessTag != null ? businessTag : "UNKNOWN");
+        data.put("robotId", nullToEmpty(robotId));
         data.put("contentLength", contentLength);
         data.put("durationMs", durationMs);
         data.put("success", success);

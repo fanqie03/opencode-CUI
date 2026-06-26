@@ -19,6 +19,7 @@ public record ChatFirstTokenTelemetryEvent(
         String senderUserAccount,
         String assistantAccount,
         String businessTag,
+        String robotId,
         String messageId,
         long ttftMs
 ) implements TelemetryEvent {
@@ -45,6 +46,7 @@ public record ChatFirstTokenTelemetryEvent(
         data.put("senderUserAccount", nullToEmpty(senderUserAccount));
         data.put("assistantAccount", nullToEmpty(assistantAccount));
         data.put("businessTag", businessTag != null ? businessTag : "UNKNOWN");
+        data.put("robotId", nullToEmpty(robotId));
         data.put("ttftMs", ttftMs);
         data.put("ttftReportedAt", System.currentTimeMillis());
         return data;

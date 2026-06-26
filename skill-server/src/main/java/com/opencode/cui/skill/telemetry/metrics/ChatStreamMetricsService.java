@@ -124,7 +124,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
                 welinkReporter.report(new ChatFirstTokenTelemetryEvent(
                         firstTokenEventId,
                         ctx.sessionId(), ctx.senderUserAccount(), ctx.assistantAccount(),
-                        ctx.brainTag(), ctx.messageId(), ttft));
+                        ctx.brainTag(), ctx.robotId(), ctx.messageId(), ttft));
             } catch (Throwable t) {
                 log.warn("[ChatStreamMetricsService] Welink firstToken report failed: messageId={}, error={}", messageId, t.getMessage());
             }
@@ -196,7 +196,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
                 welinkReporter.report(new ChatTurnEndTelemetryEvent(
                         turnEndEventId,
                         ctx.sessionId(), ctx.senderUserAccount(), ctx.assistantAccount(),
-                        ctx.brainTag(), ctx.messageId(), tokens, latency, ctx.success()));
+                        ctx.brainTag(), ctx.robotId(), ctx.messageId(), tokens, latency, ctx.success()));
             } catch (Throwable t) {
                 log.warn("[ChatStreamMetricsService] Welink turnEnd report failed: messageId={}, error={}", messageId, t.getMessage());
             }
