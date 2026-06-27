@@ -105,7 +105,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
                     REDIS_KEY_PREFIX_START + sessionId,
                     String.valueOf(System.currentTimeMillis()),
                     sessionTtl);
-        } catch (Throwable e) {
+        } catch (Exception e) {
             log.error("[ChatStreamMetricsService] turnStart error: messageId={}, error={}", ctx.messageId(), e.getMessage(), e);
         }
     }
@@ -140,7 +140,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
                         meta.businessSessionDomain, meta.businessSessionType, meta.businessSessionId,
                         ctx.messageId(), ttft));
             }
-        } catch (Throwable e) {
+        } catch (Exception e) {
             log.error("[ChatStreamMetricsService] firstToken error: messageId={}, error={}", ctx.messageId(), e.getMessage(), e);
         }
     }
@@ -152,7 +152,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             if (sessionId == null) return;
             AtomicInteger count = tokenCounts.get(sessionId, k -> new AtomicInteger(0));
             count.addAndGet(contentLength);
-        } catch (Throwable e) {
+        } catch (Exception e) {
             log.error("[ChatStreamMetricsService] token error: messageId={}, error={}", ctx.messageId(), e.getMessage(), e);
         }
     }
@@ -220,7 +220,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             cleanupRedis(sessionId);
             firstTokenTimestamps.invalidate(sessionId);
             tokenCounts.invalidate(sessionId);
-        } catch (Throwable e) {
+        } catch (Exception e) {
             log.error("[ChatStreamMetricsService] turnEnd error: messageId={}, error={}", ctx.messageId(), e.getMessage(), e);
         }
     }
