@@ -94,30 +94,33 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
     @Override
     public void turnStart(MessageTurnContext ctx) {
         String sessionId = resolveSessionId(ctx);
+        String userId = resolveUserId(ctx);
         if (sessionId == null) {
-            log.warn("turnStart: sessionId is null, skipping");
+            log.warn("turnStart: sessionId is null, skipping, messageId={}, userId={}", ctx.messageId(), userId);
             return;
         }
+        log.info("[ChatStreamMetricsService] turnStart: messageId={}, sessionId={}, userId={}", ctx.messageId(), sessionId, userId);
         try {
             redisTemplate.opsForValue().set(
                     REDIS_KEY_PREFIX_START + sessionId,
                     String.valueOf(System.currentTimeMillis()),
                     sessionTtl);
         } catch (Exception e) {
-            log.warn("[ChatStreamMetricsService] turnStart: failed to write start time to Redis: sessionId={}, error={}", sessionId, e.getMessage());
+            log.warn("[ChatStreamMetricsService] turnStart: failed to write start time to Redis: sessionId={}, userId={}, error={}", sessionId, userId, e.getMessage());
         }
     }
 
     @Override
     public void firstToken(MessageTurnContext ctx) {
         String sessionId = resolveSessionId(ctx);
+        String userId = resolveUserId(ctx);
         if (sessionId == null) {
-            log.warn("firstToken: sessionId is null, skipping");
+            log.warn("firstToken: sessionId is null, skipping, messageId={}, userId={}", ctx.messageId(), userId);
             return;
         }
         Long startTime = getStartTimeFromRedis(sessionId);
         if (startTime == null) {
-            log.warn("firstToken: startTime not found for sessionId={}, skipping", sessionId);
+            log.warn("firstToken: startTime not found for sessionId={}, skipping, userId={}", sessionId, userId);
             return;
         }
         long now = System.currentTimeMillis();
@@ -129,7 +132,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
                 .record(ttft, TimeUnit.MILLISECONDS);
         if (welinkReporter != null) {
             try {
-                log.info("[ChatStreamMetricsService] Welink firstToken report: eventId={}, messageId={}, sessionId={}", firstTokenEventId, ctx.messageId(), sessionId);
+                log.info("[ChatStreamMetricsService] Welink firstToken report: eventId={}, messageId={}, sessionId={}, userId={}", firstTokenEventId, ctx.messageId(), sessionId, userId);
                 welinkReporter.report(new ChatFirstTokenTelemetryEvent(
                         firstTokenEventId,
                         sessionId, meta.senderUserAccount, meta.assistantAccount,
@@ -137,7 +140,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
                         meta.businessSessionDomain, meta.businessSessionType, meta.businessSessionId,
                         ctx.messageId(), ttft));
             } catch (Throwable t) {
-                log.warn("[ChatStreamMetricsService] Welink firstToken report failed: messageId={}, error={}", ctx.messageId(), t.getMessage());
+                log.warn("[ChatStreamMetricsService] Welink firstToken report failed: messageId={}, sessionId={}, userId={}, error={}", ctx.messageId(), sessionId, userId, t.getMessage());
             }
         }
     }
@@ -153,13 +156,14 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
     @Override
     public void turnEnd(MessageTurnContext ctx) {
         String sessionId = resolveSessionId(ctx);
+        String userId = resolveUserId(ctx);
         if (sessionId == null) {
-            log.warn("turnEnd: sessionId is null, skipping");
+            log.warn("turnEnd: sessionId is null, skipping, messageId={}, userId={}", ctx.messageId(), userId);
             return;
         }
         Long startTime = getStartTimeFromRedis(sessionId);
         if (startTime == null) {
-            log.warn("turnEnd: startTime not found for sessionId={}, skipping", sessionId);
+            log.warn("turnEnd: startTime not found for sessionId={}, skipping, userId={}", sessionId, userId);
             return;
         }
         long now = System.currentTimeMillis();
@@ -187,7 +191,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
                 }
             }
         } else {
-            log.warn("turnEnd: skipped TPS calculation for sessionId={}, latency={}, tokens={}", sessionId, latency, tokens);
+            log.warn("turnEnd: skipped TPS calculation for sessionId={}, userId={}, latency={}, tokens={}", sessionId, userId, latency, tokens);
         }
 
         Tags turnTags = Tags.of("brain_tag", brainTag);
@@ -200,7 +204,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
 
         if (welinkReporter != null) {
             try {
-                log.info("[ChatStreamMetricsService] Welink turnEnd report: eventId={}, messageId={}, sessionId={}, tokens={}, latency={}", turnEndEventId, ctx.messageId(), sessionId, tokens, latency);
+                log.info("[ChatStreamMetricsService] Welink turnEnd report: eventId={}, messageId={}, sessionId={}, userId={}, tokens={}, latency={}", turnEndEventId, ctx.messageId(), sessionId, userId, tokens, latency);
                 welinkReporter.report(new ChatTurnEndTelemetryEvent(
                         turnEndEventId,
                         sessionId, meta.senderUserAccount, meta.assistantAccount,
@@ -208,7 +212,7 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
                         meta.businessSessionDomain, meta.businessSessionType, meta.businessSessionId,
                         ctx.messageId(), tokens, latency, ctx.success()));
             } catch (Throwable t) {
-                log.warn("[ChatStreamMetricsService] Welink turnEnd report failed: messageId={}, error={}", ctx.messageId(), t.getMessage());
+                log.warn("[ChatStreamMetricsService] Welink turnEnd report failed: messageId={}, sessionId={}, userId={}, error={}", ctx.messageId(), sessionId, userId, t.getMessage());
             }
         }
 
@@ -243,6 +247,13 @@ public class ChatStreamMetricsService implements MessageTurnHandler {
             return String.valueOf(ctx.session().getId());
         }
         return ctx.messageId();
+    }
+
+    private String resolveUserId(MessageTurnContext ctx) {
+        if (ctx.session() != null) {
+            return ctx.session().getUserId();
+        }
+        return null;
     }
 
     private String resolveBrainTag(SessionMetadata meta) {
