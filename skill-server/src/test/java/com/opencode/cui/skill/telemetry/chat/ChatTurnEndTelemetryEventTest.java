@@ -9,7 +9,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class ChatTurnEndTelemetryEventTest {
 
     private final ChatTurnEndTelemetryEvent event = new ChatTurnEndTelemetryEvent(
-            "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", "brain-A", "robot-1", "msg-1", 42, 3500L, true);
+            "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", "brain-A", "robot-1",
+            "im", "group", "biz-sess-1", "msg-1", 42, 3500L, true);
 
     @Test
     void eventId_returnsConfiguredValue() {
@@ -35,6 +36,9 @@ class ChatTurnEndTelemetryEventTest {
     void extendData_includesAllMetrics() {
         Map<String, Object> data = event.extendData();
         assertEquals("msg-1", data.get("messageId"));
+        assertEquals("im", data.get("businessSessionDomain"));
+        assertEquals("group", data.get("businessSessionType"));
+        assertEquals("biz-sess-1", data.get("businessSessionId"));
         assertEquals("user-1", data.get("senderUserAccount"));
         assertEquals("assistant-1", data.get("assistantAccount"));
         assertEquals("brain-A", data.get("businessTag"));
@@ -48,14 +52,14 @@ class ChatTurnEndTelemetryEventTest {
     @Test
     void nullBusinessTag_usesUnknownFallback() {
         ChatTurnEndTelemetryEvent e = new ChatTurnEndTelemetryEvent(
-                "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", null, null, "msg-1", 0, 100L, false);
+                "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", null, null, null, null, null, "msg-1", 0, 100L, false);
         assertEquals("UNKNOWN", e.extendData().get("businessTag"));
     }
 
     @Test
     void failedTurn_successIsFalse() {
         ChatTurnEndTelemetryEvent e = new ChatTurnEndTelemetryEvent(
-                "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", "brain-A", "robot-1", "msg-fail", 0, 500L, false);
+                "openplatform_service_chat_turn_end", "sess-1", "user-1", "assistant-1", "brain-A", "robot-1", "im", "group", "biz-sess-1", "msg-fail", 0, 500L, false);
         assertEquals(false, e.extendData().get("success"));
     }
 }

@@ -10,7 +10,8 @@ import java.util.Map;
  * 实现 TelemetryEvent 接口，供 MessageTurnLifecycle.onFirstToken 上报到 WelinkTelemetryReporter。
  *
  * <p>
- * 维度：messageId、sessionId、userId（发送者账号）、assistantAccount（助手账号）。
+ * 扩展字段参考 ChatTelemetryEventListener.buildExtendData，包含 businessSessionDomain、
+ * businessSessionType、businessSessionId、senderUserAccount、assistantAccount、businessTag、robotId。
  * </p>
  */
 public record ChatFirstTokenTelemetryEvent(
@@ -20,6 +21,9 @@ public record ChatFirstTokenTelemetryEvent(
         String assistantAccount,
         String businessTag,
         String robotId,
+        String businessSessionDomain,
+        String businessSessionType,
+        String businessSessionId,
         String messageId,
         long ttftMs
 ) implements TelemetryEvent {
@@ -43,6 +47,9 @@ public record ChatFirstTokenTelemetryEvent(
     public Map<String, Object> extendData() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("messageId", messageId);
+        data.put("businessSessionDomain", nullToEmpty(businessSessionDomain));
+        data.put("businessSessionType", nullToEmpty(businessSessionType));
+        data.put("businessSessionId", nullToEmpty(businessSessionId));
         data.put("senderUserAccount", nullToEmpty(senderUserAccount));
         data.put("assistantAccount", nullToEmpty(assistantAccount));
         data.put("businessTag", businessTag != null ? businessTag : "UNKNOWN");

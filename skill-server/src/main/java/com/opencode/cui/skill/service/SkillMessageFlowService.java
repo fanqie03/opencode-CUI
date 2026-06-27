@@ -115,7 +115,7 @@ public class SkillMessageFlowService {
         }
         String effectiveUserId = effectiveUserId(userIdCookie, session);
         messageTurnLifecycle.onTurnStart(
-                new MessageTurnContext(message.getMessageId(), brainTag, sessionId, null, effectiveUserId, brainTag, null, true)
+                new MessageTurnContext(session, message.getMessageId(), true)
         );
 
         routeToGateway(session, sessionId, numericSessionId, request, userIdCookie);

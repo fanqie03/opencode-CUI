@@ -9,7 +9,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class ChatFirstTokenTelemetryEventTest {
 
     private final ChatFirstTokenTelemetryEvent event = new ChatFirstTokenTelemetryEvent(
-            "openplatform_service_chat_first_token", "sess-1", "user-1", "assistant-1", "brain-A", "robot-1", "msg-1", 150L);
+            "openplatform_service_chat_first_token", "sess-1", "user-1", "assistant-1", "brain-A", "robot-1",
+            "im", "group", "biz-sess-1", "msg-1", 150L);
 
     @Test
     void eventId_returnsConfiguredEventId() {
@@ -32,12 +33,15 @@ class ChatFirstTokenTelemetryEventTest {
     }
 
     @Test
-    void extendData_includesBusinessTagAndMessageIdAndAssistantAccount() {
+    void extendData_includesAllFields() {
         Map<String, Object> data = event.extendData();
-        assertEquals("brain-A", data.get("businessTag"));
         assertEquals("msg-1", data.get("messageId"));
+        assertEquals("im", data.get("businessSessionDomain"));
+        assertEquals("group", data.get("businessSessionType"));
+        assertEquals("biz-sess-1", data.get("businessSessionId"));
         assertEquals("user-1", data.get("senderUserAccount"));
         assertEquals("assistant-1", data.get("assistantAccount"));
+        assertEquals("brain-A", data.get("businessTag"));
         assertEquals("robot-1", data.get("robotId"));
         assertEquals(150L, data.get("ttftMs"));
         assertNotNull(data.get("ttftReportedAt"));
@@ -46,7 +50,7 @@ class ChatFirstTokenTelemetryEventTest {
     @Test
     void nullBusinessTag_usesUnknownFallback() {
         ChatFirstTokenTelemetryEvent e = new ChatFirstTokenTelemetryEvent(
-                "openplatform_service_chat_first_token", "sess-1", "user-1", "assistant-1", null, null, "msg-1", 150L);
+                "openplatform_service_chat_first_token", "sess-1", "user-1", "assistant-1", null, null, null, null, null, "msg-1", 150L);
         assertEquals("UNKNOWN", e.extendData().get("businessTag"));
     }
 }

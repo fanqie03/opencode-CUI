@@ -1,5 +1,6 @@
 package com.opencode.cui.skill.telemetry.metrics;
 
+import com.opencode.cui.skill.model.SkillSession;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,38 +23,43 @@ class MessageTurnLifecycleTest {
         lifecycle = new MessageTurnLifecycle(List.of(mockHandler), registry, 10000, Duration.ofMinutes(30));
     }
 
+    private SkillSession mockSession(Long id) {
+        SkillSession session = new SkillSession();
+        session.setId(id);
+        session.setUserId("user-" + id);
+        return session;
+    }
+
     @Test
     void onTurnStart_callsHandlerTurnStart() {
-        MessageTurnContext ctx = new MessageTurnContext("msg-1", "brain-A", "sess-1", "assistant-1", "user-1", "brain-A", "robot-1", true);
+        MessageTurnContext ctx = new MessageTurnContext(mockSession(1L), "msg-1", true);
         lifecycle.onTurnStart(ctx);
         verify(mockHandler).turnStart(ctx);
     }
 
     @Test
-    void onToken_firstTokenFiresOncePerMessageId() {
-        MessageTurnContext ctx = new MessageTurnContext("msg-2", "brain-A", "sess-2", "assistant-2", "user-2", "brain-A", "robot-2", true);
+    void onToken_firstTokenFiresOncePerSessionId() {
+        SkillSession session = mockSession(2L);
+        MessageTurnContext ctx = new MessageTurnContext(session, "msg-2", true);
         lifecycle.onTurnStart(ctx);
 
         lifecycle.onToken(ctx, 5);
         lifecycle.onToken(ctx, 3);
         lifecycle.onToken(ctx, 7);
 
-        // firstToken must be called exactly once
         verify(mockHandler, times(1)).firstToken(ctx);
-        // token should be called for each onToken invocation
         verify(mockHandler, times(3)).token(eq(ctx), anyInt());
     }
 
     @Test
     void turnEnd_invalidatesCache_allowingFirstTokenToFireAgain() {
-        MessageTurnContext ctx = new MessageTurnContext("msg-3", "brain-B", "sess-3", "assistant-3", "user-3", "brain-B", "robot-3", true);
+        SkillSession session = mockSession(3L);
+        MessageTurnContext ctx = new MessageTurnContext(session, "msg-3", true);
 
-        // First turn
         lifecycle.onTurnStart(ctx);
         lifecycle.onToken(ctx, 5);
         lifecycle.onTurnEnd(ctx);
 
-        // Second turn with same messageId — firstToken should fire again because cache was invalidated
         lifecycle.onTurnStart(ctx);
         lifecycle.onToken(ctx, 4);
 
@@ -64,7 +70,8 @@ class MessageTurnLifecycleTest {
 
     @Test
     void onTurnEnd_callsHandlerTurnEnd() {
-        MessageTurnContext ctx = new MessageTurnContext("msg-4", "brain-B", "sess-4", "assistant-4", "user-4", "brain-B", "robot-4", false);
+        SkillSession session = mockSession(4L);
+        MessageTurnContext ctx = new MessageTurnContext(session, "msg-4", false);
         lifecycle.onTurnStart(ctx);
         lifecycle.onToken(ctx, 5);
         lifecycle.onTurnEnd(ctx);
@@ -78,7 +85,7 @@ class MessageTurnLifecycleTest {
         MessageTurnLifecycle multiLifecycle = new MessageTurnLifecycle(
                 List.of(handler1, handler2), new SimpleMeterRegistry(), 10000, Duration.ofMinutes(30));
 
-        MessageTurnContext ctx = new MessageTurnContext("msg-5", "brain-C", "sess-5", "assistant-5", "user-5", "brain-C", "robot-5", true);
+        MessageTurnContext ctx = new MessageTurnContext(mockSession(5L), "msg-5", true);
         multiLifecycle.onTurnStart(ctx);
         multiLifecycle.onToken(ctx, 10);
         multiLifecycle.onTurnEnd(ctx);
@@ -98,10 +105,9 @@ class MessageTurnLifecycleTest {
         MessageTurnLifecycle emptyLifecycle = new MessageTurnLifecycle(
                 List.of(), new SimpleMeterRegistry(), 10000, Duration.ofMinutes(30));
 
-        MessageTurnContext ctx = new MessageTurnContext("msg-6", "brain-D", "sess-6", "assistant-6", "user-6", "brain-D", "robot-6", true);
+        MessageTurnContext ctx = new MessageTurnContext(mockSession(6L), "msg-6", true);
         emptyLifecycle.onTurnStart(ctx);
         emptyLifecycle.onToken(ctx, 5);
         emptyLifecycle.onTurnEnd(ctx);
-        // No exception means pass
     }
 }

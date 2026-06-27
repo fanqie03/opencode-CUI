@@ -28,6 +28,9 @@ public record ChatTurnEndTelemetryEvent(
         String assistantAccount,
         String businessTag,
         String robotId,
+        String businessSessionDomain,
+        String businessSessionType,
+        String businessSessionId,
         String messageId,
         int contentLength,
         long durationMs,
@@ -53,6 +56,9 @@ public record ChatTurnEndTelemetryEvent(
     public Map<String, Object> extendData() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("messageId", messageId);
+        data.put("businessSessionDomain", nullToEmpty(businessSessionDomain));
+        data.put("businessSessionType", nullToEmpty(businessSessionType));
+        data.put("businessSessionId", nullToEmpty(businessSessionId));
         data.put("senderUserAccount", nullToEmpty(senderUserAccount));
         data.put("assistantAccount", nullToEmpty(assistantAccount));
         data.put("businessTag", businessTag != null ? businessTag : "UNKNOWN");

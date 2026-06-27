@@ -14,15 +14,15 @@ import java.util.List;
 /**
  * 消息轮次生命周期编排器。
  * 遍历所有注册的 {@link MessageTurnHandler} 插件，分发 turnStart / firstToken / token / turnEnd 事件。
- * firstToken 事件由本类基于 {@code processedFirstToken} 缓存做幂等去重（每 messageId 仅触发一次）。
- * turnEnd 时清理缓存，允许同一 messageId 的后续轮次重新触发 firstToken。
+ * firstToken 事件由本类基于 {@code processedFirstToken} 缓存做幂等去重（每 sessionId 仅触发一次）。
+ * turnEnd 时清理缓存，允许同一 sessionId 的后续轮次重新触发 firstToken。
  */
 @Slf4j
 @Component
 public class MessageTurnLifecycle {
 
     private final List<MessageTurnHandler> handlers;
-    /** Track which messageIds have already reported their first token (bounded, TTL-evicted). */
+    /** Track which sessionIds have already reported their first token (bounded, TTL-evicted). */
     private final Cache<String, Boolean> processedFirstToken;
 
     public MessageTurnLifecycle(List<MessageTurnHandler> handlers,
@@ -38,23 +38,24 @@ public class MessageTurnLifecycle {
     }
 
     public void onTurnStart(MessageTurnContext ctx) {
-        log.info("[ENTRY] onTurnStart: messageId={}, brainTag={}, sessionId={}", ctx.messageId(), ctx.brainTag(), ctx.sessionId());
+        log.info("[ENTRY] onTurnStart: messageId={}, sessionId={}", ctx.messageId(), resolveSessionId(ctx));
         for (MessageTurnHandler handler : handlers) {
             handler.turnStart(ctx);
         }
     }
 
     private void onFirstToken(MessageTurnContext ctx) {
-        log.info("[ENTRY] onFirstToken: messageId={}, brainTag={}, sessionId={}", ctx.messageId(), ctx.brainTag(), ctx.sessionId());
+        log.info("[ENTRY] onFirstToken: messageId={}, sessionId={}", ctx.messageId(), resolveSessionId(ctx));
         for (MessageTurnHandler handler : handlers) {
             handler.firstToken(ctx);
         }
     }
 
     public void onToken(MessageTurnContext ctx, int contentLength) {
-        Boolean wasFirst = processedFirstToken.asMap().putIfAbsent(ctx.messageId(), Boolean.TRUE);
+        String sessionId = resolveSessionId(ctx);
+        if (sessionId == null) return;
+        Boolean wasFirst = processedFirstToken.asMap().putIfAbsent(sessionId, Boolean.TRUE);
         if (wasFirst == null) {
-            // This thread won the race — it's the first token
             onFirstToken(ctx);
         }
         for (MessageTurnHandler handler : handlers) {
@@ -63,10 +64,17 @@ public class MessageTurnLifecycle {
     }
 
     public void onTurnEnd(MessageTurnContext ctx) {
-        log.info("[ENTRY] onTurnEnd: messageId={}, brainTag={}, sessionId={}", ctx.messageId(), ctx.brainTag(), ctx.sessionId());
+        log.info("[ENTRY] onTurnEnd: messageId={}, sessionId={}", ctx.messageId(), resolveSessionId(ctx));
         for (MessageTurnHandler handler : handlers) {
             handler.turnEnd(ctx);
         }
-        processedFirstToken.invalidate(ctx.messageId());
+        String sessionId = resolveSessionId(ctx);
+        if (sessionId != null) {
+            processedFirstToken.invalidate(sessionId);
+        }
+    }
+
+    private String resolveSessionId(MessageTurnContext ctx) {
+        return ctx.session() != null ? String.valueOf(ctx.session().getId()) : null;
     }
 }
